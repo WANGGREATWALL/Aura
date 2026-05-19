@@ -17,10 +17,7 @@ namespace perf {
 // XTracer0Context
 // ==========================================================================
 
-XTracer0Context::XTracer0Context()
-    : mTimerCtx(&XTimer0Context::global())
-    , mLevel(-1)
-    , mFdTrace(-1)
+XTracer0Context::XTracer0Context() : mTimerCtx(&XTimer0Context::global()), mLevel(-1), mFdTrace(-1)
 {
 #ifdef AU_OS_ANDROID
     int fd = ::open("/sys/kernel/debug/tracing/trace_marker", O_WRONLY);
@@ -39,7 +36,11 @@ XTracer0Context& XTracer0Context::get(const char* name)
     // Per-named contexts stored as static locals keyed by a simple array.
     // Max 16 named tracer contexts (parallel to timer contexts).
     constexpr int kMaxTracerCtx = 16;
-    struct Slot { XTracer0Context* ctx = nullptr; char name[64] = {0}; };
+    struct Slot
+    {
+        XTracer0Context* ctx      = nullptr;
+        char             name[64] = {0};
+    };
     static Slot sSlots[kMaxTracerCtx];
 
     for (int i = 0; i < kMaxTracerCtx; ++i) {
@@ -50,7 +51,7 @@ XTracer0Context& XTracer0Context::get(const char* name)
         if (!sSlots[i].ctx) {
             auto* c = new XTracer0Context();
             // Also create a corresponding named timer context
-            c->mTimerCtx = &XTimer0Context::get(name);
+            c->mTimerCtx  = &XTimer0Context::get(name);
             sSlots[i].ctx = c;
             std::strncpy(sSlots[i].name, name, sizeof(sSlots[i].name) - 1);
             return *c;
@@ -86,7 +87,11 @@ void XTracer0Context::configureFrom(const char* propertyPrefix) noexcept
 
 namespace {
 
-enum TraceMode { kBegin = 0, kEnd };
+enum TraceMode
+{
+    kBegin = 0,
+    kEnd
+};
 
 void writeTraceMarker([[maybe_unused]] int fd, [[maybe_unused]] const char* name,
                       [[maybe_unused]] TraceMode mode) noexcept
@@ -94,9 +99,9 @@ void writeTraceMarker([[maybe_unused]] int fd, [[maybe_unused]] const char* name
 #ifdef AU_OS_ANDROID
     if (fd < 0 || !name)
         return;
-    char    buf[256];
-    int     pid  = static_cast<int>(getpid());
-    int     len  = std::snprintf(buf, sizeof(buf), "%c|%d|%s", (mode == kBegin ? 'B' : 'E'), pid, name);
+    char buf[256];
+    int  pid = static_cast<int>(getpid());
+    int  len = std::snprintf(buf, sizeof(buf), "%c|%d|%s", (mode == kBegin ? 'B' : 'E'), pid, name);
     if (len > 0)
         ::write(fd, buf, static_cast<size_t>(len));
 #endif
@@ -105,10 +110,7 @@ void writeTraceMarker([[maybe_unused]] int fd, [[maybe_unused]] const char* name
 }  // anonymous namespace
 
 XTracer0Scoped::XTracer0Scoped(const char* name, XTracer0Context* ctx) noexcept
-    : mCtx(ctx ? ctx : &XTracer0Context::global())
-    , mNameMain(name)
-    , mNameNode()
-    , mActive(false)
+    : mCtx(ctx ? ctx : &XTracer0Context::global()), mNameMain(name), mNameNode(), mActive(false)
 {
     if (!mCtx->isEnabled())
         return;
@@ -160,10 +162,7 @@ void XTracer0Scoped::sub() noexcept
     }
 }
 
-float XTracer0Scoped::elapsed() const noexcept
-{
-    return mTimer ? mTimer->elapsed() : 0.f;
-}
+float XTracer0Scoped::elapsed() const noexcept { return mTimer ? mTimer->elapsed() : 0.f; }
 
 }  // namespace perf
 }  // namespace au

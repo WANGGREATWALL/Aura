@@ -55,13 +55,13 @@ public:
     XTimer0Context& timerContext() noexcept { return *mTimerCtx; }
 
     void setEnabled(bool on) noexcept { mTimerCtx->setEnabled(on); }
-    bool isEnabled()     const noexcept { return mTimerCtx->isEnabled(); }
+    bool isEnabled() const noexcept { return mTimerCtx->isEnabled(); }
 
     // Tracer's own level (independent of timer level)
     void setLevel(int level) noexcept { mLevel.store(level, std::memory_order_relaxed); }
-    int  getLevel()     const noexcept { return mLevel.load(std::memory_order_relaxed); }
+    int  getLevel() const noexcept { return mLevel.load(std::memory_order_relaxed); }
 
-    void setMode(XTimer0Context::Mode mode) noexcept { mTimerCtx->setMode(mode); }
+    void                 setMode(XTimer0Context::Mode mode) noexcept { mTimerCtx->setMode(mode); }
     XTimer0Context::Mode getMode() const noexcept { return mTimerCtx->getMode(); }
 
     void configureFrom(const char* propertyPrefix) noexcept;
@@ -79,7 +79,7 @@ public:
     int getTraceFd() const noexcept { return mFdTrace; }
 
 private:
-    XTimer0Context*   mTimerCtx;
+    XTimer0Context*  mTimerCtx;
     std::atomic<int> mLevel{-1};
     int              mFdTrace;
 };
@@ -94,22 +94,22 @@ public:
     explicit XTracer0Scoped(const char* name, XTracer0Context* ctx = nullptr) noexcept;
     ~XTracer0Scoped() noexcept;
 
-    XTracer0Scoped(const XTracer0Scoped&) = delete;
+    XTracer0Scoped(const XTracer0Scoped&)            = delete;
     XTracer0Scoped& operator=(const XTracer0Scoped&) = delete;
 
-    void sub(const char* name) noexcept;
-    void sub() noexcept;
+    void  sub(const char* name) noexcept;
+    void  sub() noexcept;
     float elapsed() const noexcept;
 
 private:
     void writeTraceBegin(const char* name) noexcept;
     void writeTraceEnd() noexcept;
 
-    XTracer0Context*            mCtx;
+    XTracer0Context*               mCtx;
     std::unique_ptr<XTimer0Scoped> mTimer;
-    const char*                mNameMain;
-    std::string                mNameNode;
-    bool                       mActive;
+    const char*                    mNameMain;
+    std::string                    mNameNode;
+    bool                           mActive;
 };
 
 }  // namespace perf

@@ -38,7 +38,7 @@
  *
  * Level semantics (integer, not enum):
  *  - Scopes carry an integer @p level. Smaller = more important.
- *  - A scope activates iff its level <= XPerfContext3 threshold.
+ *  - A scope activates if its level <= XPerfContext3 threshold.
  *  - Default threshold values and sentinels:
  *      kPerfLevelOff = -1   : never activate (hard off for the module)
  *      kPerfLevelAll = INT32_MAX : always activate
@@ -50,8 +50,6 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
-
-#include "sys/xplatform.h"
 
 namespace au::perf {
 
