@@ -8,7 +8,7 @@ ColumnLimit: 120                            # 稍微放宽到 120，适应现代
 IndentWidth: 4                              # 4 空格缩进，层级更分明
 TabWidth: 4                                 # Tab 宽度等同于缩进
 UseTab: Never                               # 禁用 Tab，纯空格缩进
-MaxEmptyLinesToKeep: 2                      # 允许最多保留2个空行 (类定义之间手动空两行)
+MaxEmptyLinesToKeep: 1                      # 允许最多保留1个空行
 SeparateDefinitionBlocks: Leave             # 保留手动控制的空行 (不自动增删)
 
 # --- 大括号与换行逻辑 ---

@@ -11,17 +11,14 @@
 #include <unistd.h>
 #endif
 
-
 namespace au {
 namespace perf {
-
 
 // ===========================================================================
 //  Process-wide trace_marker fd helper (Android only)
 // ===========================================================================
 
 namespace {
-
 
 #if AU_OS_ANDROID
 
@@ -39,7 +36,6 @@ int getTraceFd() noexcept
     }();
     return fd;
 }
-
 
 /// One trace_marker write. Format: "B|pid|name" or "E|pid".
 /// The kernel guarantees per-write atomicity up to one page, which is
@@ -73,15 +69,12 @@ void writeTraceMarker(char mode, int pid, const char* name, std::size_t nameLen)
 
 #endif  // AU_OS_ANDROID
 
-
 /// Per-thread tracer-depth counter (mirrors xtimer5's openStack depth but
 /// kept independent so timer / tracer macros can be used in isolation).
 /// File-level thread_local so begin() and ~XTracer5Scoped() share storage.
 thread_local uint32_t gTracerDepth = 0;
 
-
 }  // anonymous namespace
-
 
 // ===========================================================================
 //  XTracer5Scoped
@@ -89,9 +82,7 @@ thread_local uint32_t gTracerDepth = 0;
 
 XTracer5Scoped::XTracer5Scoped(const std::string& name) noexcept { begin(XPerfContext5::defaultContext(), name); }
 
-
 XTracer5Scoped::XTracer5Scoped(XPerfContext5& ctx, const std::string& name) noexcept { begin(ctx, name); }
-
 
 void XTracer5Scoped::begin(XPerfContext5& ctx, const std::string& name) noexcept
 {
@@ -132,7 +123,6 @@ void XTracer5Scoped::begin(XPerfContext5& ctx, const std::string& name) noexcept
 #endif
 }
 
-
 XTracer5Scoped::~XTracer5Scoped() noexcept
 {
     if (!mActive) {
@@ -152,7 +142,6 @@ XTracer5Scoped::~XTracer5Scoped() noexcept
         --gTracerDepth;
     }
 }
-
 
 void XTracer5Scoped::sub(const std::string& name) noexcept
 {
@@ -181,7 +170,6 @@ void XTracer5Scoped::sub(const std::string& name) noexcept
 #endif
 }
 
-
 void XTracer5Scoped::sub() noexcept
 {
     if (!mActive || !mSubOpen) {
@@ -193,7 +181,6 @@ void XTracer5Scoped::sub() noexcept
 #endif
     mSubOpen = false;
 }
-
 
 }  // namespace perf
 }  // namespace au

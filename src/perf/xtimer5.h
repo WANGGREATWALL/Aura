@@ -72,7 +72,6 @@ constexpr int32_t kPerfLevelAll5 = INT32_MAX;
 /// instead of being inserted into the tree. Not user-tunable.
 constexpr uint32_t kHardMaxDepth5 = 512;
 
-
 // ---------------------------------------------------------------------------
 // Mode selector.
 // ---------------------------------------------------------------------------
@@ -82,7 +81,6 @@ enum class Mode5 : int32_t
     Release = 0,  ///< One-liner per scope, no tree work.
     Debug   = 1,  ///< Build a per-thread, per-context tree; flush on root close.
 };
-
 
 // ---------------------------------------------------------------------------
 // XPerfContext5 — per-caller configuration + private aggregate buffer.
@@ -210,7 +208,6 @@ private:
     XPerfContext5Impl* mImpl;  // Pimpl: hides std::atomic / containers from the public ABI.
 };
 
-
 // ---------------------------------------------------------------------------
 // XTimer5 — bare stopwatch.
 // ---------------------------------------------------------------------------
@@ -239,7 +236,6 @@ public:
 private:
     TimePoint mBegin;
 };
-
 
 // ---------------------------------------------------------------------------
 // XTimer5Scoped — RAII hierarchical timer.

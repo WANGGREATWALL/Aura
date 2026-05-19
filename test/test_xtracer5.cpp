@@ -10,7 +10,6 @@
 #include "perf/xtimer5.h"
 #include "perf/xtracer5.h"
 
-
 // ---------------------------------------------------------------------------
 //  Fixture
 // ---------------------------------------------------------------------------
@@ -45,7 +44,6 @@ protected:
     }
 };
 
-
 // ===========================================================================
 //  1. Basic construction / destruction is safe on every platform
 // ===========================================================================
@@ -58,7 +56,6 @@ TEST_F(XTracer5Test, BasicScopeNoCrash)
     }
     SUCCEED();
 }
-
 
 // ===========================================================================
 //  2. Disabled context — every scope is a no-op
@@ -75,7 +72,6 @@ TEST_F(XTracer5Test, DisabledHardOff)
     }
     SUCCEED();
 }
-
 
 // ===========================================================================
 //  3. Tracer level gating
@@ -99,7 +95,6 @@ TEST_F(XTracer5Test, LevelGating)
     SUCCEED();
 }
 
-
 // ===========================================================================
 //  4. sub(name) / sub() phase transitions
 // ===========================================================================
@@ -116,7 +111,6 @@ TEST_F(XTracer5Test, SubPhaseTransitions)
     }
     SUCCEED();
 }
-
 
 // ===========================================================================
 //  5. Per-context isolation — different contexts can have different levels
@@ -137,7 +131,6 @@ TEST_F(XTracer5Test, PerContextLevelIsolation)
     SUCCEED();
 }
 
-
 // ===========================================================================
 //  6. Composite macro AU_PERF5_SCOPE wires both timer and tracer
 // ===========================================================================
@@ -153,7 +146,6 @@ TEST_F(XTracer5Test, CompositeMacroSafe)
     }
     SUCCEED();
 }
-
 
 // ===========================================================================
 //  7. Multi-thread tracer scopes do not crash
@@ -178,7 +170,6 @@ TEST_F(XTracer5Test, MultiThreadStress)
     SUCCEED();
 }
 
-
 // ===========================================================================
 //  8. Long-name truncation does not crash (truncated to kMaxName=128)
 // ===========================================================================
@@ -192,7 +183,6 @@ TEST_F(XTracer5Test, LongNameTruncationSafe)
     SUCCEED();
 }
 
-
 // ===========================================================================
 //  9. Temporary std::string label does not dangle
 // ===========================================================================
@@ -204,7 +194,6 @@ TEST_F(XTracer5Test, TemporaryStringNameNoDangle)
     }
     SUCCEED();
 }
-
 
 // ===========================================================================
 //  10. Depth counter symmetric: many sequential scopes do not exhaust cap
@@ -221,6 +210,5 @@ TEST_F(XTracer5Test, DepthCounterDecrementsSymmetrically)
     }
     SUCCEED();
 }
-
 
 #endif  // ENABLE_TEST_XTRACER5
