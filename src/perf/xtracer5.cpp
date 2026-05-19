@@ -149,14 +149,11 @@ void XTracer5Scoped::sub(const std::string& name) noexcept
         return;
     }
 
-#if AU_OS_ANDROID
     if (mSubOpen) {
-        writeTraceMarker('E', getpid(), nullptr, 0);
+        sub();  // close the previous sub-slice, maintaining depth symmetry
     }
-#endif
 
-    mSubOpen = true;
-
+    ++gTracerDepth;
 #if AU_OS_ANDROID
     char        buf[kMaxName];
     std::size_t cp = std::min(name.size(), kMaxName - 1);
@@ -168,6 +165,7 @@ void XTracer5Scoped::sub(const std::string& name) noexcept
 #else
     (void)name;
 #endif
+    mSubOpen = true;
 }
 
 void XTracer5Scoped::sub() noexcept
@@ -179,6 +177,9 @@ void XTracer5Scoped::sub() noexcept
 #if AU_OS_ANDROID
     writeTraceMarker('E', getpid(), nullptr, 0);
 #endif
+    if (gTracerDepth > 0u) {
+        --gTracerDepth;
+    }
     mSubOpen = false;
 }
 
