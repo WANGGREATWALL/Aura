@@ -30,14 +30,14 @@
 
 Aura is a curated collection of high-performance C++17 components designed to streamline the development of efficient, cross-platform applications. It focuses on zero-overhead abstractions, robust diagnostics, and simplified system-level operations.
 
-### Core Modules
+### Module Status
 
-| | Tier | Scope | Tests |
-| :---: | :--- | :--- | :--- |
-| ![stable](https://img.shields.io/badge/stable-31A843?style=flat) | `stable` | Public API in `inc/` | Complete & passing |
-| ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) | `verified` | Internal in `src/` | Passing, switch ON |
-| ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) | `draft` | Internal in `src/` | Written, switch OFF |
-| ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) | `plan` | Internal in `src/` | Not yet implemented |
+- ![stable](https://img.shields.io/badge/stable-31A843?style=flat) **stable** — Public API in `inc/`, complete & passing tests.
+- ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) **verified** — Internal in `src/`, passing tests with switch ON.
+- ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) **draft** — Internal in `src/`, tests written but switch OFF.
+- ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) **plan** — Internal in `src/`, not yet implemented.
+
+### Core Modules
 
 | Category | Module | Key Features | Status |
 | :--- | :--- | :--- | :---: |
@@ -48,10 +48,8 @@ Aura is a curated collection of high-performance C++17 components designed to st
 | `au::math` | `xmath` | Constants (π, e), min/max/clamp, power-of-two alignment, and trig helpers. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | `au::re` | `xregex` | std::regex convenience wrappers: match, extract groups, replace, and split. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | `au::memory` | `xbuffer` | Shared-memory buffer with zero-copy reference counting and move semantics. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
-| `au::perf` | `xtimer` | High-resolution wall-clock timer with sleep helpers and formatted timestamps. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
-| | `xtimer5` | Latest scoped timer (v5) with Release/Debug dual-mode, aggregate buffer, and global PerfConfig singleton. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
-| | `xtracer` | Systrace / Perfetto integration for system-level tracing on Android. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
-| | `xtracer5` | Latest tracer (v5), decoupled from timer, with composite AU_PERF5_SCOPE macro. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
+| `au::perf` | `xtimer5` | Hierarchical scoped timer with Release/Debug dual-mode, aggregate buffer, and PerfConfig singleton. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
+| | `xtracer5` | Android Perfetto / ftrace tracer, decoupled from timer, with AU_PERF5_SCOPE composite macro. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
 | `au::util` | `xargs` | Lightweight CLI argument parser with short/long options and quoted values. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
 | `au::sys` | `xplatform` | Hardware topology (CPU cores, memory), environment variables, and OS detection. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | | `xdlib` | Unified cross-platform dynamic library loading (dlopen / LoadLibrary). | ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) |

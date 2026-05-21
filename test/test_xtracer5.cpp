@@ -35,10 +35,6 @@ protected:
     }
 };
 
-// ===========================================================================
-//  1. Basic construction / destruction is safe on every platform
-// ===========================================================================
-
 TEST_F(XTracer5Test, BasicScopeNoCrash)
 {
     {
@@ -47,10 +43,6 @@ TEST_F(XTracer5Test, BasicScopeNoCrash)
     }
     SUCCEED();
 }
-
-// ===========================================================================
-//  2. Disabled — every scope is a no-op
-// ===========================================================================
 
 TEST_F(XTracer5Test, DisabledHardOff)
 {
@@ -62,10 +54,6 @@ TEST_F(XTracer5Test, DisabledHardOff)
     }
     SUCCEED();
 }
-
-// ===========================================================================
-//  3. Tracer level gating
-// ===========================================================================
 
 TEST_F(XTracer5Test, LevelGating)
 {
@@ -85,10 +73,6 @@ TEST_F(XTracer5Test, LevelGating)
     SUCCEED();
 }
 
-// ===========================================================================
-//  4. sub(name) / sub() phase transitions
-// ===========================================================================
-
 TEST_F(XTracer5Test, SubPhaseTransitions)
 {
     {
@@ -97,14 +81,10 @@ TEST_F(XTracer5Test, SubPhaseTransitions)
         au::perf::XTimer5::sleepFor(1);
         root.sub(std::string("phase2"));
         au::perf::XTimer5::sleepFor(1);
-        root.sub();  // explicit close
+        root.sub();
     }
     SUCCEED();
 }
-
-// ===========================================================================
-//  5. Composite macro AU_PERF5_SCOPE wires both timer and tracer
-// ===========================================================================
 
 TEST_F(XTracer5Test, CompositeMacroSafe)
 {
@@ -116,10 +96,6 @@ TEST_F(XTracer5Test, CompositeMacroSafe)
     }
     SUCCEED();
 }
-
-// ===========================================================================
-//  6. Multi-thread tracer scopes do not crash
-// ===========================================================================
 
 TEST_F(XTracer5Test, MultiThreadStress)
 {
@@ -140,10 +116,6 @@ TEST_F(XTracer5Test, MultiThreadStress)
     SUCCEED();
 }
 
-// ===========================================================================
-//  7. Long-name truncation does not crash (truncated to kMaxName=128)
-// ===========================================================================
-
 TEST_F(XTracer5Test, LongNameTruncationSafe)
 {
     std::string huge(2000, 'X');
@@ -153,10 +125,6 @@ TEST_F(XTracer5Test, LongNameTruncationSafe)
     SUCCEED();
 }
 
-// ===========================================================================
-//  8. Temporary std::string label does not dangle
-// ===========================================================================
-
 TEST_F(XTracer5Test, TemporaryStringNameNoDangle)
 {
     {
@@ -165,10 +133,6 @@ TEST_F(XTracer5Test, TemporaryStringNameNoDangle)
     SUCCEED();
 }
 
-// ===========================================================================
-//  9. Depth counter symmetric: many sequential scopes do not exhaust cap
-// ===========================================================================
-
 TEST_F(XTracer5Test, DepthCounterDecrementsSymmetrically)
 {
     for (int i = 0; i < 1024; ++i) {
@@ -176,10 +140,6 @@ TEST_F(XTracer5Test, DepthCounterDecrementsSymmetrically)
     }
     SUCCEED();
 }
-
-// ===========================================================================
-//  10. Nested-scope depth symmetry: outer sub works after inner destruction
-// ===========================================================================
 
 TEST_F(XTracer5Test, NestedScopeDepthSymmetry)
 {
@@ -199,10 +159,6 @@ TEST_F(XTracer5Test, NestedScopeDepthSymmetry)
     SUCCEED();
 }
 
-// ===========================================================================
-//  11. Bare sub() before first named sub() — must be a safe no-op
-// ===========================================================================
-
 TEST_F(XTracer5Test, BareSubBeforeFirstNamedSub)
 {
     {
@@ -215,10 +171,6 @@ TEST_F(XTracer5Test, BareSubBeforeFirstNamedSub)
     }
     SUCCEED();
 }
-
-// ===========================================================================
-//  12. Alternating named / bare sub — multiple open/close cycles
-// ===========================================================================
 
 TEST_F(XTracer5Test, AlternatingSubMultiCycle)
 {
@@ -235,10 +187,6 @@ TEST_F(XTracer5Test, AlternatingSubMultiCycle)
     SUCCEED();
 }
 
-// ===========================================================================
-//  13. Empty name and empty sub-name — boundary on fixed inline buffer
-// ===========================================================================
-
 TEST_F(XTracer5Test, EmptyNameAndSubName)
 {
     {
@@ -252,10 +200,6 @@ TEST_F(XTracer5Test, EmptyNameAndSubName)
     }
     SUCCEED();
 }
-
-// ===========================================================================
-//  14. Same-thread multiple independent XTracer5Scoped instances
-// ===========================================================================
 
 TEST_F(XTracer5Test, SameThreadMultipleInstances)
 {

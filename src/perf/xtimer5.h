@@ -3,35 +3,22 @@
 
 /**
  * @file xtimer5.h
- * @brief Consolidated hierarchical performance timer for the Aura SDK (v5).
+ * @brief Hierarchical performance timer with Release/Debug dual-mode output.
  *
- * v5 is the converged design that absorbs lessons from xtimer / xtimer0..4.
- *
- * Key design decisions:
- *  - **Global unified configuration**: @c PerfConfig::get() is a Meyers
- *    singleton providing lock-free read access to every tuning knob.
- *  - **Level == depth collapse**: callers no longer pass an explicit
- *    @c level parameter. Each scope's level is its tree depth. The internal
- *    safety net @c kHardMaxDepth=512 caps runaway recursion.
+ * Key design:
+ *  - Global unified configuration via @c PerfConfig::get() (Meyers singleton).
+ *  - Level == tree depth: no caller-supplied level parameter.
  *    @c setTimerLevel(N) means "show only nodes whose depth ≤ N".
- *  - **std::string API**: every name parameter is @c const std::string&,
- *    leveraging SSO so 99% of hot-path scopes incur zero allocation while
- *    completely sidestepping the v3 dangling-string_view bug.
- *  - **Trimmed surface**: @c XTimer5Scoped no longer exposes
- *    @c elapsedMs() (use @c XTimer5 instead).
- *  - **sub() immediate output (Release-only)**: in Release mode, @c sub(name)
- *    immediately prints the previous sub-segment's elapsed time. In Debug
- *    mode it remains a tree-aggregating operation.
- *
- * Threading & safety:
- *  - Hot path is fully lock-free (TLS pool / arena / openStack).
- *  - All atomic reads use @c std::memory_order_relaxed.
+ *    The internal safety net @c kHardMaxDepth5=512 caps runaway recursion.
+ *  - Name lifetime: the constructor copies @p name into an inline buffer
+ *    (Release) or the TLS arena (Debug); temporary @c std::string is safe.
+ *  - @c sub() immediate output (Release-only): each @c sub(name) immediately
+ *    prints the just-closed segment. Debug mode defers output to root flush.
  *  - All destructors are @c noexcept; OOM degrades a node to a one-liner.
  *
  * Quick start:
  * @code
  *   auto& cfg = au::perf::PerfConfig::get();
- *   cfg.setEnabled(true);
  *   cfg.setMode(au::perf::Mode5::Debug);
  *   cfg.setTimerLevel(3);
  *
@@ -51,22 +38,20 @@ namespace au {
 namespace perf {
 
 // ---------------------------------------------------------------------------
-// Level sentinels and depth cap.
+// Level sentinels and depth cap
 // ---------------------------------------------------------------------------
 
 /// Hard-off sentinel: never activate any scope on this channel.
 constexpr int32_t kPerfLevelOff5 = -1;
 
-/// Always-on sentinel: every scope passes the level gate (subject to
-/// the depth cap below).
+/// Always-on sentinel: every scope passes the level gate.
 constexpr int32_t kPerfLevelAll5 = INT32_MAX;
 
-/// Internal safety net: nodes deeper than this are degraded to a one-liner
-/// instead of being inserted into the tree. Not user-tunable.
+/// Internal safety net: nodes deeper than this are degraded to a one-liner.
 constexpr uint32_t kHardMaxDepth5 = 512;
 
 // ---------------------------------------------------------------------------
-// Mode selector.
+// Mode selector
 // ---------------------------------------------------------------------------
 
 enum class Mode5 : int32_t
@@ -82,9 +67,8 @@ enum class Mode5 : int32_t
 /**
  * @brief Global performance configuration singleton.
  *
- * All read/write accessors are atomic and lock-free; safe to call from any
- * thread at any time. Follows the same Meyers-singleton pattern as
- * @c au::log::Config.
+ * All read/write accessors are atomic and lock-free; safe to call from
+ * any thread at any time.
  */
 class PerfConfig
 {
@@ -95,17 +79,11 @@ public:
         return instance;
     }
 
-    // ── master switch ──
-
     void setEnabled(bool on) noexcept;
     bool isEnabled() const noexcept;
 
-    // ── mode ──
-
     void  setMode(Mode5 mode) noexcept;
     Mode5 getMode() const noexcept;
-
-    // ── level thresholds (level == depth) ──
 
     void    setTimerLevel(int32_t threshold) noexcept;
     int32_t getTimerLevel() const noexcept;
@@ -113,21 +91,15 @@ public:
     void    setTracerLevel(int32_t threshold) noexcept;
     int32_t getTracerLevel() const noexcept;
 
-    // ── root header label ──
-
-    /// Truncates to 63 chars internally. Empty string is allowed.
     void setRootName(const std::string& name) noexcept;
 
     /// Copy into @p outBuf (always NUL-terminated).
     void getRootName(char* outBuf, std::size_t bufSize) const noexcept;
 
-    // ── aggregate mode ──
-
     void setAggregateMode(bool on) noexcept;
     bool isAggregateMode() const noexcept;
 
-    /// Drain the global aggregate buffer. Idempotent — safe to call multiple
-    /// times; a no-op when empty.
+    /// Drain the global aggregate buffer. Idempotent.
     void flushAggregated() noexcept;
 
     /// Load configuration from system properties (Android) or environment
@@ -138,9 +110,9 @@ public:
                                 const std::string& propTracerLevel) noexcept;
 
 private:
-    PerfConfig()                                  = default;
-    PerfConfig(const PerfConfig&)                 = delete;
-    PerfConfig& operator=(const PerfConfig&)      = delete;
+    PerfConfig()                             = default;
+    PerfConfig(const PerfConfig&)            = delete;
+    PerfConfig& operator=(const PerfConfig&) = delete;
 
     std::atomic<bool>    mEnabled{true};
     std::atomic<Mode5>   mMode{Mode5::Release};
@@ -153,23 +125,20 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// XTimer5 — bare stopwatch.
+// XTimer5 — bare stopwatch
 // ---------------------------------------------------------------------------
 
-/// Lightweight stopwatch. Trivially copyable; ~ns construction.
-/// Use this when you need an explicit elapsed-millisecond reading;
-/// @c XTimer5Scoped no longer exposes that accessor.
+/// Lightweight stopwatch. Use for explicit elapsed-millisecond readings.
 class XTimer5
 {
 public:
     using Clock     = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
 
-    /// Sleep helper (portable). Non-positive @p ms returns immediately.
+    /// Sleep helper (portable).
     static void sleepFor(int64_t ms) noexcept;
 
-    /// Thread-safe wrapper around @c localtime. Default format
-    /// "%Y-%m-%d-%H-%M-%S". Returns "<formatted>_<ms>" with sub-second tail.
+    /// Thread-safe wrapper around localtime. Returns "<formatted>_<ms>".
     static std::string getTimeFormatted(const std::string& fmt = "%Y-%m-%d-%H-%M-%S") noexcept;
 
     XTimer5() noexcept : mBegin(Clock::now()) {}
@@ -182,25 +151,21 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// XTimer5Scoped — RAII hierarchical timer.
+// XTimer5Scoped — RAII hierarchical timer
 // ---------------------------------------------------------------------------
 
 /**
  * @brief RAII scoped timer with optional thread-local tree building.
  *
  * Activation rules (evaluated once at construction):
- *  - PerfConfig::get().isEnabled() must be true
- *  - the scope's tree depth must be ≤ PerfConfig::get().getTimerLevel()
- *  - the depth must be < @c kHardMaxDepth5 (internal safety net)
+ *  - @c PerfConfig::get().isEnabled() must be true
+ *  - the scope's tree depth must be ≤ @c getTimerLevel()
+ *  - the depth must be < @c kHardMaxDepth5
  *
  * If inactive, every member is a no-op with zero allocation.
  *
- * Name lifetime: the constructor copies @p name into either an inline
- * buffer (Release path) or the TLS arena (Debug path); the caller may
- * safely pass a temporary @c std::string.
- *
- * @note @c XTimer5Scoped intentionally does not expose @c elapsedMs().
- *       Use @c XTimer5 if explicit measurement is needed.
+ * @note This class intentionally does not expose @c elapsedMs().
+ *       Use @c XTimer5 for explicit measurement.
  */
 class XTimer5Scoped
 {
@@ -224,7 +189,7 @@ private:
     uint32_t                              mDepth;
     bool                                  mIsRoot;
     std::chrono::steady_clock::time_point mBegin;
-    std::chrono::steady_clock::time_point mSubBegin;  ///< Release sub() timing.
+    std::chrono::steady_clock::time_point mSubBegin;
 
     static constexpr std::size_t kInlineNameCap = 96;
     char                         mNameInline[kInlineNameCap];
