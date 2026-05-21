@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.14)
 # Version (update here; triggers re-configure)
 # ============================================================================
 set(AURA_VERSION_MAJOR 1)
-set(AURA_VERSION_MINOR 3)
+set(AURA_VERSION_MINOR 4)
 set(AURA_VERSION_PATCH 0)
 set(AURA_VERSION "${AURA_VERSION_MAJOR}.${AURA_VERSION_MINOR}.${AURA_VERSION_PATCH}")
 
