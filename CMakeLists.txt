@@ -42,18 +42,8 @@ set(AURA_SOURCES
     src/log/xlogger.cpp
     src/cv/ximage.cpp
     src/perf/xtimer.cpp
-    src/perf/xtimer0.cpp
-    src/perf/xtimer1.cpp
-    src/perf/xtimer2.cpp
-    src/perf/xtimer3.cpp
-    src/perf/xtimer4.cpp
     src/perf/xtimer5.cpp
     src/perf/xtracer.cpp
-    src/perf/xtracer0.cpp
-    src/perf/xtracer1.cpp
-    src/perf/xtracer2.cpp
-    src/perf/xtracer3.cpp
-    src/perf/xtracer4.cpp
     src/perf/xtracer5.cpp
     src/util/xargs.cpp
     third_party/cJSON/cJSON.c
@@ -82,16 +72,6 @@ option(ENABLE_TEST_XREGEX    "Enable xregex unit test"    ON)
 option(ENABLE_TEST_XARGS     "Enable xargs unit test"     ON)
 option(ENABLE_TEST_XPATH     "Enable xpath unit test"     ON)
 option(ENABLE_TEST_XTIMER    "Enable xtimer unit test"    ON)
-option(ENABLE_TEST_XTIMER1   "Enable xtimer1 unit test"   ON)
-option(ENABLE_TEST_XTIMER0   "Enable xtimer0 unit test"   ON)
-option(ENABLE_TEST_XTRACER0  "Enable xtracer0 unit test"  ON)
-option(ENABLE_TEST_XTRACER1  "Enable xtracer1 unit test"  ON)
-option(ENABLE_TEST_XTIMER2   "Enable xtimer2 unit test"   ON)
-option(ENABLE_TEST_XTRACER2  "Enable xtracer2 unit test"  ON)
-option(ENABLE_TEST_XTIMER3   "Enable xtimer3 unit test"   ON)
-option(ENABLE_TEST_XTRACER3  "Enable xtracer3 unit test"  ON)
-option(ENABLE_TEST_XTIMER4   "Enable xtimer4 unit test"   ON)
-option(ENABLE_TEST_XTRACER4  "Enable xtracer4 unit test"  ON)
 option(ENABLE_TEST_XTIMER5   "Enable xtimer5 unit test"   ON)
 option(ENABLE_TEST_XTRACER5  "Enable xtracer5 unit test"  ON)
 option(ENABLE_TEST_XPLATFORM "Enable xplatform unit test" ON)
@@ -135,18 +115,9 @@ aura_add_test(xregex)
 aura_add_test(xargs)
 aura_add_test(xpath)
 aura_add_test(xtimer)
-aura_add_test(xtimer0)
-aura_add_test(xtimer1)
-aura_add_test(xtimer2)
-aura_add_test(xtimer3)
-aura_add_test(xtracer0)
-aura_add_test(xtracer1)
-aura_add_test(xtracer2)
-aura_add_test(xtracer3)
-aura_add_test(xtimer4)
-aura_add_test(xtracer4)
 aura_add_test(xtimer5)
 aura_add_test(xtracer5)
+aura_add_test(xtracer)
 aura_add_test(xplatform)
 aura_add_test(xerror)
 aura_add_test(xfile)

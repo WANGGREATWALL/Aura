@@ -8,9 +8,8 @@
  * v5 is the converged design that absorbs lessons from xtimer / xtimer0..4.
  *
  * Key design decisions:
- *  - **Global unified configuration**: every scope reads the same global
- *    config (setEnabled / setMode / setTimerLevel / …). No per-caller
- *    context instances.
+ *  - **Global unified configuration**: @c PerfConfig::get() is a Meyers
+ *    singleton providing lock-free read access to every tuning knob.
  *  - **Level == depth collapse**: callers no longer pass an explicit
  *    @c level parameter. Each scope's level is its tree depth. The internal
  *    safety net @c kHardMaxDepth=512 caps runaway recursion.
@@ -31,9 +30,10 @@
  *
  * Quick start:
  * @code
- *   au::perf::setEnabled(true);
- *   au::perf::setMode(au::perf::Mode5::Debug);
- *   au::perf::setTimerLevel(3);  // show only nodes with depth ≤ 3
+ *   auto& cfg = au::perf::PerfConfig::get();
+ *   cfg.setEnabled(true);
+ *   cfg.setMode(au::perf::Mode5::Debug);
+ *   cfg.setTimerLevel(3);
  *
  *   void XNet::forward() {
  *       AU_PERF5_SCOPE("XNet::forward");
@@ -76,35 +76,81 @@ enum class Mode5 : int32_t
 };
 
 // ---------------------------------------------------------------------------
-// Global configuration (free functions, lock-free reads)
+// PerfConfig — Meyers singleton, lock-free reads
 // ---------------------------------------------------------------------------
 
-void setEnabled(bool on) noexcept;
-bool isEnabled() noexcept;
+/**
+ * @brief Global performance configuration singleton.
+ *
+ * All read/write accessors are atomic and lock-free; safe to call from any
+ * thread at any time. Follows the same Meyers-singleton pattern as
+ * @c au::log::Config.
+ */
+class PerfConfig
+{
+public:
+    static PerfConfig& get() noexcept
+    {
+        static PerfConfig instance;
+        return instance;
+    }
 
-void  setMode(Mode5 mode) noexcept;
-Mode5 getMode() noexcept;
+    // ── master switch ──
 
-void    setTimerLevel(int32_t threshold) noexcept;
-int32_t getTimerLevel() noexcept;
+    void setEnabled(bool on) noexcept;
+    bool isEnabled() const noexcept;
 
-void    setTracerLevel(int32_t threshold) noexcept;
-int32_t getTracerLevel() noexcept;
+    // ── mode ──
 
-void setRootName(const std::string& name) noexcept;
-void getRootName(char* outBuf, std::size_t bufSize) noexcept;
+    void  setMode(Mode5 mode) noexcept;
+    Mode5 getMode() const noexcept;
 
-void setAggregateMode(bool on) noexcept;
-bool isAggregateMode() noexcept;
+    // ── level thresholds (level == depth) ──
 
-/// Drain the global aggregate buffer. Idempotent — safe to call multiple
-/// times; a no-op when empty.
-void flushAggregated() noexcept;
+    void    setTimerLevel(int32_t threshold) noexcept;
+    int32_t getTimerLevel() const noexcept;
 
-/// Load configuration from system properties (Android) or environment
-/// variables (other platforms). Pass an empty string to skip an entry.
-void loadFromSystemProperty(const std::string& propEnabled, const std::string& propMode,
-                            const std::string& propTimerLevel, const std::string& propTracerLevel) noexcept;
+    void    setTracerLevel(int32_t threshold) noexcept;
+    int32_t getTracerLevel() const noexcept;
+
+    // ── root header label ──
+
+    /// Truncates to 63 chars internally. Empty string is allowed.
+    void setRootName(const std::string& name) noexcept;
+
+    /// Copy into @p outBuf (always NUL-terminated).
+    void getRootName(char* outBuf, std::size_t bufSize) const noexcept;
+
+    // ── aggregate mode ──
+
+    void setAggregateMode(bool on) noexcept;
+    bool isAggregateMode() const noexcept;
+
+    /// Drain the global aggregate buffer. Idempotent — safe to call multiple
+    /// times; a no-op when empty.
+    void flushAggregated() noexcept;
+
+    /// Load configuration from system properties (Android) or environment
+    /// variables (other platforms). Pass an empty string to skip an entry.
+    void loadFromSystemProperty(const std::string& propEnabled,
+                                const std::string& propMode,
+                                const std::string& propTimerLevel,
+                                const std::string& propTracerLevel) noexcept;
+
+private:
+    PerfConfig()                                  = default;
+    PerfConfig(const PerfConfig&)                 = delete;
+    PerfConfig& operator=(const PerfConfig&)      = delete;
+
+    std::atomic<bool>    mEnabled{true};
+    std::atomic<Mode5>   mMode{Mode5::Release};
+    std::atomic<int32_t> mTimerLevel{3};
+    std::atomic<int32_t> mTracerLevel{kPerfLevelAll5};
+    std::atomic<bool>    mAggregate{false};
+
+    std::atomic<uint32_t> mRootNameLen{4};
+    char                  mRootName[64]{'p', 'e', 'r', 'f', '\0'};
+};
 
 // ---------------------------------------------------------------------------
 // XTimer5 — bare stopwatch.
@@ -143,8 +189,8 @@ private:
  * @brief RAII scoped timer with optional thread-local tree building.
  *
  * Activation rules (evaluated once at construction):
- *  - global isEnabled() must be true
- *  - the scope's tree depth must be ≤ getTimerLevel()
+ *  - PerfConfig::get().isEnabled() must be true
+ *  - the scope's tree depth must be ≤ PerfConfig::get().getTimerLevel()
  *  - the depth must be < @c kHardMaxDepth5 (internal safety net)
  *
  * If inactive, every member is a no-op with zero allocation.
@@ -165,24 +211,7 @@ public:
     XTimer5Scoped(const XTimer5Scoped&)            = delete;
     XTimer5Scoped& operator=(const XTimer5Scoped&) = delete;
 
-    /**
-     * @brief End the previous sub-segment (if any) and open a new one.
-     *
-     * Mode behavior:
-     *  - Release: immediately prints "[perf5] <name>: X.XXX ms" for the
-     *    just-closed segment via @c XLOG_I, then opens the new segment.
-     *  - Debug: closes the previous sub-node in the tree and opens a new
-     *    sibling under this scope; output is deferred to root flush.
-     */
     void sub(const std::string& name) noexcept;
-
-    /**
-     * @brief End the previous sub-segment (if any). No-op when none is open.
-     *
-     * Mode behavior:
-     *  - Release: immediately prints the just-closed segment.
-     *  - Debug: closes the sub-node in the tree.
-     */
     void sub() noexcept;
 
 private:

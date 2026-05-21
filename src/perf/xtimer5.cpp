@@ -92,35 +92,6 @@ uint64_t tidHash(std::thread::id id) noexcept { return static_cast<uint64_t>(std
 }  // anonymous namespace
 
 // ===========================================================================
-//  Global configuration atomics
-// ===========================================================================
-
-namespace {
-
-std::atomic<bool>    gEnabled{true};
-std::atomic<Mode5>   gMode{Mode5::Release};
-std::atomic<int32_t> gTimerLevel{3};
-std::atomic<int32_t> gTracerLevel{kPerfLevelAll5};
-std::atomic<bool>    gAggregate{false};
-
-std::atomic<uint32_t> gRootNameLen{4};
-char                  gRootName[64]{'p', 'e', 'r', 'f', '\0'};
-
-}  // anonymous namespace
-
-// ===========================================================================
-//  Forward declarations of file-local helpers (needed by safety net)
-// ===========================================================================
-
-namespace {
-
-void emitFormatted(const char* fmt, ...) noexcept;
-void printTree(const std::vector<PerfNode>& pool, const std::vector<char>& arena, const std::vector<int32_t>& roots,
-               uint64_t tid, const char* rootName) noexcept;
-
-}  // anonymous namespace
-
-// ===========================================================================
 //  Aggregate buffer (global, single)
 // ===========================================================================
 
@@ -135,6 +106,10 @@ struct FlushedTree
 
 namespace {
 
+void emitFormatted(const char* fmt, ...) noexcept;
+void printTree(const std::vector<PerfNode>& pool, const std::vector<char>& arena, const std::vector<int32_t>& roots,
+               uint64_t tid, const char* rootName) noexcept;
+
 struct AggregateData
 {
     std::mutex               mMutex;
@@ -143,9 +118,6 @@ struct AggregateData
 
 AggregateData& gAggData() noexcept
 {
-    // Leaky singleton — same rationale as the old ContextRegistry:
-    // atexit / dlclose callbacks may run after arbitrary static destructors,
-    // so the mutex must never be destroyed.
     static AggregateData* const instance = new AggregateData();
     return *instance;
 }
@@ -185,47 +157,47 @@ void registerSafetyNetOnce() noexcept
 }  // anonymous namespace
 
 // ===========================================================================
-//  Global configuration — public free functions
+//  PerfConfig — Meyers singleton
 // ===========================================================================
 
-void setEnabled(bool on) noexcept { gEnabled.store(on, std::memory_order_relaxed); }
-bool isEnabled() noexcept { return gEnabled.load(std::memory_order_relaxed); }
+void PerfConfig::setEnabled(bool on) noexcept { mEnabled.store(on, std::memory_order_relaxed); }
+bool PerfConfig::isEnabled() const noexcept { return mEnabled.load(std::memory_order_relaxed); }
 
-void  setMode(Mode5 mode) noexcept { gMode.store(mode, std::memory_order_relaxed); }
-Mode5 getMode() noexcept { return gMode.load(std::memory_order_relaxed); }
+void  PerfConfig::setMode(Mode5 mode) noexcept { mMode.store(mode, std::memory_order_relaxed); }
+Mode5 PerfConfig::getMode() const noexcept { return mMode.load(std::memory_order_relaxed); }
 
-void    setTimerLevel(int32_t threshold) noexcept { gTimerLevel.store(threshold, std::memory_order_relaxed); }
-int32_t getTimerLevel() noexcept { return gTimerLevel.load(std::memory_order_relaxed); }
+void    PerfConfig::setTimerLevel(int32_t threshold) noexcept { mTimerLevel.store(threshold, std::memory_order_relaxed); }
+int32_t PerfConfig::getTimerLevel() const noexcept { return mTimerLevel.load(std::memory_order_relaxed); }
 
-void    setTracerLevel(int32_t threshold) noexcept { gTracerLevel.store(threshold, std::memory_order_relaxed); }
-int32_t getTracerLevel() noexcept { return gTracerLevel.load(std::memory_order_relaxed); }
+void    PerfConfig::setTracerLevel(int32_t threshold) noexcept { mTracerLevel.store(threshold, std::memory_order_relaxed); }
+int32_t PerfConfig::getTracerLevel() const noexcept { return mTracerLevel.load(std::memory_order_relaxed); }
 
-void setRootName(const std::string& name) noexcept
+void PerfConfig::setRootName(const std::string& name) noexcept
 {
-    const std::size_t cap = sizeof(gRootName) - 1;
+    const std::size_t cap = sizeof(mRootName) - 1;
     const std::size_t cp  = std::min(name.size(), cap);
     if (cp > 0u) {
-        std::memcpy(gRootName, name.data(), cp);
+        std::memcpy(mRootName, name.data(), cp);
     }
-    gRootName[cp] = '\0';
-    gRootNameLen.store(static_cast<uint32_t>(cp), std::memory_order_release);
+    mRootName[cp] = '\0';
+    mRootNameLen.store(static_cast<uint32_t>(cp), std::memory_order_release);
 }
 
-void getRootName(char* outBuf, std::size_t bufSize) noexcept
+void PerfConfig::getRootName(char* outBuf, std::size_t bufSize) const noexcept
 {
     if (outBuf == nullptr || bufSize == 0) {
         return;
     }
-    const uint32_t    len = gRootNameLen.load(std::memory_order_acquire);
+    const uint32_t    len = mRootNameLen.load(std::memory_order_acquire);
     const std::size_t cp  = std::min(static_cast<std::size_t>(len), bufSize - 1);
-    std::memcpy(outBuf, gRootName, cp);
+    std::memcpy(outBuf, mRootName, cp);
     outBuf[cp] = '\0';
 }
 
-void setAggregateMode(bool on) noexcept { gAggregate.store(on, std::memory_order_relaxed); }
-bool isAggregateMode() noexcept { return gAggregate.load(std::memory_order_relaxed); }
+void PerfConfig::setAggregateMode(bool on) noexcept { mAggregate.store(on, std::memory_order_relaxed); }
+bool PerfConfig::isAggregateMode() const noexcept { return mAggregate.load(std::memory_order_relaxed); }
 
-void flushAggregated() noexcept
+void PerfConfig::flushAggregated() noexcept
 {
     std::vector<FlushedTree> local;
     try {
@@ -247,8 +219,9 @@ void flushAggregated() noexcept
     emitFormatted("[perf5] ===== end =====");
 }
 
-void loadFromSystemProperty(const std::string& propEnabled, const std::string& propMode,
-                            const std::string& propTimerLevel, const std::string& propTracerLevel) noexcept
+void PerfConfig::loadFromSystemProperty(const std::string& propEnabled, const std::string& propMode,
+                                        const std::string& propTimerLevel,
+                                        const std::string& propTracerLevel) noexcept
 {
     if (!propEnabled.empty()) {
         const int v = au::sys::getSystemPropertyValue(propEnabled.c_str(), isEnabled() ? 1 : 0);
@@ -504,7 +477,8 @@ void XTimer5Scoped::begin(const std::string& name) noexcept
         mNameLen        = static_cast<uint32_t>(cp);
     }
 
-    if (!isEnabled()) {
+    PerfConfig& cfg = PerfConfig::get();
+    if (!cfg.isEnabled()) {
         return;
     }
 
@@ -513,7 +487,7 @@ void XTimer5Scoped::begin(const std::string& name) noexcept
         return;
     }
 
-    const Mode5 mode = getMode();
+    const Mode5 mode = cfg.getMode();
 
     const uint32_t depth =
         (mode == Mode5::Release) ? gTimerReleaseDepth : static_cast<uint32_t>(tlsTree().openStack.size());
@@ -522,7 +496,7 @@ void XTimer5Scoped::begin(const std::string& name) noexcept
         return;
     }
 
-    const int32_t threshold = getTimerLevel();
+    const int32_t threshold = cfg.getTimerLevel();
     if (threshold == kPerfLevelOff5 || static_cast<int32_t>(depth) > threshold) {
         return;
     }
@@ -604,9 +578,10 @@ XTimer5Scoped::~XTimer5Scoped() noexcept
     // -- Outermost scope: flush this thread's tree --
     tls.inFlush = true;
 
-    const bool aggregate = isAggregateMode();
-    char       rootName[64];
-    getRootName(rootName, sizeof(rootName));
+    PerfConfig& cfg = PerfConfig::get();
+    const bool  aggregate = cfg.isAggregateMode();
+    char        rootName[64];
+    cfg.getRootName(rootName, sizeof(rootName));
 
     try {
         if (aggregate) {
@@ -705,7 +680,8 @@ void XTimer5Scoped::sub(const std::string& name) noexcept
     if (depth >= kHardMaxDepth5) {
         return;
     }
-    const int32_t threshold = getTimerLevel();
+    PerfConfig& cfg      = PerfConfig::get();
+    const int32_t threshold = cfg.getTimerLevel();
     if (threshold == kPerfLevelOff5 || static_cast<int32_t>(depth) > threshold) {
         return;
     }

@@ -13,15 +13,6 @@
 // ---------------------------------------------------------------------------
 //  Fixture
 // ---------------------------------------------------------------------------
-//
-//  XTracer5Scoped's user-visible payload is Android-only (writes to
-//  /sys/kernel/.../trace_marker). On non-Android targets every body
-//  compiles down to no-ops that maintain the per-thread depth counter.
-//  These tests therefore focus on:
-//    1. The tracer never crashes regardless of platform.
-//    2. Activation gates (enabled / level) behave correctly.
-//    3. Composite macro AU_PERF5_SCOPE wires both timer and tracer.
-//    4. Multi-threaded use is safe.
 
 class XTracer5Test : public ::testing::Test
 {
@@ -34,12 +25,13 @@ protected:
 #if AU_OS_ANDROID
         au::log::Config::get().setShellPrintEnabled(true);
 #endif
-        au::perf::setEnabled(true);
-        au::perf::setMode(au::perf::Mode5::Release);
-        au::perf::setTimerLevel(au::perf::kPerfLevelOff5);  // silence timer noise
-        au::perf::setTracerLevel(au::perf::kPerfLevelAll5);
-        au::perf::setAggregateMode(false);
-        au::perf::setRootName("perf");
+        auto& cfg = au::perf::PerfConfig::get();
+        cfg.setEnabled(true);
+        cfg.setMode(au::perf::Mode5::Release);
+        cfg.setTimerLevel(au::perf::kPerfLevelOff5);  // silence timer noise
+        cfg.setTracerLevel(au::perf::kPerfLevelAll5);
+        cfg.setAggregateMode(false);
+        cfg.setRootName("perf");
     }
 };
 
@@ -62,7 +54,7 @@ TEST_F(XTracer5Test, BasicScopeNoCrash)
 
 TEST_F(XTracer5Test, DisabledHardOff)
 {
-    au::perf::setEnabled(false);
+    au::perf::PerfConfig::get().setEnabled(false);
 
     {
         au::perf::XTracer5Scoped a(std::string("off.tracer.a"));
@@ -77,17 +69,19 @@ TEST_F(XTracer5Test, DisabledHardOff)
 
 TEST_F(XTracer5Test, LevelGating)
 {
-    au::perf::setTracerLevel(au::perf::kPerfLevelOff5);
+    auto& cfg = au::perf::PerfConfig::get();
+
+    cfg.setTracerLevel(au::perf::kPerfLevelOff5);
     {
         au::perf::XTracer5Scoped s(std::string("never.traced"));
     }
 
-    au::perf::setTracerLevel(0);
+    cfg.setTracerLevel(0);
     {
         au::perf::XTracer5Scoped s(std::string("traced"));
     }
 
-    au::perf::setTracerLevel(au::perf::kPerfLevelAll5);
+    cfg.setTracerLevel(au::perf::kPerfLevelAll5);
     SUCCEED();
 }
 
@@ -114,7 +108,7 @@ TEST_F(XTracer5Test, SubPhaseTransitions)
 
 TEST_F(XTracer5Test, CompositeMacroSafe)
 {
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::PerfConfig::get().setTimerLevel(au::perf::kPerfLevelAll5);
 
     {
         AU_PERF5_SCOPE(std::string("composite.tracer.scope"));
@@ -228,7 +222,7 @@ TEST_F(XTracer5Test, BareSubBeforeFirstNamedSub)
 
 TEST_F(XTracer5Test, AlternatingSubMultiCycle)
 {
-    au::perf::setTracerLevel(au::perf::kPerfLevelAll5);
+    au::perf::PerfConfig::get().setTracerLevel(au::perf::kPerfLevelAll5);
 
     {
         au::perf::XTracer5Scoped s(std::string("alt.root"));

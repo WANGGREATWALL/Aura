@@ -80,14 +80,14 @@ void XTracer5Scoped::begin(const std::string& name) noexcept
     mNameLen = 0;
     mName[0] = '\0';
 
-    if (!isEnabled()) {
+    if (!PerfConfig::get().isEnabled()) {
         return;
     }
 
     if (gTracerDepth >= kHardMaxDepth5) {
         return;
     }
-    const int32_t threshold = getTracerLevel();
+    const int32_t threshold = PerfConfig::get().getTracerLevel();
     if (threshold == kPerfLevelOff5 || static_cast<int32_t>(gTracerDepth) > threshold) {
         return;
     }

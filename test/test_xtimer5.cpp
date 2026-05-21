@@ -54,12 +54,13 @@ protected:
         au::log::Config::get().setShellPrintEnabled(true);
 #endif
         // Reset global config to a deterministic baseline.
-        au::perf::setEnabled(true);
-        au::perf::setMode(au::perf::Mode5::Release);
-        au::perf::setTimerLevel(3);
-        au::perf::setTracerLevel(au::perf::kPerfLevelAll5);
-        au::perf::setAggregateMode(false);
-        au::perf::setRootName("perf");
+        auto& cfg = au::perf::PerfConfig::get();
+        cfg.setEnabled(true);
+        cfg.setMode(au::perf::Mode5::Release);
+        cfg.setTimerLevel(3);
+        cfg.setTracerLevel(au::perf::kPerfLevelAll5);
+        cfg.setAggregateMode(false);
+        cfg.setRootName("perf");
     }
 
     static int countOccurrences(const std::string& s, const std::string& sub)
@@ -75,36 +76,38 @@ protected:
 };
 
 // ===========================================================================
-//  1. Global configuration — basic accessors
+//  1. PerfConfig — basic accessors
 // ===========================================================================
 
-TEST_F(XTimer5Test, GlobalConfigAccessors)
+TEST_F(XTimer5Test, PerfConfigAccessors)
 {
-    au::perf::setEnabled(false);
-    EXPECT_FALSE(au::perf::isEnabled());
-    au::perf::setEnabled(true);
-    EXPECT_TRUE(au::perf::isEnabled());
+    auto& cfg = au::perf::PerfConfig::get();
 
-    au::perf::setMode(au::perf::Mode5::Debug);
-    EXPECT_EQ(au::perf::getMode(), au::perf::Mode5::Debug);
+    cfg.setEnabled(false);
+    EXPECT_FALSE(cfg.isEnabled());
+    cfg.setEnabled(true);
+    EXPECT_TRUE(cfg.isEnabled());
 
-    au::perf::setTimerLevel(7);
-    EXPECT_EQ(au::perf::getTimerLevel(), 7);
-    au::perf::setTimerLevel(au::perf::kPerfLevelOff5);
-    EXPECT_EQ(au::perf::getTimerLevel(), au::perf::kPerfLevelOff5);
+    cfg.setMode(au::perf::Mode5::Debug);
+    EXPECT_EQ(cfg.getMode(), au::perf::Mode5::Debug);
 
-    au::perf::setTracerLevel(0);
-    EXPECT_EQ(au::perf::getTracerLevel(), 0);
+    cfg.setTimerLevel(7);
+    EXPECT_EQ(cfg.getTimerLevel(), 7);
+    cfg.setTimerLevel(au::perf::kPerfLevelOff5);
+    EXPECT_EQ(cfg.getTimerLevel(), au::perf::kPerfLevelOff5);
 
-    au::perf::setRootName("AlgoRoot");
+    cfg.setTracerLevel(0);
+    EXPECT_EQ(cfg.getTracerLevel(), 0);
+
+    cfg.setRootName("AlgoRoot");
     char name[64] = {0};
-    au::perf::getRootName(name, sizeof(name));
+    cfg.getRootName(name, sizeof(name));
     EXPECT_STREQ(name, "AlgoRoot");
 
-    au::perf::setAggregateMode(true);
-    EXPECT_TRUE(au::perf::isAggregateMode());
-    au::perf::setAggregateMode(false);
-    EXPECT_FALSE(au::perf::isAggregateMode());
+    cfg.setAggregateMode(true);
+    EXPECT_TRUE(cfg.isAggregateMode());
+    cfg.setAggregateMode(false);
+    EXPECT_FALSE(cfg.isAggregateMode());
 }
 
 // ===========================================================================
@@ -113,19 +116,21 @@ TEST_F(XTimer5Test, GlobalConfigAccessors)
 
 TEST_F(XTimer5Test, RootNameStringAndTruncation)
 {
-    au::perf::setRootName(std::string("literal-root"));
+    auto& cfg = au::perf::PerfConfig::get();
+
+    cfg.setRootName(std::string("literal-root"));
     char buf[64] = {0};
-    au::perf::getRootName(buf, sizeof(buf));
+    cfg.getRootName(buf, sizeof(buf));
     EXPECT_STREQ(buf, "literal-root");
 
-    au::perf::setRootName(std::string{});
+    cfg.setRootName(std::string{});
     std::memset(buf, 0xCC, sizeof(buf));
-    au::perf::getRootName(buf, sizeof(buf));
+    cfg.getRootName(buf, sizeof(buf));
     EXPECT_STREQ(buf, "");
 
     std::string huge(200, 'x');
-    au::perf::setRootName(huge);
-    au::perf::getRootName(buf, sizeof(buf));
+    cfg.setRootName(huge);
+    cfg.getRootName(buf, sizeof(buf));
     EXPECT_LE(std::strlen(buf), sizeof(buf) - 1);
     EXPECT_GT(std::strlen(buf), 0u);
 }
@@ -164,8 +169,9 @@ TEST_F(XTimer5Test, TimerGetTimeFormatted)
 
 TEST_F(XTimer5Test, ReleaseModeOneLiner)
 {
-    au::perf::setMode(au::perf::Mode5::Release);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Release);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -187,8 +193,9 @@ TEST_F(XTimer5Test, ReleaseModeOneLiner)
 
 TEST_F(XTimer5Test, DebugModeTreeHierarchy)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -225,8 +232,9 @@ TEST_F(XTimer5Test, DebugModeTreeHierarchy)
 
 TEST_F(XTimer5Test, SubAndSubNamedDebug)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -251,8 +259,9 @@ TEST_F(XTimer5Test, SubAndSubNamedDebug)
 
 TEST_F(XTimer5Test, SubReleaseImmediateOutput)
 {
-    au::perf::setMode(au::perf::Mode5::Release);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Release);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -277,9 +286,10 @@ TEST_F(XTimer5Test, SubReleaseImmediateOutput)
 
 TEST_F(XTimer5Test, LevelFiltering)
 {
-    au::perf::setMode(au::perf::Mode5::Release);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Release);
 
-    au::perf::setTimerLevel(0);
+    cfg.setTimerLevel(0);
     {
         StdoutCapture cap;
         {
@@ -293,7 +303,7 @@ TEST_F(XTimer5Test, LevelFiltering)
         EXPECT_EQ(out.find("depth1"), std::string::npos) << "depth>level must be silent";
     }
 
-    au::perf::setTimerLevel(au::perf::kPerfLevelOff5);
+    cfg.setTimerLevel(au::perf::kPerfLevelOff5);
     {
         StdoutCapture cap;
         {
@@ -309,9 +319,10 @@ TEST_F(XTimer5Test, LevelFiltering)
 
 TEST_F(XTimer5Test, DisabledHardOff)
 {
-    au::perf::setEnabled(false);
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setEnabled(false);
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -327,9 +338,10 @@ TEST_F(XTimer5Test, DisabledHardOff)
 
 TEST_F(XTimer5Test, MultiThreadIsolation)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
-    au::perf::setAggregateMode(false);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    cfg.setAggregateMode(false);
 
     constexpr int kThreads = 4;
     StdoutCapture cap;
@@ -362,9 +374,10 @@ TEST_F(XTimer5Test, MultiThreadIsolation)
 
 TEST_F(XTimer5Test, AggregateModeFlush)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
-    au::perf::setAggregateMode(true);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    cfg.setAggregateMode(true);
 
     {
         StdoutCapture capDuring;
@@ -383,7 +396,7 @@ TEST_F(XTimer5Test, AggregateModeFlush)
 
     {
         StdoutCapture capFlush;
-        au::perf::flushAggregated();
+        cfg.flushAggregated();
         const std::string outFlush = capFlush.drain();
         EXPECT_NE(outFlush.find("agg5.worker"), std::string::npos);
         EXPECT_NE(outFlush.find("agg5.main"), std::string::npos);
@@ -393,11 +406,11 @@ TEST_F(XTimer5Test, AggregateModeFlush)
     {
         // Second flush must be a no-op (idempotent).
         StdoutCapture capSecond;
-        au::perf::flushAggregated();
+        cfg.flushAggregated();
         EXPECT_TRUE(capSecond.drain().empty());
     }
 
-    au::perf::setAggregateMode(false);
+    cfg.setAggregateMode(false);
 }
 
 // ===========================================================================
@@ -406,8 +419,9 @@ TEST_F(XTimer5Test, AggregateModeFlush)
 
 TEST_F(XTimer5Test, ExceptionSafety)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     bool          caught = false;
@@ -432,8 +446,9 @@ TEST_F(XTimer5Test, ExceptionSafety)
 
 TEST_F(XTimer5Test, LongNameTruncationMarker)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     std::string   longName(1500, 'A');
@@ -451,8 +466,9 @@ TEST_F(XTimer5Test, LongNameTruncationMarker)
 
 TEST_F(XTimer5Test, TemporaryStringNameNoDangle)
 {
-    au::perf::setMode(au::perf::Mode5::Release);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Release);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -469,8 +485,9 @@ TEST_F(XTimer5Test, TemporaryStringNameNoDangle)
 
 TEST_F(XTimer5Test, ConvenienceMacros)
 {
-    au::perf::setMode(au::perf::Mode5::Release);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Release);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     {
         StdoutCapture cap;
@@ -510,8 +527,9 @@ TEST_F(XTimer5Test, ConvenienceMacros)
 
 TEST_F(XTimer5Test, StressTenThousandScopes)
 {
-    au::perf::setMode(au::perf::Mode5::Release);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Release);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     auto          begin = std::chrono::steady_clock::now();
@@ -531,8 +549,9 @@ TEST_F(XTimer5Test, StressTenThousandScopes)
 
 TEST_F(XTimer5Test, HardDepthCapNoCrash)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     std::function<void(int)> recurse = [&](int n) {
@@ -571,8 +590,9 @@ TEST_F(XTimer5Test, TimerRestartElapsed)
 
 TEST_F(XTimer5Test, DebugIndentationPrecision)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     // Two siblings under root — verify branch markers and ordering.
     {
@@ -636,8 +656,9 @@ TEST_F(XTimer5Test, DebugIndentationPrecision)
 
 TEST_F(XTimer5Test, StressHundredThousandScopesDebug)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     au::log::Config::get().setLevel(au::log::Level::Silent);
     {
@@ -655,8 +676,9 @@ TEST_F(XTimer5Test, StressHundredThousandScopesDebug)
 
 TEST_F(XTimer5Test, NameCorruptionDefense)
 {
-    au::perf::setMode(au::perf::Mode5::Release);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Release);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     // Embedded newline — must not break line-oriented output.
     {
@@ -703,8 +725,9 @@ TEST_F(XTimer5Test, NameCorruptionDefense)
 
 TEST_F(XTimer5Test, WideTreeSiblingOrdering)
 {
-    au::perf::setMode(au::perf::Mode5::Debug);
-    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
