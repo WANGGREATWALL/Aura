@@ -26,8 +26,6 @@
 #include <cstdint>
 #include <string>
 
-#include "perf/xtimer.h"
-
 namespace au {
 namespace perf {
 
@@ -49,8 +47,8 @@ public:
 private:
     void begin(const std::string& name) noexcept;
 
-    bool  mActive;
-    bool  mSubOpen;
+    bool mActive;
+    bool mSubOpen;
 
     static constexpr std::size_t kMaxName = 128;
     char                         mName[kMaxName];

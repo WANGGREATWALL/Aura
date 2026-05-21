@@ -163,13 +163,16 @@ void registerSafetyNetOnce() noexcept
 void PerfConfig::setEnabled(bool on) noexcept { mEnabled.store(on, std::memory_order_relaxed); }
 bool PerfConfig::isEnabled() const noexcept { return mEnabled.load(std::memory_order_relaxed); }
 
-void  PerfConfig::setMode(Mode mode) noexcept { mMode.store(mode, std::memory_order_relaxed); }
+void PerfConfig::setMode(Mode mode) noexcept { mMode.store(mode, std::memory_order_relaxed); }
 Mode PerfConfig::getMode() const noexcept { return mMode.load(std::memory_order_relaxed); }
 
-void    PerfConfig::setTimerLevel(int32_t threshold) noexcept { mTimerLevel.store(threshold, std::memory_order_relaxed); }
+void PerfConfig::setTimerLevel(int32_t threshold) noexcept { mTimerLevel.store(threshold, std::memory_order_relaxed); }
 int32_t PerfConfig::getTimerLevel() const noexcept { return mTimerLevel.load(std::memory_order_relaxed); }
 
-void    PerfConfig::setTracerLevel(int32_t threshold) noexcept { mTracerLevel.store(threshold, std::memory_order_relaxed); }
+void PerfConfig::setTracerLevel(int32_t threshold) noexcept
+{
+    mTracerLevel.store(threshold, std::memory_order_relaxed);
+}
 int32_t PerfConfig::getTracerLevel() const noexcept { return mTracerLevel.load(std::memory_order_relaxed); }
 
 void PerfConfig::setRootName(const std::string& name) noexcept
@@ -220,8 +223,7 @@ void PerfConfig::flushAggregated() noexcept
 }
 
 void PerfConfig::loadFromSystemProperty(const std::string& propEnabled, const std::string& propMode,
-                                        const std::string& propTimerLevel,
-                                        const std::string& propTracerLevel) noexcept
+                                        const std::string& propTimerLevel, const std::string& propTracerLevel) noexcept
 {
     if (!propEnabled.empty()) {
         const int v = au::sys::getSystemPropertyValue(propEnabled.c_str(), isEnabled() ? 1 : 0);
@@ -578,7 +580,7 @@ XTimerScoped::~XTimerScoped() noexcept
     // -- Outermost scope: flush this thread's tree --
     tls.inFlush = true;
 
-    PerfConfig& cfg = PerfConfig::get();
+    PerfConfig& cfg       = PerfConfig::get();
     const bool  aggregate = cfg.isAggregateMode();
     char        rootName[64];
     cfg.getRootName(rootName, sizeof(rootName));
@@ -680,7 +682,7 @@ void XTimerScoped::sub(const std::string& name) noexcept
     if (depth >= kHardMaxDepth) {
         return;
     }
-    PerfConfig& cfg      = PerfConfig::get();
+    PerfConfig&   cfg       = PerfConfig::get();
     const int32_t threshold = cfg.getTimerLevel();
     if (threshold == kPerfLevelOff || static_cast<int32_t>(depth) > threshold) {
         return;

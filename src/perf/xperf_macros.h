@@ -18,19 +18,17 @@
 
 #if defined(AU_PERF_DISABLE_ALL) && AU_PERF_DISABLE_ALL
 
-#define AU_TIMER(name)       ((void)0)
-#define AU_TRACE(name)       ((void)0)
-#define AU_PERF_SCOPE(name)  ((void)0)
+#define AU_TIMER(name) ((void)0)
+#define AU_TRACE(name) ((void)0)
+#define AU_PERF_SCOPE(name) ((void)0)
 
 #else
 
 /// Hierarchical timer scope.
-#define AU_TIMER(name) \
-    ::au::perf::XTimerScoped AU_PERF_UNIQUE(_auTmr_)((name))
+#define AU_TIMER(name) ::au::perf::XTimerScoped AU_PERF_UNIQUE(_auTmr_)((name))
 
 /// Perfetto / ftrace slice (Android-only payload).
-#define AU_TRACE(name) \
-    ::au::perf::XTracerScoped AU_PERF_UNIQUE(_auTrc_)((name))
+#define AU_TRACE(name) ::au::perf::XTracerScoped AU_PERF_UNIQUE(_auTrc_)((name))
 
 /// Composite: declare both a timer and a tracer with the same label.
 #define AU_PERF_SCOPE(name) \

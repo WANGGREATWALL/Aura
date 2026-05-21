@@ -29,6 +29,7 @@
  * @endcode
  */
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -82,7 +83,7 @@ public:
     void setEnabled(bool on) noexcept;
     bool isEnabled() const noexcept;
 
-    void  setMode(Mode mode) noexcept;
+    void setMode(Mode mode) noexcept;
     Mode getMode() const noexcept;
 
     void    setTimerLevel(int32_t threshold) noexcept;
@@ -104,10 +105,8 @@ public:
 
     /// Load configuration from system properties (Android) or environment
     /// variables (other platforms). Pass an empty string to skip an entry.
-    void loadFromSystemProperty(const std::string& propEnabled,
-                                const std::string& propMode,
-                                const std::string& propTimerLevel,
-                                const std::string& propTracerLevel) noexcept;
+    void loadFromSystemProperty(const std::string& propEnabled, const std::string& propMode,
+                                const std::string& propTimerLevel, const std::string& propTracerLevel) noexcept;
 
 private:
     PerfConfig()                             = default;
@@ -115,7 +114,7 @@ private:
     PerfConfig& operator=(const PerfConfig&) = delete;
 
     std::atomic<bool>    mEnabled{true};
-    std::atomic<Mode>   mMode{Mode::Release};
+    std::atomic<Mode>    mMode{Mode::Release};
     std::atomic<int32_t> mTimerLevel{3};
     std::atomic<int32_t> mTracerLevel{kPerfLevelAll};
     std::atomic<bool>    mAggregate{false};

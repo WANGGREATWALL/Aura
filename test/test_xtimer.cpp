@@ -314,7 +314,8 @@ TEST_F(XTimerTest, DebugIndentationPrecision)
         StdoutCapture cap;
         {
             std::function<void(int)> nest = [&](int d) {
-                if (d >= 5) return;
+                if (d >= 5)
+                    return;
                 au::perf::XTimerScoped s(std::string("L") + std::to_string(d));
                 au::perf::XTimer::sleepFor(0);
                 nest(d + 1);
@@ -705,7 +706,7 @@ TEST_F(XTimerTest, HardDepthCapNoCrash)
     cfg.setMode(au::perf::Mode::Debug);
     cfg.setTimerLevel(au::perf::kPerfLevelAll);
 
-    StdoutCapture cap;
+    StdoutCapture            cap;
     std::function<void(int)> recurse = [&](int n) {
         if (n <= 0)
             return;
@@ -780,7 +781,9 @@ TEST_F(XTimerTest, StressMixedPatterns)
     au::log::Config::get().setLevel(au::log::Level::Silent);
     {
         for (int i = 0; i < 1000; ++i) {
-            { au::perf::XTimerScoped s(std::string("flat")); }
+            {
+                au::perf::XTimerScoped s(std::string("flat"));
+            }
             {
                 au::perf::XTimerScoped s(std::string("subs"));
                 s.sub(std::string("a"));
@@ -788,7 +791,9 @@ TEST_F(XTimerTest, StressMixedPatterns)
             }
             {
                 au::perf::XTimerScoped o(std::string("outer"));
-                { au::perf::XTimerScoped in(std::string("inner")); }
+                {
+                    au::perf::XTimerScoped in(std::string("inner"));
+                }
             }
         }
     }
@@ -814,8 +819,8 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
             root.sub(std::string("A"));
             au::perf::XTimer::sleepFor(1);
             root.sub();
-            root.sub();    // extra bare sub → no-op
-            root.sub();    // extra bare sub → no-op
+            root.sub();  // extra bare sub → no-op
+            root.sub();  // extra bare sub → no-op
             root.sub(std::string("B"));
             au::perf::XTimer::sleepFor(1);
             root.sub();

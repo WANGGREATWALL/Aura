@@ -7,7 +7,6 @@
 #include "gtest/gtest.h"
 #include "log/xlogger.h"
 #include "perf/xperf_macros.h"
-#include "perf/xtimer.h"
 #include "perf/xtracer.h"
 
 // ---------------------------------------------------------------------------

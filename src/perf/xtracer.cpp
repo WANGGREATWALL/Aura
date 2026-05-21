@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "perf/xtimer.h"
 #include "sys/xplatform.h"
 
 #if AU_OS_ANDROID
