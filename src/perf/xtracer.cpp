@@ -1,4 +1,4 @@
-#include "perf/xtracer5.h"
+#include "perf/xtracer.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -68,12 +68,12 @@ thread_local uint32_t gTracerDepth = 0;
 }  // anonymous namespace
 
 // ===========================================================================
-//  XTracer5Scoped
+//  XTracerScoped
 // ===========================================================================
 
-XTracer5Scoped::XTracer5Scoped(const std::string& name) noexcept { begin(name); }
+XTracerScoped::XTracerScoped(const std::string& name) noexcept { begin(name); }
 
-void XTracer5Scoped::begin(const std::string& name) noexcept
+void XTracerScoped::begin(const std::string& name) noexcept
 {
     mActive  = false;
     mSubOpen = false;
@@ -84,11 +84,11 @@ void XTracer5Scoped::begin(const std::string& name) noexcept
         return;
     }
 
-    if (gTracerDepth >= kHardMaxDepth5) {
+    if (gTracerDepth >= kHardMaxDepth) {
         return;
     }
     const int32_t threshold = PerfConfig::get().getTracerLevel();
-    if (threshold == kPerfLevelOff5 || static_cast<int32_t>(gTracerDepth) > threshold) {
+    if (threshold == kPerfLevelOff || static_cast<int32_t>(gTracerDepth) > threshold) {
         return;
     }
 
@@ -106,7 +106,7 @@ void XTracer5Scoped::begin(const std::string& name) noexcept
 #endif
 }
 
-XTracer5Scoped::~XTracer5Scoped() noexcept
+XTracerScoped::~XTracerScoped() noexcept
 {
     if (!mActive) {
         return;
@@ -125,7 +125,7 @@ XTracer5Scoped::~XTracer5Scoped() noexcept
     }
 }
 
-void XTracer5Scoped::sub(const std::string& name) noexcept
+void XTracerScoped::sub(const std::string& name) noexcept
 {
     if (!mActive) {
         return;
@@ -150,7 +150,7 @@ void XTracer5Scoped::sub(const std::string& name) noexcept
     mSubOpen = true;
 }
 
-void XTracer5Scoped::sub() noexcept
+void XTracerScoped::sub() noexcept
 {
     if (!mActive || !mSubOpen) {
         return;

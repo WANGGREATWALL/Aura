@@ -41,8 +41,8 @@ set(AURA_SOURCES
     src/json/xjson.cpp
     src/log/xlogger.cpp
     src/cv/ximage.cpp
-    src/perf/xtimer5.cpp
-    src/perf/xtracer5.cpp
+    src/perf/xtimer.cpp
+    src/perf/xtracer.cpp
     src/util/xargs.cpp
     third_party/cJSON/cJSON.c
 )
@@ -69,8 +69,8 @@ option(ENABLE_TEST_XBUFFER   "Enable xbuffer unit test"   ON)
 option(ENABLE_TEST_XREGEX    "Enable xregex unit test"    ON)
 option(ENABLE_TEST_XARGS     "Enable xargs unit test"     ON)
 option(ENABLE_TEST_XPATH     "Enable xpath unit test"     ON)
-option(ENABLE_TEST_XTIMER5   "Enable xtimer5 unit test"   ON)
-option(ENABLE_TEST_XTRACER5  "Enable xtracer5 unit test"  ON)
+option(ENABLE_TEST_XTIMER   "Enable xtimer unit test"   ON)
+option(ENABLE_TEST_XTRACER  "Enable xtracer unit test"  ON)
 option(ENABLE_TEST_XPLATFORM "Enable xplatform unit test" ON)
 option(ENABLE_TEST_XERROR    "Enable xerror unit test"    ON)
 option(ENABLE_TEST_XFILE     "Enable xfile unit test"     ON)
@@ -110,13 +110,12 @@ aura_add_test(xbuffer)
 aura_add_test(xregex)
 aura_add_test(xargs)
 aura_add_test(xpath)
-aura_add_test(xtimer5)
-aura_add_test(xtracer5)
+aura_add_test(xtimer)
+aura_add_test(xtracer)
 aura_add_test(xplatform)
 aura_add_test(xerror)
 aura_add_test(xfile)
 aura_add_test(ximage)
-aura_add_test(xtracer)
 aura_add_test(xflow)
 
 add_executable(aura_test ${AURA_TEST_SOURCES})

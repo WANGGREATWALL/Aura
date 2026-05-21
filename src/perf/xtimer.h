@@ -1,15 +1,15 @@
-#ifndef AURA_PERF_XTIMER5_H_
-#define AURA_PERF_XTIMER5_H_
+#ifndef AURA_PERF_XTIMER_H_
+#define AURA_PERF_XTIMER_H_
 
 /**
- * @file xtimer5.h
+ * @file xtimer.h
  * @brief Hierarchical performance timer with Release/Debug dual-mode output.
  *
  * Key design:
  *  - Global unified configuration via @c PerfConfig::get() (Meyers singleton).
  *  - Level == tree depth: no caller-supplied level parameter.
  *    @c setTimerLevel(N) means "show only nodes whose depth ≤ N".
- *    The internal safety net @c kHardMaxDepth5=512 caps runaway recursion.
+ *    The internal safety net @c kHardMaxDepth=512 caps runaway recursion.
  *  - Name lifetime: the constructor copies @p name into an inline buffer
  *    (Release) or the TLS arena (Debug); temporary @c std::string is safe.
  *  - @c sub() immediate output (Release-only): each @c sub(name) immediately
@@ -19,11 +19,11 @@
  * Quick start:
  * @code
  *   auto& cfg = au::perf::PerfConfig::get();
- *   cfg.setMode(au::perf::Mode5::Debug);
+ *   cfg.setMode(au::perf::Mode::Debug);
  *   cfg.setTimerLevel(3);
  *
  *   void XNet::forward() {
- *       AU_PERF5_SCOPE("XNet::forward");
+ *       AU_PERF_SCOPE("XNet::forward");
  *       // ... work ...
  *   }
  * @endcode
@@ -42,19 +42,19 @@ namespace perf {
 // ---------------------------------------------------------------------------
 
 /// Hard-off sentinel: never activate any scope on this channel.
-constexpr int32_t kPerfLevelOff5 = -1;
+constexpr int32_t kPerfLevelOff = -1;
 
 /// Always-on sentinel: every scope passes the level gate.
-constexpr int32_t kPerfLevelAll5 = INT32_MAX;
+constexpr int32_t kPerfLevelAll = INT32_MAX;
 
 /// Internal safety net: nodes deeper than this are degraded to a one-liner.
-constexpr uint32_t kHardMaxDepth5 = 512;
+constexpr uint32_t kHardMaxDepth = 512;
 
 // ---------------------------------------------------------------------------
 // Mode selector
 // ---------------------------------------------------------------------------
 
-enum class Mode5 : int32_t
+enum class Mode : int32_t
 {
     Release = 0,  ///< One-liner per scope, no tree work.
     Debug   = 1,  ///< Build a per-thread tree; flush on root close.
@@ -82,8 +82,8 @@ public:
     void setEnabled(bool on) noexcept;
     bool isEnabled() const noexcept;
 
-    void  setMode(Mode5 mode) noexcept;
-    Mode5 getMode() const noexcept;
+    void  setMode(Mode mode) noexcept;
+    Mode getMode() const noexcept;
 
     void    setTimerLevel(int32_t threshold) noexcept;
     int32_t getTimerLevel() const noexcept;
@@ -115,9 +115,9 @@ private:
     PerfConfig& operator=(const PerfConfig&) = delete;
 
     std::atomic<bool>    mEnabled{true};
-    std::atomic<Mode5>   mMode{Mode5::Release};
+    std::atomic<Mode>   mMode{Mode::Release};
     std::atomic<int32_t> mTimerLevel{3};
-    std::atomic<int32_t> mTracerLevel{kPerfLevelAll5};
+    std::atomic<int32_t> mTracerLevel{kPerfLevelAll};
     std::atomic<bool>    mAggregate{false};
 
     std::atomic<uint32_t> mRootNameLen{4};
@@ -125,11 +125,11 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// XTimer5 — bare stopwatch
+// XTimer — bare stopwatch
 // ---------------------------------------------------------------------------
 
 /// Lightweight stopwatch. Use for explicit elapsed-millisecond readings.
-class XTimer5
+class XTimer
 {
 public:
     using Clock     = std::chrono::steady_clock;
@@ -141,7 +141,7 @@ public:
     /// Thread-safe wrapper around localtime. Returns "<formatted>_<ms>".
     static std::string getTimeFormatted(const std::string& fmt = "%Y-%m-%d-%H-%M-%S") noexcept;
 
-    XTimer5() noexcept : mBegin(Clock::now()) {}
+    XTimer() noexcept : mBegin(Clock::now()) {}
 
     void  restart() noexcept { mBegin = Clock::now(); }
     float elapsedMs() const noexcept;
@@ -151,7 +151,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// XTimer5Scoped — RAII hierarchical timer
+// XTimerScoped — RAII hierarchical timer
 // ---------------------------------------------------------------------------
 
 /**
@@ -160,21 +160,21 @@ private:
  * Activation rules (evaluated once at construction):
  *  - @c PerfConfig::get().isEnabled() must be true
  *  - the scope's tree depth must be ≤ @c getTimerLevel()
- *  - the depth must be < @c kHardMaxDepth5
+ *  - the depth must be < @c kHardMaxDepth
  *
  * If inactive, every member is a no-op with zero allocation.
  *
  * @note This class intentionally does not expose @c elapsedMs().
- *       Use @c XTimer5 for explicit measurement.
+ *       Use @c XTimer for explicit measurement.
  */
-class XTimer5Scoped
+class XTimerScoped
 {
 public:
-    explicit XTimer5Scoped(const std::string& name) noexcept;
-    ~XTimer5Scoped() noexcept;
+    explicit XTimerScoped(const std::string& name) noexcept;
+    ~XTimerScoped() noexcept;
 
-    XTimer5Scoped(const XTimer5Scoped&)            = delete;
-    XTimer5Scoped& operator=(const XTimer5Scoped&) = delete;
+    XTimerScoped(const XTimerScoped&)            = delete;
+    XTimerScoped& operator=(const XTimerScoped&) = delete;
 
     void sub(const std::string& name) noexcept;
     void sub() noexcept;
@@ -202,4 +202,4 @@ private:
 }  // namespace perf
 }  // namespace au
 
-#endif  // AURA_PERF_XTIMER5_H_
+#endif  // AURA_PERF_XTIMER_H_

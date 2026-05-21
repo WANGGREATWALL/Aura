@@ -1,8 +1,8 @@
-#ifndef AURA_PERF_XTRACER5_H_
-#define AURA_PERF_XTRACER5_H_
+#ifndef AURA_PERF_XTRACER_H_
+#define AURA_PERF_XTRACER_H_
 
 /**
- * @file xtracer5.h
+ * @file xtracer.h
  * @brief Android Perfetto / ftrace trace_marker tracer.
  *
  * On Android:
@@ -15,18 +15,18 @@
  *
  * On non-Android targets every body compiles away to nothing.
  *
- * @c XTracer5Scoped is intentionally independent of @c XTimer5Scoped.
- * The composite macro @c AU_PERF5_SCOPE declares both with the same label.
+ * @c XTracerScoped is intentionally independent of @c XTimerScoped.
+ * The composite macro @c AU_PERF_SCOPE declares both with the same label.
  *
  * Activation gates: global @c isEnabled(), depth ≤ @c getTracerLevel(),
- * depth < @c kHardMaxDepth5.
+ * depth < @c kHardMaxDepth.
  */
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
 
-#include "perf/xtimer5.h"
+#include "perf/xtimer.h"
 
 namespace au {
 namespace perf {
@@ -34,14 +34,14 @@ namespace perf {
 /**
  * @brief RAII scoped Perfetto / ftrace tracer (Android-only payload).
  */
-class XTracer5Scoped
+class XTracerScoped
 {
 public:
-    explicit XTracer5Scoped(const std::string& name) noexcept;
-    ~XTracer5Scoped() noexcept;
+    explicit XTracerScoped(const std::string& name) noexcept;
+    ~XTracerScoped() noexcept;
 
-    XTracer5Scoped(const XTracer5Scoped&)            = delete;
-    XTracer5Scoped& operator=(const XTracer5Scoped&) = delete;
+    XTracerScoped(const XTracerScoped&)            = delete;
+    XTracerScoped& operator=(const XTracerScoped&) = delete;
 
     void sub(const std::string& name) noexcept;
     void sub() noexcept;
@@ -60,4 +60,4 @@ private:
 }  // namespace perf
 }  // namespace au
 
-#endif  // AURA_PERF_XTRACER5_H_
+#endif  // AURA_PERF_XTRACER_H_

@@ -1,4 +1,4 @@
-#include "perf/xtimer5.h"
+#include "perf/xtimer.h"
 
 #include <algorithm>
 #include <array>
@@ -146,11 +146,11 @@ void registerSafetyNetOnce() noexcept
         }
         std::stable_sort(local.begin(), local.end(),
                          [](const FlushedTree& a, const FlushedTree& b) { return a.tid < b.tid; });
-        emitFormatted("[perf5] ===== safety-net flush: %zu block(s) =====", local.size());
+        emitFormatted("[perf] ===== safety-net flush: %zu block(s) =====", local.size());
         for (const FlushedTree& t : local) {
             printTree(t.pool, t.arena, t.roots, t.tid, t.rootName);
         }
-        emitFormatted("[perf5] ===== end =====");
+        emitFormatted("[perf] ===== end =====");
     });
 }
 
@@ -163,8 +163,8 @@ void registerSafetyNetOnce() noexcept
 void PerfConfig::setEnabled(bool on) noexcept { mEnabled.store(on, std::memory_order_relaxed); }
 bool PerfConfig::isEnabled() const noexcept { return mEnabled.load(std::memory_order_relaxed); }
 
-void  PerfConfig::setMode(Mode5 mode) noexcept { mMode.store(mode, std::memory_order_relaxed); }
-Mode5 PerfConfig::getMode() const noexcept { return mMode.load(std::memory_order_relaxed); }
+void  PerfConfig::setMode(Mode mode) noexcept { mMode.store(mode, std::memory_order_relaxed); }
+Mode PerfConfig::getMode() const noexcept { return mMode.load(std::memory_order_relaxed); }
 
 void    PerfConfig::setTimerLevel(int32_t threshold) noexcept { mTimerLevel.store(threshold, std::memory_order_relaxed); }
 int32_t PerfConfig::getTimerLevel() const noexcept { return mTimerLevel.load(std::memory_order_relaxed); }
@@ -212,11 +212,11 @@ void PerfConfig::flushAggregated() noexcept
     std::stable_sort(local.begin(), local.end(),
                      [](const FlushedTree& a, const FlushedTree& b) { return a.tid < b.tid; });
 
-    emitFormatted("[perf5] ===== aggregate flush: %zu block(s) =====", local.size());
+    emitFormatted("[perf] ===== aggregate flush: %zu block(s) =====", local.size());
     for (const FlushedTree& t : local) {
         printTree(t.pool, t.arena, t.roots, t.tid, t.rootName);
     }
-    emitFormatted("[perf5] ===== end =====");
+    emitFormatted("[perf] ===== end =====");
 }
 
 void PerfConfig::loadFromSystemProperty(const std::string& propEnabled, const std::string& propMode,
@@ -229,7 +229,7 @@ void PerfConfig::loadFromSystemProperty(const std::string& propEnabled, const st
     }
     if (!propMode.empty()) {
         const int v = au::sys::getSystemPropertyValue(propMode.c_str(), static_cast<int>(getMode()));
-        setMode(v != 0 ? Mode5::Debug : Mode5::Release);
+        setMode(v != 0 ? Mode::Debug : Mode::Release);
     }
     if (!propTimerLevel.empty()) {
         const int v = au::sys::getSystemPropertyValue(propTimerLevel.c_str(), getTimerLevel());
@@ -302,7 +302,7 @@ void printTree(const std::vector<PerfNode>& pool, const std::vector<char>& arena
         return;
     }
 
-    emitFormatted("[perf5][tid=0x%llx] %s", static_cast<unsigned long long>(tid),
+    emitFormatted("[perf][tid=0x%llx] %s", static_cast<unsigned long long>(tid),
                   (rootName != nullptr && rootName[0] != '\0') ? rootName : "perf");
 
     for (std::size_t i = 0; i < roots.size(); ++i) {
@@ -402,10 +402,10 @@ int32_t appendNodeUnsafe(PerCtxTree& tree, int32_t parent, const char* name, std
 }  // anonymous namespace
 
 // ===========================================================================
-//  XTimer5 — bare stopwatch + static helpers
+//  XTimer — bare stopwatch + static helpers
 // ===========================================================================
 
-void XTimer5::sleepFor(int64_t ms) noexcept
+void XTimer::sleepFor(int64_t ms) noexcept
 {
     if (ms <= 0) {
         return;
@@ -413,7 +413,7 @@ void XTimer5::sleepFor(int64_t ms) noexcept
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
-std::string XTimer5::getTimeFormatted(const std::string& fmt) noexcept
+std::string XTimer::getTimeFormatted(const std::string& fmt) noexcept
 {
     using namespace std::chrono;
     const auto  now = system_clock::now();
@@ -446,18 +446,18 @@ std::string XTimer5::getTimeFormatted(const std::string& fmt) noexcept
     return out;
 }
 
-float XTimer5::elapsedMs() const noexcept
+float XTimer::elapsedMs() const noexcept
 {
     return std::chrono::duration<float, std::milli>(Clock::now() - mBegin).count();
 }
 
 // ===========================================================================
-//  XTimer5Scoped
+//  XTimerScoped
 // ===========================================================================
 
-XTimer5Scoped::XTimer5Scoped(const std::string& name) noexcept { begin(name); }
+XTimerScoped::XTimerScoped(const std::string& name) noexcept { begin(name); }
 
-void XTimer5Scoped::begin(const std::string& name) noexcept
+void XTimerScoped::begin(const std::string& name) noexcept
 {
     mNodeIdx          = -1;
     mSubNodeIdx       = -1;
@@ -487,21 +487,21 @@ void XTimer5Scoped::begin(const std::string& name) noexcept
         return;
     }
 
-    const Mode5 mode = cfg.getMode();
+    const Mode mode = cfg.getMode();
 
     const uint32_t depth =
-        (mode == Mode5::Release) ? gTimerReleaseDepth : static_cast<uint32_t>(tlsTree().openStack.size());
+        (mode == Mode::Release) ? gTimerReleaseDepth : static_cast<uint32_t>(tlsTree().openStack.size());
 
-    if (depth >= kHardMaxDepth5) {
+    if (depth >= kHardMaxDepth) {
         return;
     }
 
     const int32_t threshold = cfg.getTimerLevel();
-    if (threshold == kPerfLevelOff5 || static_cast<int32_t>(depth) > threshold) {
+    if (threshold == kPerfLevelOff || static_cast<int32_t>(depth) > threshold) {
         return;
     }
 
-    if (mode == Mode5::Release) {
+    if (mode == Mode::Release) {
         mNodeIdx = -2;
         mDepth   = depth;
         ++gTimerReleaseDepth;
@@ -529,7 +529,7 @@ void XTimer5Scoped::begin(const std::string& name) noexcept
     mIsRoot  = (depth == 0);
 }
 
-XTimer5Scoped::~XTimer5Scoped() noexcept
+XTimerScoped::~XTimerScoped() noexcept
 {
     if (mNodeIdx == -1) {
         return;
@@ -546,9 +546,9 @@ XTimer5Scoped::~XTimer5Scoped() noexcept
             const uint64_t subNs =
                 static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - mSubBegin).count());
             const float subMs = static_cast<float>(static_cast<double>(subNs) / 1.0e6);
-            emitFormatted("[perf5] %.*s: %.3f ms", static_cast<int>(mSubNameLen), mSubNameInline, subMs);
+            emitFormatted("[perf] %.*s: %.3f ms", static_cast<int>(mSubNameLen), mSubNameInline, subMs);
         }
-        emitFormatted("[perf5] %.*s: %.3f ms", static_cast<int>(mNameLen), mNameInline, msF);
+        emitFormatted("[perf] %.*s: %.3f ms", static_cast<int>(mNameLen), mNameInline, msF);
         if (gTimerReleaseDepth > 0u) {
             --gTimerReleaseDepth;
         }
@@ -608,7 +608,7 @@ XTimer5Scoped::~XTimer5Scoped() noexcept
     tls.inFlush = false;
 }
 
-std::chrono::steady_clock::time_point XTimer5Scoped::closeOpenSub() noexcept
+std::chrono::steady_clock::time_point XTimerScoped::closeOpenSub() noexcept
 {
     const auto now = std::chrono::steady_clock::now();
 
@@ -618,7 +618,7 @@ std::chrono::steady_clock::time_point XTimer5Scoped::closeOpenSub() noexcept
             const uint64_t ns =
                 static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - mSubBegin).count());
             const float ms = static_cast<float>(static_cast<double>(ns) / 1.0e6);
-            emitFormatted("[perf5] %.*s: %.3f ms", static_cast<int>(mSubNameLen), mSubNameInline, ms);
+            emitFormatted("[perf] %.*s: %.3f ms", static_cast<int>(mSubNameLen), mSubNameInline, ms);
             mSubNameLen       = 0;
             mSubNameInline[0] = '\0';
         }
@@ -650,7 +650,7 @@ std::chrono::steady_clock::time_point XTimer5Scoped::closeOpenSub() noexcept
     return now;
 }
 
-void XTimer5Scoped::sub(const std::string& name) noexcept
+void XTimerScoped::sub(const std::string& name) noexcept
 {
     if (mNodeIdx == -1) {
         return;
@@ -677,12 +677,12 @@ void XTimer5Scoped::sub(const std::string& name) noexcept
     }
 
     const uint32_t depth = mDepth + 1;
-    if (depth >= kHardMaxDepth5) {
+    if (depth >= kHardMaxDepth) {
         return;
     }
     PerfConfig& cfg      = PerfConfig::get();
     const int32_t threshold = cfg.getTimerLevel();
-    if (threshold == kPerfLevelOff5 || static_cast<int32_t>(depth) > threshold) {
+    if (threshold == kPerfLevelOff || static_cast<int32_t>(depth) > threshold) {
         return;
     }
 
@@ -699,7 +699,7 @@ void XTimer5Scoped::sub(const std::string& name) noexcept
     mSubNodeIdx = idx;
 }
 
-void XTimer5Scoped::sub() noexcept
+void XTimerScoped::sub() noexcept
 {
     if (mNodeIdx == -1) {
         return;
