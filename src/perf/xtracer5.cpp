@@ -22,9 +22,6 @@ namespace {
 
 #if AU_OS_ANDROID
 
-/// Lazily-opened process-wide trace_marker fd. C++11 static-init is
-/// thread-safe. The fd is intentionally never closed — the kernel reclaims
-/// it on process exit, and O_CLOEXEC keeps fork+exec children clean.
 int getTraceFd() noexcept
 {
     static int fd = []() {
@@ -37,9 +34,6 @@ int getTraceFd() noexcept
     return fd;
 }
 
-/// One trace_marker write. Format: "B|pid|name" or "E|pid".
-/// The kernel guarantees per-write atomicity up to one page, which is
-/// already far above our 256-byte cap.
 void writeTraceMarker(char mode, int pid, const char* name, std::size_t nameLen) noexcept
 {
     int fd = getTraceFd();
@@ -69,9 +63,6 @@ void writeTraceMarker(char mode, int pid, const char* name, std::size_t nameLen)
 
 #endif  // AU_OS_ANDROID
 
-/// Per-thread tracer-depth counter (mirrors xtimer5's openStack depth but
-/// kept independent so timer / tracer macros can be used in isolation).
-/// File-level thread_local so begin() and ~XTracer5Scoped() share storage.
 thread_local uint32_t gTracerDepth = 0;
 
 }  // anonymous namespace
@@ -80,35 +71,27 @@ thread_local uint32_t gTracerDepth = 0;
 //  XTracer5Scoped
 // ===========================================================================
 
-XTracer5Scoped::XTracer5Scoped(const std::string& name) noexcept { begin(XPerfContext5::defaultContext(), name); }
+XTracer5Scoped::XTracer5Scoped(const std::string& name) noexcept { begin(name); }
 
-XTracer5Scoped::XTracer5Scoped(XPerfContext5& ctx, const std::string& name) noexcept { begin(ctx, name); }
-
-void XTracer5Scoped::begin(XPerfContext5& ctx, const std::string& name) noexcept
+void XTracer5Scoped::begin(const std::string& name) noexcept
 {
-    mCtx     = &ctx;
     mActive  = false;
     mSubOpen = false;
     mNameLen = 0;
     mName[0] = '\0';
 
-    if (!ctx.isEnabled()) {
+    if (!isEnabled()) {
         return;
     }
 
-    // v5 collapses level == depth. The tracer maintains its own per-thread
-    // depth counter (gTracerDepth, file-scope thread_local) since timer and
-    // tracer macros may be used independently of one another.
     if (gTracerDepth >= kHardMaxDepth5) {
         return;
     }
-    const int32_t threshold = ctx.getTracerLevel();
+    const int32_t threshold = getTracerLevel();
     if (threshold == kPerfLevelOff5 || static_cast<int32_t>(gTracerDepth) > threshold) {
         return;
     }
 
-    // Copy + truncate the label even on non-Android so any future sink
-    // (e.g. an in-memory trace ring for desktop) can read it back.
     const std::size_t cp = std::min(name.size(), kMaxName - 1);
     if (cp > 0) {
         std::memcpy(mName, name.data(), cp);
@@ -130,14 +113,13 @@ XTracer5Scoped::~XTracer5Scoped() noexcept
     }
 
     if (mSubOpen) {
-        sub();  // close the inflight sub before the outer slice
+        sub();
     }
 
 #if AU_OS_ANDROID
     writeTraceMarker('E', getpid(), nullptr, 0);
 #endif
 
-    // Symmetric decrement of the per-thread tracer depth counter.
     if (gTracerDepth > 0u) {
         --gTracerDepth;
     }
@@ -150,7 +132,7 @@ void XTracer5Scoped::sub(const std::string& name) noexcept
     }
 
     if (mSubOpen) {
-        sub();  // close the previous sub-slice, maintaining depth symmetry
+        sub();
     }
 
     ++gTracerDepth;

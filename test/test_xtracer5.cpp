@@ -34,13 +34,12 @@ protected:
 #if AU_OS_ANDROID
         au::log::Config::get().setShellPrintEnabled(true);
 #endif
-        auto& cfg = au::perf::XPerfContext5::defaultContext();
-        cfg.setEnabled(true);
-        cfg.setMode(au::perf::Mode5::Release);
-        cfg.setTimerLevel(au::perf::kPerfLevelOff5);  // silence timer noise
-        cfg.setTracerLevel(au::perf::kPerfLevelAll5);
-        cfg.setAggregateMode(false);
-        cfg.setRootName("perf");
+        au::perf::setEnabled(true);
+        au::perf::setMode(au::perf::Mode5::Release);
+        au::perf::setTimerLevel(au::perf::kPerfLevelOff5);  // silence timer noise
+        au::perf::setTracerLevel(au::perf::kPerfLevelAll5);
+        au::perf::setAggregateMode(false);
+        au::perf::setRootName("perf");
     }
 };
 
@@ -58,13 +57,12 @@ TEST_F(XTracer5Test, BasicScopeNoCrash)
 }
 
 // ===========================================================================
-//  2. Disabled context — every scope is a no-op
+//  2. Disabled — every scope is a no-op
 // ===========================================================================
 
 TEST_F(XTracer5Test, DisabledHardOff)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setEnabled(false);
+    au::perf::setEnabled(false);
 
     {
         au::perf::XTracer5Scoped a(std::string("off.tracer.a"));
@@ -79,19 +77,17 @@ TEST_F(XTracer5Test, DisabledHardOff)
 
 TEST_F(XTracer5Test, LevelGating)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-
-    cfg.setTracerLevel(au::perf::kPerfLevelOff5);
+    au::perf::setTracerLevel(au::perf::kPerfLevelOff5);
     {
         au::perf::XTracer5Scoped s(std::string("never.traced"));
     }
 
-    cfg.setTracerLevel(0);
+    au::perf::setTracerLevel(0);
     {
         au::perf::XTracer5Scoped s(std::string("traced"));
     }
 
-    cfg.setTracerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setTracerLevel(au::perf::kPerfLevelAll5);
     SUCCEED();
 }
 
@@ -113,32 +109,12 @@ TEST_F(XTracer5Test, SubPhaseTransitions)
 }
 
 // ===========================================================================
-//  5. Per-context isolation — different contexts can have different levels
-// ===========================================================================
-
-TEST_F(XTracer5Test, PerContextLevelIsolation)
-{
-    au::perf::XPerfContext5 a;
-    au::perf::XPerfContext5 b;
-
-    a.setTracerLevel(0);
-    b.setTracerLevel(au::perf::kPerfLevelOff5);
-
-    {
-        au::perf::XTracer5Scoped sa(a, std::string("ctxA.trace"));
-        au::perf::XTracer5Scoped sb(b, std::string("ctxB.trace"));
-    }
-    SUCCEED();
-}
-
-// ===========================================================================
-//  6. Composite macro AU_PERF5_SCOPE wires both timer and tracer
+//  5. Composite macro AU_PERF5_SCOPE wires both timer and tracer
 // ===========================================================================
 
 TEST_F(XTracer5Test, CompositeMacroSafe)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     {
         AU_PERF5_SCOPE(std::string("composite.tracer.scope"));
@@ -148,7 +124,7 @@ TEST_F(XTracer5Test, CompositeMacroSafe)
 }
 
 // ===========================================================================
-//  7. Multi-thread tracer scopes do not crash
+//  6. Multi-thread tracer scopes do not crash
 // ===========================================================================
 
 TEST_F(XTracer5Test, MultiThreadStress)
@@ -171,7 +147,7 @@ TEST_F(XTracer5Test, MultiThreadStress)
 }
 
 // ===========================================================================
-//  8. Long-name truncation does not crash (truncated to kMaxName=128)
+//  7. Long-name truncation does not crash (truncated to kMaxName=128)
 // ===========================================================================
 
 TEST_F(XTracer5Test, LongNameTruncationSafe)
@@ -184,7 +160,7 @@ TEST_F(XTracer5Test, LongNameTruncationSafe)
 }
 
 // ===========================================================================
-//  9. Temporary std::string label does not dangle
+//  8. Temporary std::string label does not dangle
 // ===========================================================================
 
 TEST_F(XTracer5Test, TemporaryStringNameNoDangle)
@@ -196,17 +172,108 @@ TEST_F(XTracer5Test, TemporaryStringNameNoDangle)
 }
 
 // ===========================================================================
-//  10. Depth counter symmetric: many sequential scopes do not exhaust cap
+//  9. Depth counter symmetric: many sequential scopes do not exhaust cap
 // ===========================================================================
 
 TEST_F(XTracer5Test, DepthCounterDecrementsSymmetrically)
 {
-    // If begin() and dtor used independent thread_locals (the v5 bug fixed
-    // before merge), this loop would silently disable the tracer once the
-    // counter exceeds kHardMaxDepth5. We verify symmetry indirectly: a deep
-    // SEQUENTIAL workload (not nested) never hits the cap.
     for (int i = 0; i < 1024; ++i) {
         au::perf::XTracer5Scoped s(std::string("seq"));
+    }
+    SUCCEED();
+}
+
+// ===========================================================================
+//  10. Nested-scope depth symmetry: outer sub works after inner destruction
+// ===========================================================================
+
+TEST_F(XTracer5Test, NestedScopeDepthSymmetry)
+{
+    for (int cycle = 0; cycle < 32; ++cycle) {
+        au::perf::XTracer5Scoped outer(std::string("outer.nest"));
+        outer.sub(std::string("before.inner"));
+        au::perf::XTimer5::sleepFor(0);
+        {
+            au::perf::XTracer5Scoped inner(std::string("inner.nest"));
+            inner.sub(std::string("inner.phase"));
+            au::perf::XTimer5::sleepFor(0);
+        }
+        outer.sub(std::string("after.inner"));
+        au::perf::XTimer5::sleepFor(0);
+        outer.sub();
+    }
+    SUCCEED();
+}
+
+// ===========================================================================
+//  11. Bare sub() before first named sub() — must be a safe no-op
+// ===========================================================================
+
+TEST_F(XTracer5Test, BareSubBeforeFirstNamedSub)
+{
+    {
+        au::perf::XTracer5Scoped s(std::string("bare.first"));
+        s.sub();
+        s.sub();
+        s.sub(std::string("first.real.phase"));
+        au::perf::XTimer5::sleepFor(1);
+        s.sub();
+    }
+    SUCCEED();
+}
+
+// ===========================================================================
+//  12. Alternating named / bare sub — multiple open/close cycles
+// ===========================================================================
+
+TEST_F(XTracer5Test, AlternatingSubMultiCycle)
+{
+    au::perf::setTracerLevel(au::perf::kPerfLevelAll5);
+
+    {
+        au::perf::XTracer5Scoped s(std::string("alt.root"));
+        for (int i = 0; i < 8; ++i) {
+            s.sub(std::string("phase.") + std::to_string(i));
+            au::perf::XTimer5::sleepFor(0);
+            s.sub();
+        }
+    }
+    SUCCEED();
+}
+
+// ===========================================================================
+//  13. Empty name and empty sub-name — boundary on fixed inline buffer
+// ===========================================================================
+
+TEST_F(XTracer5Test, EmptyNameAndSubName)
+{
+    {
+        au::perf::XTracer5Scoped s(std::string(""));
+    }
+    {
+        au::perf::XTracer5Scoped s(std::string("root.with.empty.sub"));
+        s.sub(std::string(""));
+        au::perf::XTimer5::sleepFor(0);
+        s.sub();
+    }
+    SUCCEED();
+}
+
+// ===========================================================================
+//  14. Same-thread multiple independent XTracer5Scoped instances
+// ===========================================================================
+
+TEST_F(XTracer5Test, SameThreadMultipleInstances)
+{
+    {
+        au::perf::XTracer5Scoped a(std::string("tracer.a"));
+        au::perf::XTracer5Scoped b(std::string("tracer.b"));
+        a.sub(std::string("a.phase"));
+        au::perf::XTimer5::sleepFor(0);
+        a.sub();
+        b.sub(std::string("b.phase"));
+        au::perf::XTimer5::sleepFor(0);
+        b.sub();
     }
     SUCCEED();
 }

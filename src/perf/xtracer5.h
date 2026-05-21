@@ -26,8 +26,8 @@
  *  aligned without coupling the two implementations.
  *
  * Activation rules (evaluated once at construction):
- *  - @c ctx.isEnabled() must be true
- *  - the scope's tree depth must be ≤ @c ctx.getTracerLevel()
+ *  - global isEnabled() must be true
+ *  - the scope's depth must be ≤ getTracerLevel()
  *  - the depth must be < @c kHardMaxDepth5 (internal safety net)
  */
 
@@ -49,12 +49,7 @@ namespace perf {
 class XTracer5Scoped
 {
 public:
-    /// Use the default process context.
     explicit XTracer5Scoped(const std::string& name) noexcept;
-
-    /// Use a caller-specific context.
-    XTracer5Scoped(XPerfContext5& ctx, const std::string& name) noexcept;
-
     ~XTracer5Scoped() noexcept;
 
     XTracer5Scoped(const XTracer5Scoped&)            = delete;
@@ -68,15 +63,12 @@ public:
     void sub() noexcept;
 
 private:
-    void begin(XPerfContext5& ctx, const std::string& name) noexcept;
+    void begin(const std::string& name) noexcept;
 
-    XPerfContext5* mCtx;
-    bool           mActive;
-    bool           mSubOpen;
+    bool  mActive;
+    bool  mSubOpen;
 
-    /// Fixed inline buffer; longer names are truncated to fit. The buffer
-    /// is consumed by the kernel write inside @c begin() and is not
-    /// retained afterwards.
+    /// Fixed inline buffer; longer names are truncated to fit.
     static constexpr std::size_t kMaxName = 128;
     char                         mName[kMaxName];
     uint8_t                      mNameLen;

@@ -1,6 +1,5 @@
 #if ENABLE_TEST_XTIMER5
 
-#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <functional>
@@ -16,11 +15,6 @@
 
 // ---------------------------------------------------------------------------
 //  StdoutCapture — RAII wrapper around testing::internal::CaptureStdout.
-//
-//  v5 deliberately removed the IPerfWriter interface, so unit tests must
-//  intercept output by redirecting the underlying stdout (where xlogger
-//  writes via fwrite). GoogleTest exposes this through CaptureStdout /
-//  GetCapturedStdout in testing::internal.
 // ---------------------------------------------------------------------------
 
 class StdoutCapture
@@ -59,14 +53,13 @@ protected:
 #if AU_OS_ANDROID
         au::log::Config::get().setShellPrintEnabled(true);
 #endif
-        // Reset the default context to a deterministic baseline.
-        auto& cfg = au::perf::XPerfContext5::defaultContext();
-        cfg.setEnabled(true);
-        cfg.setMode(au::perf::Mode5::Release);
-        cfg.setTimerLevel(3);
-        cfg.setTracerLevel(au::perf::kPerfLevelAll5);
-        cfg.setAggregateMode(false);
-        cfg.setRootName("perf");
+        // Reset global config to a deterministic baseline.
+        au::perf::setEnabled(true);
+        au::perf::setMode(au::perf::Mode5::Release);
+        au::perf::setTimerLevel(3);
+        au::perf::setTracerLevel(au::perf::kPerfLevelAll5);
+        au::perf::setAggregateMode(false);
+        au::perf::setRootName("perf");
     }
 
     static int countOccurrences(const std::string& s, const std::string& sub)
@@ -82,88 +75,63 @@ protected:
 };
 
 // ===========================================================================
-//  1. XPerfContext5 — basic atomic accessors
+//  1. Global configuration — basic accessors
 // ===========================================================================
 
-TEST_F(XTimer5Test, ContextBasicAccessors)
+TEST_F(XTimer5Test, GlobalConfigAccessors)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
+    au::perf::setEnabled(false);
+    EXPECT_FALSE(au::perf::isEnabled());
+    au::perf::setEnabled(true);
+    EXPECT_TRUE(au::perf::isEnabled());
 
-    cfg.setEnabled(false);
-    EXPECT_FALSE(cfg.isEnabled());
-    cfg.setEnabled(true);
-    EXPECT_TRUE(cfg.isEnabled());
+    au::perf::setMode(au::perf::Mode5::Debug);
+    EXPECT_EQ(au::perf::getMode(), au::perf::Mode5::Debug);
 
-    cfg.setMode(au::perf::Mode5::Debug);
-    EXPECT_EQ(cfg.getMode(), au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(7);
+    EXPECT_EQ(au::perf::getTimerLevel(), 7);
+    au::perf::setTimerLevel(au::perf::kPerfLevelOff5);
+    EXPECT_EQ(au::perf::getTimerLevel(), au::perf::kPerfLevelOff5);
 
-    cfg.setTimerLevel(7);
-    EXPECT_EQ(cfg.getTimerLevel(), 7);
-    cfg.setTimerLevel(au::perf::kPerfLevelOff5);
-    EXPECT_EQ(cfg.getTimerLevel(), au::perf::kPerfLevelOff5);
+    au::perf::setTracerLevel(0);
+    EXPECT_EQ(au::perf::getTracerLevel(), 0);
 
-    cfg.setTracerLevel(0);
-    EXPECT_EQ(cfg.getTracerLevel(), 0);
-
-    cfg.setRootName("AlgoRoot");
+    au::perf::setRootName("AlgoRoot");
     char name[64] = {0};
-    cfg.getRootName(name, sizeof(name));
+    au::perf::getRootName(name, sizeof(name));
     EXPECT_STREQ(name, "AlgoRoot");
 
-    cfg.setAggregateMode(true);
-    EXPECT_TRUE(cfg.isAggregateMode());
-    cfg.setAggregateMode(false);
-    EXPECT_FALSE(cfg.isAggregateMode());
+    au::perf::setAggregateMode(true);
+    EXPECT_TRUE(au::perf::isAggregateMode());
+    au::perf::setAggregateMode(false);
+    EXPECT_FALSE(au::perf::isAggregateMode());
 }
 
 // ===========================================================================
-//  2. Multiple independent contexts — config isolation
-// ===========================================================================
-
-TEST_F(XTimer5Test, MultipleContextsIndependent)
-{
-    au::perf::XPerfContext5 a;
-    au::perf::XPerfContext5 b;
-
-    a.setTimerLevel(1);
-    b.setTimerLevel(99);
-
-    EXPECT_EQ(a.getTimerLevel(), 1);
-    EXPECT_EQ(b.getTimerLevel(), 99);
-
-    au::perf::XPerfContext5::defaultContext().setTimerLevel(5);
-    EXPECT_EQ(a.getTimerLevel(), 1);
-    EXPECT_EQ(b.getTimerLevel(), 99);
-    EXPECT_EQ(au::perf::XPerfContext5::defaultContext().getTimerLevel(), 5);
-}
-
-// ===========================================================================
-//  3. RootName — std::string overload + truncation
+//  2. RootName — std::string overload + truncation
 // ===========================================================================
 
 TEST_F(XTimer5Test, RootNameStringAndTruncation)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-
-    cfg.setRootName(std::string("literal-root"));
+    au::perf::setRootName(std::string("literal-root"));
     char buf[64] = {0};
-    cfg.getRootName(buf, sizeof(buf));
+    au::perf::getRootName(buf, sizeof(buf));
     EXPECT_STREQ(buf, "literal-root");
 
-    cfg.setRootName(std::string{});
+    au::perf::setRootName(std::string{});
     std::memset(buf, 0xCC, sizeof(buf));
-    cfg.getRootName(buf, sizeof(buf));
+    au::perf::getRootName(buf, sizeof(buf));
     EXPECT_STREQ(buf, "");
 
     std::string huge(200, 'x');
-    cfg.setRootName(huge);
-    cfg.getRootName(buf, sizeof(buf));
+    au::perf::setRootName(huge);
+    au::perf::getRootName(buf, sizeof(buf));
     EXPECT_LE(std::strlen(buf), sizeof(buf) - 1);
     EXPECT_GT(std::strlen(buf), 0u);
 }
 
 // ===========================================================================
-//  4. XTimer5 — elapsed / restart / sleepFor non-positive
+//  3. XTimer5 — elapsed / restart / sleepFor non-positive
 // ===========================================================================
 
 TEST_F(XTimer5Test, TimerElapsed)
@@ -191,14 +159,13 @@ TEST_F(XTimer5Test, TimerGetTimeFormatted)
 }
 
 // ===========================================================================
-//  5. Release-mode: one-liner per scope, no tree characters
+//  4. Release-mode: one-liner per scope, no tree characters
 // ===========================================================================
 
 TEST_F(XTimer5Test, ReleaseModeOneLiner)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Release);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -215,14 +182,13 @@ TEST_F(XTimer5Test, ReleaseModeOneLiner)
 }
 
 // ===========================================================================
-//  6. Debug-mode: hierarchical tree with header + ASCII branches + colon
+//  5. Debug-mode: hierarchical tree with header + ASCII branches + colon
 // ===========================================================================
 
 TEST_F(XTimer5Test, DebugModeTreeHierarchy)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -249,21 +215,18 @@ TEST_F(XTimer5Test, DebugModeTreeHierarchy)
     EXPECT_EQ(countOccurrences(out, "grand5"), 1);
     EXPECT_NE(out.find("|--"), std::string::npos);
     EXPECT_NE(out.find("`--"), std::string::npos);
-    // v5 invariant: tree lines retain colon separator.
     EXPECT_NE(out.find(": "), std::string::npos);
-    // ASCII-only invariant.
     EXPECT_EQ(out.find("\xE2"), std::string::npos);
 }
 
 // ===========================================================================
-//  7. sub(name) / sub() — Debug mode aggregates into tree
+//  6. sub(name) / sub() — Debug mode aggregates into tree
 // ===========================================================================
 
 TEST_F(XTimer5Test, SubAndSubNamedDebug)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -283,14 +246,13 @@ TEST_F(XTimer5Test, SubAndSubNamedDebug)
 }
 
 // ===========================================================================
-//  8. sub(name) — Release mode prints the previous segment immediately
+//  7. sub(name) — Release mode prints the previous segment immediately
 // ===========================================================================
 
 TEST_F(XTimer5Test, SubReleaseImmediateOutput)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Release);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -306,21 +268,18 @@ TEST_F(XTimer5Test, SubReleaseImmediateOutput)
     EXPECT_NE(out.find("phase1"), std::string::npos) << out;
     EXPECT_NE(out.find("phase2"), std::string::npos) << out;
     EXPECT_NE(out.find("relPipeline"), std::string::npos) << out;
-    // Ordering: phase1 must precede phase2 (immediate output semantics).
     EXPECT_LT(out.find("phase1"), out.find("phase2"));
 }
 
 // ===========================================================================
-//  9. Level filtering: kPerfLevelOff fully silences; threshold gates depth
+//  8. Level filtering: kPerfLevelOff fully silences; threshold gates depth
 // ===========================================================================
 
 TEST_F(XTimer5Test, LevelFiltering)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Release);
+    au::perf::setMode(au::perf::Mode5::Release);
 
-    // Level == depth: setTimerLevel(0) means "show only depth-0 nodes".
-    cfg.setTimerLevel(0);
+    au::perf::setTimerLevel(0);
     {
         StdoutCapture cap;
         {
@@ -334,7 +293,7 @@ TEST_F(XTimer5Test, LevelFiltering)
         EXPECT_EQ(out.find("depth1"), std::string::npos) << "depth>level must be silent";
     }
 
-    cfg.setTimerLevel(au::perf::kPerfLevelOff5);
+    au::perf::setTimerLevel(au::perf::kPerfLevelOff5);
     {
         StdoutCapture cap;
         {
@@ -345,15 +304,14 @@ TEST_F(XTimer5Test, LevelFiltering)
 }
 
 // ===========================================================================
-//  10. setEnabled(false) hard-off
+//  9. setEnabled(false) hard-off
 // ===========================================================================
 
 TEST_F(XTimer5Test, DisabledHardOff)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setEnabled(false);
-    cfg.setMode(au::perf::Mode5::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setEnabled(false);
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -364,15 +322,14 @@ TEST_F(XTimer5Test, DisabledHardOff)
 }
 
 // ===========================================================================
-//  11. Multi-thread isolation: each thread one header, no interleave
+//  10. Multi-thread isolation: each thread one header, no interleave
 // ===========================================================================
 
 TEST_F(XTimer5Test, MultiThreadIsolation)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
-    cfg.setAggregateMode(false);
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setAggregateMode(false);
 
     constexpr int kThreads = 4;
     StdoutCapture cap;
@@ -400,15 +357,14 @@ TEST_F(XTimer5Test, MultiThreadIsolation)
 }
 
 // ===========================================================================
-//  12. Aggregate mode: per-context flush (instance method)
+//  11. Aggregate mode: global flush
 // ===========================================================================
 
-TEST_F(XTimer5Test, AggregateModeInstanceFlush)
+TEST_F(XTimer5Test, AggregateModeFlush)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
-    cfg.setAggregateMode(true);
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setAggregateMode(true);
 
     {
         StdoutCapture capDuring;
@@ -427,7 +383,7 @@ TEST_F(XTimer5Test, AggregateModeInstanceFlush)
 
     {
         StdoutCapture capFlush;
-        cfg.flushAggregated();
+        au::perf::flushAggregated();
         const std::string outFlush = capFlush.drain();
         EXPECT_NE(outFlush.find("agg5.worker"), std::string::npos);
         EXPECT_NE(outFlush.find("agg5.main"), std::string::npos);
@@ -437,136 +393,21 @@ TEST_F(XTimer5Test, AggregateModeInstanceFlush)
     {
         // Second flush must be a no-op (idempotent).
         StdoutCapture capSecond;
-        cfg.flushAggregated();
+        au::perf::flushAggregated();
         EXPECT_TRUE(capSecond.drain().empty());
     }
 
-    cfg.setAggregateMode(false);
+    au::perf::setAggregateMode(false);
 }
 
 // ===========================================================================
-//  13. Per-ctx aggregate isolation (xperf_8_design.md §8 acceptance #1)
-// ===========================================================================
-
-TEST_F(XTimer5Test, PerCtxAggregateIsolation)
-{
-    au::perf::XPerfContext5 ctxA;
-    au::perf::XPerfContext5 ctxB;
-    ctxA.setMode(au::perf::Mode5::Debug);
-    ctxA.setTimerLevel(au::perf::kPerfLevelAll5);
-    ctxA.setAggregateMode(true);
-    ctxA.setRootName(std::string("ctxA-root"));
-
-    ctxB.setMode(au::perf::Mode5::Debug);
-    ctxB.setTimerLevel(au::perf::kPerfLevelAll5);
-    ctxB.setAggregateMode(true);
-    ctxB.setRootName(std::string("ctxB-root"));
-
-    {
-        au::perf::XTimer5Scoped a(ctxA, std::string("workA"));
-        au::perf::XTimer5::sleepFor(1);
-    }
-    {
-        au::perf::XTimer5Scoped b(ctxB, std::string("workB"));
-        au::perf::XTimer5::sleepFor(1);
-    }
-
-    {
-        StdoutCapture cap;
-        ctxA.flushAggregated();
-        const std::string out = cap.drain();
-        EXPECT_NE(out.find("workA"), std::string::npos);
-        EXPECT_EQ(out.find("workB"), std::string::npos) << "ctxA flush leaked B";
-        EXPECT_NE(out.find("ctxA-root"), std::string::npos);
-    }
-    {
-        StdoutCapture cap;
-        ctxB.flushAggregated();
-        const std::string out = cap.drain();
-        EXPECT_NE(out.find("workB"), std::string::npos);
-        EXPECT_EQ(out.find("workA"), std::string::npos) << "ctxB flush leaked A";
-        EXPECT_NE(out.find("ctxB-root"), std::string::npos);
-    }
-}
-
-// ===========================================================================
-//  14. Cross-ctx nested call: each ctx renders its own independent tree
-//      (xperf_8_design.md §4.4.2 scenario 4)
-// ===========================================================================
-
-TEST_F(XTimer5Test, NestedCrossCtxTreesIndependent)
-{
-    au::perf::XPerfContext5 ctxA;
-    au::perf::XPerfContext5 ctxB;
-    ctxA.setMode(au::perf::Mode5::Debug);
-    ctxA.setTimerLevel(au::perf::kPerfLevelAll5);
-    ctxA.setRootName(std::string("ctxA-root"));
-    ctxB.setMode(au::perf::Mode5::Debug);
-    ctxB.setTimerLevel(au::perf::kPerfLevelAll5);
-    ctxB.setRootName(std::string("ctxB-root"));
-
-    StdoutCapture cap;
-    {
-        au::perf::XTimer5Scoped outerA(ctxA, std::string("outerA"));
-        {
-            au::perf::XTimer5Scoped innerB(ctxB, std::string("innerB"));
-            au::perf::XTimer5::sleepFor(1);
-        }
-        au::perf::XTimer5::sleepFor(1);
-    }
-    const std::string out = cap.drain();
-
-    // Each ctx must produce its own header.
-    EXPECT_NE(out.find("ctxA-root"), std::string::npos) << out;
-    EXPECT_NE(out.find("ctxB-root"), std::string::npos) << out;
-    EXPECT_NE(out.find("outerA"), std::string::npos);
-    EXPECT_NE(out.find("innerB"), std::string::npos);
-    // innerB must NOT appear as a child of outerA — they live in
-    // separate per-ctx trees.
-    const std::size_t headerA = out.find("ctxA-root");
-    const std::size_t innerB  = out.find("innerB");
-    EXPECT_NE(headerA, std::string::npos);
-    EXPECT_NE(innerB, std::string::npos);
-    // innerB belongs to ctxB's tree which is flushed when innerB's root
-    // closes; it must therefore appear BEFORE ctxA's header (because
-    // outerA's root closes after innerB has long been flushed).
-    EXPECT_LT(innerB, headerA);
-}
-
-// ===========================================================================
-//  15. ctx destruction auto-flushes residual aggregate data
-// ===========================================================================
-
-TEST_F(XTimer5Test, DestructorAutoFlushesResidual)
-{
-    StdoutCapture cap;
-    {
-        au::perf::XPerfContext5 transient;
-        transient.setMode(au::perf::Mode5::Debug);
-        transient.setTimerLevel(au::perf::kPerfLevelAll5);
-        transient.setAggregateMode(true);
-        transient.setRootName(std::string("transient-root"));
-
-        {
-            au::perf::XTimer5Scoped s(transient, std::string("transient.work"));
-            au::perf::XTimer5::sleepFor(1);
-        }
-        // No explicit flushAggregated() — destructor must drain the buffer.
-    }
-    const std::string out = cap.drain();
-    EXPECT_NE(out.find("transient.work"), std::string::npos) << out;
-    EXPECT_NE(out.find("transient-root"), std::string::npos);
-}
-
-// ===========================================================================
-//  16. Exception safety: outermost flush still fires when stack unwinds
+//  12. Exception safety: outermost flush still fires when stack unwinds
 // ===========================================================================
 
 TEST_F(XTimer5Test, ExceptionSafety)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     bool          caught = false;
@@ -586,14 +427,13 @@ TEST_F(XTimer5Test, ExceptionSafety)
 }
 
 // ===========================================================================
-//  17. Long-name truncation marker
+//  13. Long-name truncation marker
 // ===========================================================================
 
 TEST_F(XTimer5Test, LongNameTruncationMarker)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     std::string   longName(1500, 'A');
@@ -606,14 +446,13 @@ TEST_F(XTimer5Test, LongNameTruncationMarker)
 }
 
 // ===========================================================================
-//  18. Temporary std::string name does not dangle
+//  14. Temporary std::string name does not dangle
 // ===========================================================================
 
 TEST_F(XTimer5Test, TemporaryStringNameNoDangle)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Release);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
     {
@@ -625,14 +464,13 @@ TEST_F(XTimer5Test, TemporaryStringNameNoDangle)
 }
 
 // ===========================================================================
-//  19. Convenience macros AU_TIMER5 / AU_PERF5_SCOPE
+//  15. Convenience macros AU_TIMER5 / AU_PERF5_SCOPE
 // ===========================================================================
 
 TEST_F(XTimer5Test, ConvenienceMacros)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Release);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     {
         StdoutCapture cap;
@@ -667,16 +505,14 @@ TEST_F(XTimer5Test, ConvenienceMacros)
 }
 
 // ===========================================================================
-//  20. Stress: 10k scopes — performance smoke + leak guard
+//  16. Stress: 10k scopes — performance smoke + leak guard
 // ===========================================================================
 
 TEST_F(XTimer5Test, StressTenThousandScopes)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Release);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
-    // Capture-and-discard; we only care about throughput.
     StdoutCapture cap;
     auto          begin = std::chrono::steady_clock::now();
     for (int i = 0; i < 10000; ++i) {
@@ -690,17 +526,15 @@ TEST_F(XTimer5Test, StressTenThousandScopes)
 }
 
 // ===========================================================================
-//  21. Deep-nest hard cap: kHardMaxDepth5 (=512) does not crash
+//  17. Deep-nest hard cap: kHardMaxDepth5 (=512) does not crash
 // ===========================================================================
 
 TEST_F(XTimer5Test, HardDepthCapNoCrash)
 {
-    auto& cfg = au::perf::XPerfContext5::defaultContext();
-    cfg.setMode(au::perf::Mode5::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
 
     StdoutCapture cap;
-    // Recurse via std::function to exercise the hard cap silently.
     std::function<void(int)> recurse = [&](int n) {
         if (n <= 0)
             return;
@@ -708,8 +542,190 @@ TEST_F(XTimer5Test, HardDepthCapNoCrash)
         recurse(n - 1);
     };
     recurse(static_cast<int>(au::perf::kHardMaxDepth5) + 16);
-    (void)cap.drain();  // discard, only crash-free outcome matters
+    (void)cap.drain();
     SUCCEED();
+}
+
+// ===========================================================================
+//  18. XTimer5::restart() — resets elapsed to near-zero
+// ===========================================================================
+
+TEST_F(XTimer5Test, TimerRestartElapsed)
+{
+    au::perf::XTimer5 t;
+    au::perf::XTimer5::sleepFor(20);
+    EXPECT_GT(t.elapsedMs(), 10.0f);
+
+    t.restart();
+    EXPECT_LT(t.elapsedMs(), 10.0f) << "restart() must reset elapsed to near-zero";
+
+    au::perf::XTimer5::sleepFor(10);
+    const float after = t.elapsedMs();
+    EXPECT_GT(after, 5.0f);
+    EXPECT_LT(after, 100.0f);
+}
+
+// ===========================================================================
+//  19. Debug mode: precise indentation for nested scopes and siblings
+// ===========================================================================
+
+TEST_F(XTimer5Test, DebugIndentationPrecision)
+{
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+
+    // Two siblings under root — verify branch markers and ordering.
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped root(std::string("r"));
+            root.sub(std::string("A"));
+            au::perf::XTimer5::sleepFor(1);
+            root.sub(std::string("B"));
+            au::perf::XTimer5::sleepFor(1);
+            root.sub();  // close trailing sub so tree flushes
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("r: "), std::string::npos) << out;
+        EXPECT_NE(out.find("|-- A:"), std::string::npos) << out;
+        EXPECT_NE(out.find("`-- B:"), std::string::npos) << out;
+        EXPECT_LT(out.find("A:"), out.find("B:"));
+    }
+
+    // Nested scopes: root -> inner — verify indent inheritance.
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped outer(std::string("outer"));
+            {
+                au::perf::XTimer5Scoped inner(std::string("inner"));
+                au::perf::XTimer5::sleepFor(1);
+            }
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("outer: "), std::string::npos) << out;
+        EXPECT_NE(out.find("`-- inner:"), std::string::npos) << out;
+        EXPECT_LT(out.find("outer:"), out.find("inner:"));
+    }
+
+    // 5-level deep nest — deepest node present with accumulated indent.
+    {
+        StdoutCapture cap;
+        {
+            std::function<void(int)> nest = [&](int d) {
+                if (d >= 5) return;
+                au::perf::XTimer5Scoped s(std::string("L") + std::to_string(d));
+                au::perf::XTimer5::sleepFor(0);
+                nest(d + 1);
+            };
+            au::perf::XTimer5Scoped root(std::string("deep"));
+            nest(0);
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("`-- L4:"), std::string::npos) << out;
+        for (int i = 0; i < 4; ++i) {
+            EXPECT_LT(out.find(std::string("L") + std::to_string(i) + ":"),
+                      out.find(std::string("L") + std::to_string(i + 1) + ":"));
+        }
+    }
+}
+
+// ===========================================================================
+//  20. Stress: 100k scopes in Debug mode — tree-node allocator leak guard
+// ===========================================================================
+
+TEST_F(XTimer5Test, StressHundredThousandScopesDebug)
+{
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+
+    au::log::Config::get().setLevel(au::log::Level::Silent);
+    {
+        for (int i = 0; i < 100000; ++i) {
+            au::perf::XTimer5Scoped s(std::string("memtest"));
+        }
+    }
+    au::log::Config::get().setLevel(au::log::Level::Verbose);
+    SUCCEED();
+}
+
+// ===========================================================================
+//  21. Name corruption defense — special characters and format specifiers
+// ===========================================================================
+
+TEST_F(XTimer5Test, NameCorruptionDefense)
+{
+    au::perf::setMode(au::perf::Mode5::Release);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+
+    // Embedded newline — must not break line-oriented output.
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped s(std::string("line1\nline2"));
+            au::perf::XTimer5::sleepFor(1);
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("[perf5]"), std::string::npos);
+    }
+
+    // printf format specifiers — must be rendered literally.
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped s(std::string("%s%d%p_test"));
+            au::perf::XTimer5::sleepFor(1);
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("%s%d%p_test"), std::string::npos);
+    }
+
+    // Tab and backslash characters.
+    {
+        au::perf::XTimer5Scoped s(std::string("tab\there\\path"));
+        SUCCEED();
+    }
+
+    // UTF-8 multi-byte sequence.
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped s(std::string("utf8_\xc3\xa4\xc3\xb6"));  // äö
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("utf8_"), std::string::npos);
+    }
+}
+
+// ===========================================================================
+//  22. Wide tree — 20 sibling subs, presence and ordering
+// ===========================================================================
+
+TEST_F(XTimer5Test, WideTreeSiblingOrdering)
+{
+    au::perf::setMode(au::perf::Mode5::Debug);
+    au::perf::setTimerLevel(au::perf::kPerfLevelAll5);
+
+    StdoutCapture cap;
+    {
+        au::perf::XTimer5Scoped root(std::string("wide"));
+        for (int i = 0; i < 20; ++i) {
+            root.sub(std::string("s") + std::to_string(i));
+            au::perf::XTimer5::sleepFor(0);
+        }
+        root.sub();  // close trailing sub so tree flushes
+    }
+    const std::string out = cap.drain();
+
+    for (int i = 0; i < 20; ++i) {
+        const std::string marker = std::string("s") + std::to_string(i) + ":";
+        EXPECT_NE(out.find(marker), std::string::npos) << "missing " << marker;
+    }
+    for (int i = 0; i < 19; ++i) {
+        const std::string a = std::string("s") + std::to_string(i) + ":";
+        const std::string b = std::string("s") + std::to_string(i + 1) + ":";
+        EXPECT_LT(out.find(a), out.find(b)) << a << " must precede " << b;
+    }
 }
 
 #endif  // ENABLE_TEST_XTIMER5
