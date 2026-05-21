@@ -1,8 +1,12 @@
 #include "perf/xtracer.h"
 
-#include "log/xlogger.h"
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
 
-#ifdef AU_OS_ANDROID
+#include "sys/xplatform.h"
+
+#if AU_OS_ANDROID
 #include <fcntl.h>
 #include <unistd.h>
 #endif
@@ -10,90 +14,155 @@
 namespace au {
 namespace perf {
 
+// ===========================================================================
+//  Process-wide trace_marker fd helper (Android only)
+// ===========================================================================
+
 namespace {
 
-enum TraceMode
-{
-    kBegin = 0,
-    kEnd
-};
+#if AU_OS_ANDROID
 
-int openTraceFile()
+int getTraceFd() noexcept
 {
-#ifdef AU_OS_ANDROID
-    int fd = open("/sys/kernel/debug/tracing/trace_marker", O_WRONLY);
-    if (fd == -1)
-        fd = open("/sys/kernel/tracing/trace_marker", O_WRONLY);
+    static int fd = []() {
+        int f = ::open("/sys/kernel/debug/tracing/trace_marker", O_WRONLY | O_CLOEXEC);
+        if (f < 0) {
+            f = ::open("/sys/kernel/tracing/trace_marker", O_WRONLY | O_CLOEXEC);
+        }
+        return f;
+    }();
     return fd;
-#else
-    return -1;
-#endif
 }
 
-void closeTraceFile(int fd)
+void writeTraceMarker(char mode, int pid, const char* name, std::size_t nameLen) noexcept
 {
-#ifdef AU_OS_ANDROID
-    if (fd >= 0)
-        close(fd);
-#else
-    (void)fd;
-#endif
-}
-
-void writeTraceMessage([[maybe_unused]] int fd, [[maybe_unused]] const std::string& name,
-                       [[maybe_unused]] TraceMode mode)
-{
-#ifdef AU_OS_ANDROID
-    if (fd < 0)
+    int fd = getTraceFd();
+    if (fd < 0) {
         return;
-    std::string msg = (mode == kBegin ? "B|" : "E|") + std::to_string(getpid()) + "|" + name;
-    write(fd, msg.c_str(), msg.size());
-#endif
+    }
+
+    char        buf[256];
+    std::size_t n = 0;
+
+    if (mode == 'B') {
+        const int rc = std::snprintf(buf, sizeof(buf), "B|%d|%.*s", pid, static_cast<int>(nameLen), name);
+        if (rc <= 0) {
+            return;
+        }
+        n = (static_cast<std::size_t>(rc) >= sizeof(buf)) ? sizeof(buf) - 1 : static_cast<std::size_t>(rc);
+    } else {
+        const int rc = std::snprintf(buf, sizeof(buf), "E|%d", pid);
+        if (rc <= 0) {
+            return;
+        }
+        n = static_cast<std::size_t>(rc);
+    }
+
+    (void)::write(fd, buf, n);
 }
+
+#endif  // AU_OS_ANDROID
+
+thread_local uint32_t gTracerDepth = 0;
 
 }  // anonymous namespace
 
-XTracerScoped::XTracerScoped(const std::string& name)
+// ===========================================================================
+//  XTracerScoped
+// ===========================================================================
+
+XTracerScoped::XTracerScoped(const std::string& name) noexcept { begin(name); }
+
+void XTracerScoped::begin(const std::string& name) noexcept
 {
-    mTimer = std::make_unique<XTimerScoped>(name);
-    if (mTimer->getLevel() <= getPerfVisibleLevel()) {
-        mNameMain = name;
-        mFdTrace  = openTraceFile();
-        writeTraceMessage(mFdTrace, name, kBegin);
+    mActive  = false;
+    mSubOpen = false;
+    mNameLen = 0;
+    mName[0] = '\0';
+
+    if (!PerfConfig::get().isEnabled()) {
+        return;
+    }
+
+    if (gTracerDepth >= kHardMaxDepth) {
+        return;
+    }
+    const int32_t threshold = PerfConfig::get().getTracerLevel();
+    if (threshold == kPerfLevelOff || static_cast<int32_t>(gTracerDepth) > threshold) {
+        return;
+    }
+
+    const std::size_t cp = std::min(name.size(), kMaxName - 1);
+    if (cp > 0) {
+        std::memcpy(mName, name.data(), cp);
+    }
+    mName[cp] = '\0';
+    mNameLen  = static_cast<uint8_t>(cp);
+    mActive   = true;
+    ++gTracerDepth;
+
+#if AU_OS_ANDROID
+    writeTraceMarker('B', getpid(), mName, mNameLen);
+#endif
+}
+
+XTracerScoped::~XTracerScoped() noexcept
+{
+    if (!mActive) {
+        return;
+    }
+
+    if (mSubOpen) {
+        sub();
+    }
+
+#if AU_OS_ANDROID
+    writeTraceMarker('E', getpid(), nullptr, 0);
+#endif
+
+    if (gTracerDepth > 0u) {
+        --gTracerDepth;
     }
 }
 
-XTracerScoped::~XTracerScoped()
+void XTracerScoped::sub(const std::string& name) noexcept
 {
-    if (mTimer && mTimer->getLevel() <= getPerfVisibleLevel()) {
-        if (!mNameNode.empty()) {
-            writeTraceMessage(mFdTrace, mNameNode, kEnd);
-        }
-        writeTraceMessage(mFdTrace, mNameMain, kEnd);
-        closeTraceFile(mFdTrace);
+    if (!mActive) {
+        return;
     }
+
+    if (mSubOpen) {
+        sub();
+    }
+
+    ++gTracerDepth;
+#if AU_OS_ANDROID
+    char        buf[kMaxName];
+    std::size_t cp = std::min(name.size(), kMaxName - 1);
+    if (cp > 0) {
+        std::memcpy(buf, name.data(), cp);
+    }
+    buf[cp] = '\0';
+    writeTraceMarker('B', getpid(), buf, cp);
+#else
+    (void)name;
+#endif
+    mSubOpen = true;
 }
 
-void XTracerScoped::sub(const std::string& name)
+void XTracerScoped::sub() noexcept
 {
-    if (mTimer && mTimer->getLevel() < getPerfVisibleLevel()) {
-        mTimer->sub(name);
-        if (!mNameNode.empty())
-            writeTraceMessage(mFdTrace, mNameNode, kEnd);
-        mNameNode = name;
-        writeTraceMessage(mFdTrace, name, kBegin);
+    if (!mActive || !mSubOpen) {
+        return;
     }
-}
 
-void XTracerScoped::sub()
-{
-    if (mTimer && mTimer->getLevel() < getPerfVisibleLevel()) {
-        mTimer->sub();
-        if (!mNameNode.empty()) {
-            writeTraceMessage(mFdTrace, mNameNode, kEnd);
-            mNameNode.clear();
-        }
+#if AU_OS_ANDROID
+    writeTraceMarker('E', getpid(), nullptr, 0);
+#endif
+    if (gTracerDepth > 0u) {
+        --gTracerDepth;
     }
+    mSubOpen = false;
 }
 
 }  // namespace perf

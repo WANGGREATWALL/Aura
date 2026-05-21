@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.14)
 # Version (update here; triggers re-configure)
 # ============================================================================
 set(AURA_VERSION_MAJOR 1)
-set(AURA_VERSION_MINOR 3)
+set(AURA_VERSION_MINOR 4)
 set(AURA_VERSION_PATCH 0)
 set(AURA_VERSION "${AURA_VERSION_MAJOR}.${AURA_VERSION_MINOR}.${AURA_VERSION_PATCH}")
 
@@ -42,17 +42,7 @@ set(AURA_SOURCES
     src/log/xlogger.cpp
     src/cv/ximage.cpp
     src/perf/xtimer.cpp
-    src/perf/xtimer0.cpp
-    src/perf/xtimer1.cpp
-    src/perf/xtimer2.cpp
-    src/perf/xtimer3.cpp
-    src/perf/xtimer4.cpp
     src/perf/xtracer.cpp
-    src/perf/xtracer0.cpp
-    src/perf/xtracer1.cpp
-    src/perf/xtracer2.cpp
-    src/perf/xtracer3.cpp
-    src/perf/xtracer4.cpp
     src/util/xargs.cpp
     third_party/cJSON/cJSON.c
 )
@@ -79,22 +69,12 @@ option(ENABLE_TEST_XBUFFER   "Enable xbuffer unit test"   ON)
 option(ENABLE_TEST_XREGEX    "Enable xregex unit test"    ON)
 option(ENABLE_TEST_XARGS     "Enable xargs unit test"     ON)
 option(ENABLE_TEST_XPATH     "Enable xpath unit test"     ON)
-option(ENABLE_TEST_XTIMER    "Enable xtimer unit test"    ON)
-option(ENABLE_TEST_XTIMER1   "Enable xtimer1 unit test"   ON)
-option(ENABLE_TEST_XTIMER0   "Enable xtimer0 unit test"   ON)
-option(ENABLE_TEST_XTRACER0  "Enable xtracer0 unit test"  ON)
-option(ENABLE_TEST_XTRACER1  "Enable xtracer1 unit test"  ON)
-option(ENABLE_TEST_XTIMER2   "Enable xtimer2 unit test"   ON)
-option(ENABLE_TEST_XTRACER2  "Enable xtracer2 unit test"  ON)
-option(ENABLE_TEST_XTIMER3   "Enable xtimer3 unit test"   ON)
-option(ENABLE_TEST_XTRACER3  "Enable xtracer3 unit test"  ON)
-option(ENABLE_TEST_XTIMER4   "Enable xtimer4 unit test"   ON)
-option(ENABLE_TEST_XTRACER4  "Enable xtracer4 unit test"  ON)
+option(ENABLE_TEST_XTIMER   "Enable xtimer unit test"   ON)
+option(ENABLE_TEST_XTRACER  "Enable xtracer unit test"  ON)
 option(ENABLE_TEST_XPLATFORM "Enable xplatform unit test" ON)
 option(ENABLE_TEST_XERROR    "Enable xerror unit test"    ON)
 option(ENABLE_TEST_XFILE     "Enable xfile unit test"     ON)
 option(ENABLE_TEST_XIMAGE    "Enable ximage unit test"    OFF)
-option(ENABLE_TEST_XTRACER   "Enable xtracer unit test"   ON)
 option(ENABLE_TEST_XFLOW     "Enable xflow unit test"     OFF)
 
 # ============================================================================
@@ -131,21 +111,11 @@ aura_add_test(xregex)
 aura_add_test(xargs)
 aura_add_test(xpath)
 aura_add_test(xtimer)
-aura_add_test(xtimer0)
-aura_add_test(xtimer1)
-aura_add_test(xtimer2)
-aura_add_test(xtimer3)
-aura_add_test(xtracer0)
-aura_add_test(xtracer1)
-aura_add_test(xtracer2)
-aura_add_test(xtracer3)
-aura_add_test(xtimer4)
-aura_add_test(xtracer4)
+aura_add_test(xtracer)
 aura_add_test(xplatform)
 aura_add_test(xerror)
 aura_add_test(xfile)
 aura_add_test(ximage)
-aura_add_test(xtracer)
 aura_add_test(xflow)
 
 add_executable(aura_test ${AURA_TEST_SOURCES})
@@ -155,6 +125,7 @@ target_include_directories(aura_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/inc
     ${CMAKE_CURRENT_BINARY_DIR}/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/test
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/gtest
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/gtest/include
 )
@@ -168,4 +139,27 @@ if(UNIX AND NOT APPLE)
 endif()
 if(APPLE)
     target_link_libraries(aura PRIVATE dl)
+endif()
+
+# ---------------------------------------------------------------------------
+# Sanitizer options for aura_test
+# ---------------------------------------------------------------------------
+
+option(ENABLE_ASAN "Enable AddressSanitizer for aura_test" OFF)
+option(ENABLE_TSAN "Enable ThreadSanitizer for aura_test" OFF)
+
+if(ENABLE_ASAN AND ENABLE_TSAN)
+    message(FATAL_ERROR "ENABLE_ASAN and ENABLE_TSAN are mutually exclusive")
+endif()
+
+if(ENABLE_ASAN)
+    target_compile_options(aura_test PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+    target_link_options(aura_test PRIVATE -fsanitize=address)
+    message(STATUS "AddressSanitizer enabled for aura_test")
+endif()
+
+if(ENABLE_TSAN)
+    target_compile_options(aura_test PRIVATE -fsanitize=thread -fno-omit-frame-pointer -g)
+    target_link_options(aura_test PRIVATE -fsanitize=thread)
+    message(STATUS "ThreadSanitizer enabled for aura_test")
 endif()

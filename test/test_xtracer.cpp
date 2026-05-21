@@ -1,154 +1,218 @@
 #if ENABLE_TEST_XTRACER
 
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "gtest/gtest.h"
+#include "log/xlogger.h"
+#include "perf/xperf_macros.h"
+#include "perf/xtimer.h"
 #include "perf/xtracer.h"
 
-using au::perf::XTracerScoped;
+// ---------------------------------------------------------------------------
+//  Fixture
+// ---------------------------------------------------------------------------
 
-// ============================================================================
-// Basic lifecycle
-// ============================================================================
+class XTracerTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        au::log::Config::get().setTag("XTracerTest");
+        au::log::Config::get().setLevel(au::log::Level::Verbose);
+        au::log::Config::get().setColorEnabled(false);
+#if AU_OS_ANDROID
+        au::log::Config::get().setShellPrintEnabled(true);
+#endif
+        auto& cfg = au::perf::PerfConfig::get();
+        cfg.setEnabled(true);
+        cfg.setMode(au::perf::Mode::Release);
+        cfg.setTimerLevel(au::perf::kPerfLevelOff);  // silence timer noise
+        cfg.setTracerLevel(au::perf::kPerfLevelAll);
+        cfg.setAggregateMode(false);
+        cfg.setRootName("perf");
+    }
+};
 
-TEST(XTracer, construct_destruct_no_crash)
+TEST_F(XTracerTest, BasicScopeNoCrash)
 {
     {
-        XTracerScoped tracer("test_trace");
-        // tracer writes "B" on construction, "E" on destruction (no-op on macOS)
+        au::perf::XTracerScoped s(std::string("trace.basic"));
+        au::perf::XTimer::sleepFor(1);
     }
     SUCCEED();
 }
 
-TEST(XTracer, empty_name_allowed)
+TEST_F(XTracerTest, DisabledHardOff)
 {
+    au::perf::PerfConfig::get().setEnabled(false);
+
     {
-        XTracerScoped tracer("");
-        SUCCEED();
-    }
-}
-
-TEST(XTracer, long_name_no_overflow)
-{
-    std::string longName(1024, 'x');
-    {
-        XTracerScoped tracer(longName);
-        SUCCEED();
-    }
-}
-
-// ============================================================================
-// sub() state machine
-// ============================================================================
-
-TEST(XTracer, sub_single_transition)
-{
-    XTracerScoped tracer("root");
-    tracer.sub("child");
-    // child node should start; root node exists
-    SUCCEED();
-}
-
-TEST(XTracer, sub_multiple_transitions)
-{
-    XTracerScoped tracer("root");
-    tracer.sub("child_a");
-    tracer.sub("child_b");
-    tracer.sub("child_c");
-    SUCCEED();
-}
-
-TEST(XTracer, sub_end_without_starting_new)
-{
-    XTracerScoped tracer("root");
-    tracer.sub("child");
-    tracer.sub();  // end current node without starting new one
-    SUCCEED();
-}
-
-TEST(XTracer, sub_call_before_first_sub)
-{
-    XTracerScoped tracer("root");
-    tracer.sub();  // should be a no-op or handled gracefully
-    SUCCEED();
-}
-
-TEST(XTracer, sub_empty_name)
-{
-    XTracerScoped tracer("root");
-    tracer.sub("");
-    SUCCEED();
-}
-
-// ============================================================================
-// Multiple tracers
-// ============================================================================
-
-TEST(XTracer, multiple_independent_tracers)
-{
-    {
-        XTracerScoped a("tracer_a");
-        XTracerScoped b("tracer_b");
-        a.sub("a_child");
-        b.sub("b_child");
+        au::perf::XTracerScoped a(std::string("off.tracer.a"));
+        au::perf::XTracerScoped b(std::string("off.tracer.b"));
     }
     SUCCEED();
 }
 
-TEST(XTracer, nested_tracers)
+TEST_F(XTracerTest, LevelGating)
 {
-    XTracerScoped outer("outer");
+    auto& cfg = au::perf::PerfConfig::get();
+
+    cfg.setTracerLevel(au::perf::kPerfLevelOff);
     {
-        XTracerScoped inner("inner");
-        inner.sub("inner_child");
+        au::perf::XTracerScoped s(std::string("never.traced"));
     }
-    outer.sub("outer_child");
-    SUCCEED();
-}
 
-// ============================================================================
-// Concurrent construction
-// ============================================================================
-
-TEST(XTracer, concurrent_construction_different_threads)
-{
-    auto fn = []() {
-        XTracerScoped t("thread_trace");
-        t.sub("step");
-    };
-    std::thread t1(fn);
-    std::thread t2(fn);
-    std::thread t3(fn);
-    t1.join();
-    t2.join();
-    t3.join();
-    SUCCEED();
-}
-
-// ============================================================================
-// sub() pattern variations
-// ============================================================================
-
-TEST(XTracer, alternating_sub_with_and_without_name)
-{
-    XTracerScoped tracer("root");
-    tracer.sub("s1");
-    tracer.sub();    // close s1
-    tracer.sub("s2");
-    tracer.sub();    // close s2
-    tracer.sub("s3");
-    SUCCEED();
-}
-
-TEST(XTracer, sub_after_destruction_of_inner_scope)
-{
-    XTracerScoped tracer("main");
+    cfg.setTracerLevel(0);
     {
-        XTracerScoped inner("inner");
-        inner.sub("detail");
+        au::perf::XTracerScoped s(std::string("traced"));
     }
-    // inner is destroyed; main should still function
-    tracer.sub("after_inner");
+
+    cfg.setTracerLevel(au::perf::kPerfLevelAll);
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, SubPhaseTransitions)
+{
+    {
+        au::perf::XTracerScoped root(std::string("root.tracer"));
+        root.sub(std::string("phase1"));
+        au::perf::XTimer::sleepFor(1);
+        root.sub(std::string("phase2"));
+        au::perf::XTimer::sleepFor(1);
+        root.sub();
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, CompositeMacroSafe)
+{
+    au::perf::PerfConfig::get().setTimerLevel(au::perf::kPerfLevelAll);
+
+    {
+        AU_PERF_SCOPE(std::string("composite.tracer.scope"));
+        au::perf::XTimer::sleepFor(1);
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, MultiThreadStress)
+{
+    constexpr int            kThreads = 4;
+    std::vector<std::thread> ths;
+    ths.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i) {
+        ths.emplace_back([] {
+            for (int j = 0; j < 8; ++j) {
+                au::perf::XTracerScoped s(std::string("mt.tracer"));
+                au::perf::XTimer::sleepFor(1);
+            }
+        });
+    }
+    for (auto& t : ths) {
+        t.join();
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, LongNameTruncationSafe)
+{
+    std::string huge(2000, 'X');
+    {
+        au::perf::XTracerScoped s(huge);
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, TemporaryStringNameNoDangle)
+{
+    {
+        au::perf::XTracerScoped s(std::string("temp.tracer.") + std::to_string(7));
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, DepthCounterDecrementsSymmetrically)
+{
+    for (int i = 0; i < 1024; ++i) {
+        au::perf::XTracerScoped s(std::string("seq"));
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, NestedScopeDepthSymmetry)
+{
+    for (int cycle = 0; cycle < 32; ++cycle) {
+        au::perf::XTracerScoped outer(std::string("outer.nest"));
+        outer.sub(std::string("before.inner"));
+        au::perf::XTimer::sleepFor(0);
+        {
+            au::perf::XTracerScoped inner(std::string("inner.nest"));
+            inner.sub(std::string("inner.phase"));
+            au::perf::XTimer::sleepFor(0);
+        }
+        outer.sub(std::string("after.inner"));
+        au::perf::XTimer::sleepFor(0);
+        outer.sub();
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, BareSubBeforeFirstNamedSub)
+{
+    {
+        au::perf::XTracerScoped s(std::string("bare.first"));
+        s.sub();
+        s.sub();
+        s.sub(std::string("first.real.phase"));
+        au::perf::XTimer::sleepFor(1);
+        s.sub();
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, AlternatingSubMultiCycle)
+{
+    au::perf::PerfConfig::get().setTracerLevel(au::perf::kPerfLevelAll);
+
+    {
+        au::perf::XTracerScoped s(std::string("alt.root"));
+        for (int i = 0; i < 8; ++i) {
+            s.sub(std::string("phase.") + std::to_string(i));
+            au::perf::XTimer::sleepFor(0);
+            s.sub();
+        }
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, EmptyNameAndSubName)
+{
+    {
+        au::perf::XTracerScoped s(std::string(""));
+    }
+    {
+        au::perf::XTracerScoped s(std::string("root.with.empty.sub"));
+        s.sub(std::string(""));
+        au::perf::XTimer::sleepFor(0);
+        s.sub();
+    }
+    SUCCEED();
+}
+
+TEST_F(XTracerTest, SameThreadMultipleInstances)
+{
+    {
+        au::perf::XTracerScoped a(std::string("tracer.a"));
+        au::perf::XTracerScoped b(std::string("tracer.b"));
+        a.sub(std::string("a.phase"));
+        au::perf::XTimer::sleepFor(0);
+        a.sub();
+        b.sub(std::string("b.phase"));
+        au::perf::XTimer::sleepFor(0);
+        b.sub();
+    }
     SUCCEED();
 }
 

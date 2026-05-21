@@ -3,22 +3,27 @@
 
 /**
  * @file xtracer.h
- * @brief Scoped performance tracer with Android systrace integration.
+ * @brief Android Perfetto / ftrace trace_marker tracer.
  *
- * On Android, writes to the kernel trace_marker file for systrace/perfetto.
- * On other platforms, only produces timer tree output.
+ * On Android:
+ *  - A single process-wide @c trace_marker fd is opened lazily with
+ *    @c O_CLOEXEC on first use; the kernel reclaims it on process exit.
+ *  - Each scope writes "B|pid|name" on construction and "E|pid" on
+ *    destruction. Per-write atomicity is guaranteed by ftrace (≤ 1 page).
+ *  - @c sub(name) / @c sub() emit additional begin/end pairs nested
+ *    inside the current scope.
  *
- * @example
- *   {
- *       au::perf::XTracerScoped t("processFrame");
- *       t.sub("preprocess");
- *       // ... work ...
- *       t.sub("inference");
- *       // ... work ...
- *   }
+ * On non-Android targets every body compiles away to nothing.
+ *
+ * @c XTracerScoped is intentionally independent of @c XTimerScoped.
+ * The composite macro @c AU_PERF_SCOPE declares both with the same label.
+ *
+ * Activation gates: global @c isEnabled(), depth ≤ @c getTracerLevel(),
+ * depth < @c kHardMaxDepth.
  */
 
-#include <memory>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include "perf/xtimer.h"
@@ -26,23 +31,30 @@
 namespace au {
 namespace perf {
 
+/**
+ * @brief RAII scoped Perfetto / ftrace tracer (Android-only payload).
+ */
 class XTracerScoped
 {
 public:
-    explicit XTracerScoped(const std::string& name);
-    ~XTracerScoped();
+    explicit XTracerScoped(const std::string& name) noexcept;
+    ~XTracerScoped() noexcept;
 
-    /** @brief End current sub-node and start a new one. */
-    void sub(const std::string& name);
+    XTracerScoped(const XTracerScoped&)            = delete;
+    XTracerScoped& operator=(const XTracerScoped&) = delete;
 
-    /** @brief End current sub-node without starting a new one. */
-    void sub();
+    void sub(const std::string& name) noexcept;
+    void sub() noexcept;
 
 private:
-    std::unique_ptr<XTimerScoped> mTimer;
-    int                           mFdTrace = -1;
-    std::string                   mNameMain;
-    std::string                   mNameNode;
+    void begin(const std::string& name) noexcept;
+
+    bool  mActive;
+    bool  mSubOpen;
+
+    static constexpr std::size_t kMaxName = 128;
+    char                         mName[kMaxName];
+    uint8_t                      mNameLen;
 };
 
 }  // namespace perf
