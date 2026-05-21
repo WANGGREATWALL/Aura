@@ -63,6 +63,17 @@ protected:
         cfg.setRootName("perf");
     }
 
+    void TearDown() override
+    {
+        // Defensive cleanup: if a test leaked unclosed subs / tree nodes,
+        // silently drain the TLS tree so subsequent tests start clean.
+        au::log::Config::get().setLevel(au::log::Level::Silent);
+        {
+            au::perf::XTimer5Scoped drain("_cleanup_");
+        }
+        au::log::Config::get().setLevel(au::log::Level::Verbose);
+    }
+
     static int countOccurrences(const std::string& s, const std::string& sub)
     {
         int         cnt = 0;
@@ -717,6 +728,17 @@ TEST_F(XTimer5Test, NameCorruptionDefense)
         const std::string out = cap.drain();
         EXPECT_NE(out.find("utf8_"), std::string::npos);
     }
+
+    // ANSI escape codes embedded in name.
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped s(std::string("\033[31mRED\033[0m"));
+            au::perf::XTimer5::sleepFor(1);
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("[perf5]"), std::string::npos);
+    }
 }
 
 // ===========================================================================
@@ -749,6 +771,160 @@ TEST_F(XTimer5Test, WideTreeSiblingOrdering)
         const std::string b = std::string("s") + std::to_string(i + 1) + ":";
         EXPECT_LT(out.find(a), out.find(b)) << a << " must precede " << b;
     }
+}
+
+// ===========================================================================
+//  23. Color output — ANSI escape presence when enabled, absent when disabled
+// ===========================================================================
+
+TEST_F(XTimer5Test, ColorOutput)
+{
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Release);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+
+    // Color enabled: ANSI escape codes present, reset count ≥ line count.
+    au::log::Config::get().setColorEnabled(true);
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped root(std::string("color_test"));
+            au::perf::XTimer5::sleepFor(1);
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("\033["), std::string::npos) << out;
+        const int lines  = countOccurrences(out, "\n");
+        const int resets = countOccurrences(out, "\033[0m");
+        EXPECT_GE(resets, lines) << "dangling color state — fewer resets than lines";
+        EXPECT_NE(out.find("color_test"), std::string::npos);
+    }
+
+    // Color disabled: no ANSI escape sequences.
+    au::log::Config::get().setColorEnabled(false);
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped root(std::string("nocolor"));
+            au::perf::XTimer5::sleepFor(1);
+        }
+        const std::string out = cap.drain();
+        EXPECT_EQ(out.find("\033["), std::string::npos) << out;
+        EXPECT_NE(out.find("nocolor"), std::string::npos);
+    }
+}
+
+// ===========================================================================
+//  24. Sub state-machine exception recovery
+// ===========================================================================
+
+TEST_F(XTimer5Test, SubStateExceptionRecovery)
+{
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+
+    // Unbalanced subs: extra bare sub() must be safe no-ops.
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped root(std::string("unbalanced"));
+            root.sub(std::string("A"));
+            au::perf::XTimer5::sleepFor(1);
+            root.sub();    // close A
+            root.sub();    // extra bare sub → no-op
+            root.sub();    // extra bare sub → no-op
+            root.sub(std::string("B"));
+            au::perf::XTimer5::sleepFor(1);
+            root.sub();    // close B
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("A:"), std::string::npos) << out;
+        EXPECT_NE(out.find("B:"), std::string::npos) << out;
+        EXPECT_LT(out.find("A:"), out.find("B:"));
+    }
+
+    // Bare sub before first named sub: safe no-op.
+    {
+        StdoutCapture cap;
+        {
+            au::perf::XTimer5Scoped root(std::string("bare_first"));
+            root.sub();  // no open sub → no-op
+            root.sub();  // repeated → no-op
+            root.sub(std::string("after"));
+            au::perf::XTimer5::sleepFor(1);
+            root.sub();  // close after
+        }
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("after:"), std::string::npos) << out;
+    }
+
+    // Exception between sub() calls — the open sub is orphaned and tree
+    // cannot flush, but the process must not crash (stack unwinding + dtor).
+    {
+        bool caught = false;
+        try {
+            au::perf::XTimer5Scoped root(std::string("mid_sub"));
+            root.sub(std::string("A"));
+            throw std::runtime_error("mid");
+        } catch (const std::exception&) {
+            caught = true;
+        }
+        EXPECT_TRUE(caught);
+        SUCCEED();
+    }
+}
+
+// ===========================================================================
+//  25. Stress: 1000 named + 1000 bare subs — vector growth safety
+// ===========================================================================
+
+TEST_F(XTimer5Test, StressWideSubs)
+{
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+
+    au::log::Config::get().setLevel(au::log::Level::Silent);
+    {
+        au::perf::XTimer5Scoped root(std::string("many_subs"));
+        for (int i = 0; i < 1000; ++i) {
+            root.sub(std::string("s") + std::to_string(i));
+        }
+        for (int i = 0; i < 1000; ++i) {
+            root.sub();
+        }
+    }
+    au::log::Config::get().setLevel(au::log::Level::Verbose);
+    SUCCEED();
+}
+
+// ===========================================================================
+//  26. Stress: mixed creation patterns — flat / sub / nested interleaved
+// ===========================================================================
+
+TEST_F(XTimer5Test, StressMixedPatterns)
+{
+    auto& cfg = au::perf::PerfConfig::get();
+    cfg.setMode(au::perf::Mode5::Debug);
+    cfg.setTimerLevel(au::perf::kPerfLevelAll5);
+
+    au::log::Config::get().setLevel(au::log::Level::Silent);
+    {
+        for (int i = 0; i < 1000; ++i) {
+            { au::perf::XTimer5Scoped s(std::string("flat")); }
+            {
+                au::perf::XTimer5Scoped s(std::string("subs"));
+                s.sub(std::string("a"));
+                s.sub();
+            }
+            {
+                au::perf::XTimer5Scoped o(std::string("outer"));
+                { au::perf::XTimer5Scoped in(std::string("inner")); }
+            }
+        }
+    }
+    au::log::Config::get().setLevel(au::log::Level::Verbose);
+    SUCCEED();
 }
 
 #endif  // ENABLE_TEST_XTIMER5
