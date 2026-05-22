@@ -3,7 +3,7 @@
 
 /**
  * @file xperf_macros.h
- * @brief Convenience macros for the v5 perf subsystem.
+ * @brief Convenience macros for the perf subsystem.
  *
  * Define @c AU_PERF_DISABLE_ALL=1 in build flags to strip every scope
  * to @c ((void)0) for shipping builds.

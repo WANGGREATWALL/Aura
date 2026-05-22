@@ -136,6 +136,14 @@ void XTracerScoped::sub(const std::string& name) noexcept
         sub();
     }
 
+    if (gTracerDepth >= kHardMaxDepth) {
+        return;
+    }
+    const int32_t threshold = PerfConfig::get().getTracerLevel();
+    if (threshold == kPerfLevelOff || static_cast<int32_t>(gTracerDepth) > threshold) {
+        return;
+    }
+
     ++gTracerDepth;
 #if AU_OS_ANDROID
     char        buf[kMaxName];

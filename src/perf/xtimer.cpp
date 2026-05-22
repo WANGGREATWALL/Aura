@@ -177,13 +177,14 @@ int32_t PerfConfig::getTracerLevel() const noexcept { return mTracerLevel.load(s
 
 void PerfConfig::setRootName(const std::string& name) noexcept
 {
+    std::lock_guard<std::mutex> lk(mRootNameMutex);
     const std::size_t cap = sizeof(mRootName) - 1;
     const std::size_t cp  = std::min(name.size(), cap);
     if (cp > 0u) {
         std::memcpy(mRootName, name.data(), cp);
     }
     mRootName[cp] = '\0';
-    mRootNameLen.store(static_cast<uint32_t>(cp), std::memory_order_release);
+    mRootNameLen  = static_cast<uint32_t>(cp);
 }
 
 void PerfConfig::getRootName(char* outBuf, std::size_t bufSize) const noexcept
@@ -191,7 +192,8 @@ void PerfConfig::getRootName(char* outBuf, std::size_t bufSize) const noexcept
     if (outBuf == nullptr || bufSize == 0) {
         return;
     }
-    const uint32_t    len = mRootNameLen.load(std::memory_order_acquire);
+    std::lock_guard<std::mutex> lk(mRootNameMutex);
+    const uint32_t    len = mRootNameLen;
     const std::size_t cp  = std::min(static_cast<std::size_t>(len), bufSize - 1);
     std::memcpy(outBuf, mRootName, cp);
     outBuf[cp] = '\0';
@@ -469,30 +471,25 @@ void XTimerScoped::begin(const std::string& name) noexcept
     mNameInline[0]    = '\0';
     mSubNameLen       = 0;
     mSubNameInline[0] = '\0';
-    mBegin            = std::chrono::steady_clock::now();
-    mSubBegin         = mBegin;
-
-    if (!name.empty()) {
-        const std::size_t cp = std::min(name.size(), kInlineNameCap - 1);
-        std::memcpy(mNameInline, name.data(), cp);
-        mNameInline[cp] = '\0';
-        mNameLen        = static_cast<uint32_t>(cp);
-    }
 
     PerfConfig& cfg = PerfConfig::get();
     if (!cfg.isEnabled()) {
         return;
     }
 
-    PerfThreadCtx& tls = tlsCtx();
-    if (tls.inFlush) {
-        return;
-    }
-
     const Mode mode = cfg.getMode();
 
-    const uint32_t depth =
-        (mode == Mode::Release) ? gTimerReleaseDepth : static_cast<uint32_t>(tlsTree().openStack.size());
+    PerfThreadCtx* tls = nullptr;
+    uint32_t       depth;
+    if (mode == Mode::Release) {
+        depth = gTimerReleaseDepth;
+    } else {
+        tls = &tlsCtx();
+        if (tls->inFlush) {
+            return;
+        }
+        depth = static_cast<uint32_t>(tls->tree.openStack.size());
+    }
 
     if (depth >= kHardMaxDepth) {
         return;
@@ -503,6 +500,16 @@ void XTimerScoped::begin(const std::string& name) noexcept
         return;
     }
 
+    mBegin    = std::chrono::steady_clock::now();
+    mSubBegin = mBegin;
+
+    if (!name.empty()) {
+        const std::size_t cp = std::min(name.size(), kInlineNameCap - 1);
+        std::memcpy(mNameInline, name.data(), cp);
+        mNameInline[cp] = '\0';
+        mNameLen        = static_cast<uint32_t>(cp);
+    }
+
     if (mode == Mode::Release) {
         mNodeIdx = -2;
         mDepth   = depth;
@@ -511,7 +518,7 @@ void XTimerScoped::begin(const std::string& name) noexcept
     }
 
     // -- Debug path --
-    PerCtxTree&   tree   = tlsTree();
+    PerCtxTree&   tree   = tls->tree;
     const int32_t parent = tree.openStack.empty() ? -1 : tree.openStack.back();
     const int32_t idx    = appendNodeUnsafe(tree, parent, name.data(), name.size(), depth, mBegin);
     if (idx < 0) {

@@ -33,6 +33,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <string>
 
 namespace au {
@@ -68,8 +69,8 @@ enum class Mode : int32_t
 /**
  * @brief Global performance configuration singleton.
  *
- * All read/write accessors are atomic and lock-free; safe to call from
- * any thread at any time.
+ * Scalar accessors are atomic and lock-free. Root-name access is protected
+ * by a mutex because it copies a multi-byte inline buffer.
  */
 class PerfConfig
 {
@@ -119,8 +120,9 @@ private:
     std::atomic<int32_t> mTracerLevel{kPerfLevelAll};
     std::atomic<bool>    mAggregate{false};
 
-    std::atomic<uint32_t> mRootNameLen{4};
-    char                  mRootName[64]{'p', 'e', 'r', 'f', '\0'};
+    mutable std::mutex mRootNameMutex;
+    uint32_t           mRootNameLen{4};
+    char               mRootName[64]{'p', 'e', 'r', 'f', '\0'};
 };
 
 // ---------------------------------------------------------------------------
