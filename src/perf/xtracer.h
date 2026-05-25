@@ -13,7 +13,10 @@
  *  - @c sub(name) / @c sub() emit additional begin/end pairs nested
  *    inside the current scope.
  *
- * On non-Android targets every body compiles away to nothing.
+ * On non-Android targets the @c trace_marker write is the only piece that
+ * compiles to nothing; the activation gating, depth tracking, and name
+ * buffering still execute so that unit tests can exercise the state machine
+ * uniformly across platforms.
  *
  * @c XTracerScoped is intentionally independent of @c XTimerScoped.
  * The composite macro @c AU_PERF_SCOPE declares both with the same label.
@@ -22,8 +25,6 @@
  * depth < @c kHardMaxDepth.
  */
 
-#include <cstddef>
-#include <cstdint>
 #include <string>
 
 namespace au {
@@ -45,14 +46,9 @@ public:
     void sub() noexcept;
 
 private:
-    void begin(const std::string& name) noexcept;
-
-    bool mActive;
-    bool mSubOpen;
-
-    static constexpr std::size_t kMaxName = 128;
-    char                         mName[kMaxName];
-    uint8_t                      mNameLen;
+    bool        mActive;
+    bool        mSubOpen;
+    std::string mName;
 };
 
 }  // namespace perf

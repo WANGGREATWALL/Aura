@@ -9,9 +9,11 @@
  *  - Global unified configuration via @c PerfConfig::get() (Meyers singleton).
  *  - Level == tree depth: no caller-supplied level parameter.
  *    @c setTimerLevel(N) means "show only nodes whose depth ≤ N".
- *    The internal safety net @c kHardMaxDepth=512 caps runaway recursion.
- *  - Name lifetime: the constructor copies @p name into an inline buffer
- *    (Release) or the TLS arena (Debug); temporary @c std::string is safe.
+ *    An internal hard depth cap (@c PerfConfig::HARD_MAX_DEPTH = 512) guards
+ *    against runaway recursion.
+ *  - Name lifetime: the constructor copies @p name into @c mName (both
+ *    modes); Debug mode additionally stores into the TLS arena.
+ *    Temporary @c std::string is safe.
  *  - @c sub() immediate output (Release-only): each @c sub(name) immediately
  *    prints the just-closed segment. Debug mode defers output to root flush.
  *  - All destructors are @c noexcept; OOM degrades a node to a one-liner.
@@ -19,7 +21,7 @@
  * Quick start:
  * @code
  *   auto& cfg = au::perf::PerfConfig::get();
- *   cfg.setMode(au::perf::Mode::Debug);
+ *   cfg.setDebugMode(true);
  *   cfg.setTimerLevel(3);
  *
  *   void XNet::forward() {
@@ -27,54 +29,49 @@
  *       // ... work ...
  *   }
  * @endcode
+ *
+ * Android system property override (optional):
+ * @code
+ *   // adb shell setprop debug.aura.perf.enabled 1
+ *   // adb shell setprop debug.aura.perf.mode 1 # 1 = Debug
+ *   // adb shell setprop debug.aura.perf.timer 5
+ *   // Read via au::sys::getSystemPropertyValue() and call the setters above.
+ * @endcode
  */
 
 #include <atomic>
 #include <chrono>
-#include <cstddef>
 #include <cstdint>
-#include <mutex>
 #include <string>
 
 namespace au {
 namespace perf {
 
 // ---------------------------------------------------------------------------
-// Level sentinels and depth cap
-// ---------------------------------------------------------------------------
-
-/// Hard-off sentinel: never activate any scope on this channel.
-constexpr int32_t kPerfLevelOff = -1;
-
-/// Always-on sentinel: every scope passes the level gate.
-constexpr int32_t kPerfLevelAll = INT32_MAX;
-
-/// Internal safety net: nodes deeper than this are degraded to a one-liner.
-constexpr uint32_t kHardMaxDepth = 512;
-
-// ---------------------------------------------------------------------------
-// Mode selector
-// ---------------------------------------------------------------------------
-
-enum class Mode : int32_t
-{
-    Release = 0,  ///< One-liner per scope, no tree work.
-    Debug   = 1,  ///< Build a per-thread tree; flush on root close.
-};
-
-// ---------------------------------------------------------------------------
-// PerfConfig — Meyers singleton, lock-free reads
+//  PerfConfig — Meyers singleton
 // ---------------------------------------------------------------------------
 
 /**
  * @brief Global performance configuration singleton.
  *
- * Scalar accessors are atomic and lock-free. Root-name access is protected
- * by a mutex because it copies a multi-byte inline buffer.
+ * Hot-path accessors (@c isEnabled, @c isDebugMode, @c getTimerLevel, etc.)
+ * are atomic and lock-free. @c setRootName / @c getRootName are guarded by
+ * an internal mutex hidden in the implementation; they are not on the hot
+ * path and safe to call from any thread.
  */
 class PerfConfig
 {
 public:
+    /// Hard-off sentinel: pass to @c setTimerLevel / @c setTracerLevel to
+    /// disable the channel entirely.
+    static constexpr int32_t LEVEL_OFF = -1;
+
+    /// Always-on sentinel: every scope passes the level gate.
+    static constexpr int32_t LEVEL_ALL = INT32_MAX;
+
+    /// Maximum tree depth before a new scope is silently dropped.
+    static constexpr uint32_t HARD_MAX_DEPTH = 512;
+
     static PerfConfig& get() noexcept
     {
         static PerfConfig instance;
@@ -84,8 +81,11 @@ public:
     void setEnabled(bool on) noexcept;
     bool isEnabled() const noexcept;
 
-    void setMode(Mode mode) noexcept;
-    Mode getMode() const noexcept;
+    /// Enable (@c true) or disable (@c false) Debug tree mode.
+    /// Debug builds a per-thread tree and flushes on root close.
+    /// Release (default) emits a one-liner per scope.
+    void setDebugMode(bool on) noexcept;
+    bool isDebugMode() const noexcept;
 
     void    setTimerLevel(int32_t threshold) noexcept;
     int32_t getTimerLevel() const noexcept;
@@ -93,10 +93,8 @@ public:
     void    setTracerLevel(int32_t threshold) noexcept;
     int32_t getTracerLevel() const noexcept;
 
-    void setRootName(const std::string& name) noexcept;
-
-    /// Copy into @p outBuf (always NUL-terminated).
-    void getRootName(char* outBuf, std::size_t bufSize) const noexcept;
+    void        setRootName(const std::string& name) noexcept;
+    std::string getRootName() const noexcept;
 
     void setAggregateMode(bool on) noexcept;
     bool isAggregateMode() const noexcept;
@@ -104,29 +102,22 @@ public:
     /// Drain the global aggregate buffer. Idempotent.
     void flushAggregated() noexcept;
 
-    /// Load configuration from system properties (Android) or environment
-    /// variables (other platforms). Pass an empty string to skip an entry.
-    void loadFromSystemProperty(const std::string& propEnabled, const std::string& propMode,
-                                const std::string& propTimerLevel, const std::string& propTracerLevel) noexcept;
-
 private:
     PerfConfig()                             = default;
     PerfConfig(const PerfConfig&)            = delete;
     PerfConfig& operator=(const PerfConfig&) = delete;
 
     std::atomic<bool>    mEnabled{true};
-    std::atomic<Mode>    mMode{Mode::Release};
+    std::atomic<bool>    mDebugMode{false};
     std::atomic<int32_t> mTimerLevel{3};
-    std::atomic<int32_t> mTracerLevel{kPerfLevelAll};
+    std::atomic<int32_t> mTracerLevel{LEVEL_ALL};
     std::atomic<bool>    mAggregate{false};
 
-    mutable std::mutex mRootNameMutex;
-    uint32_t           mRootNameLen{4};
-    char               mRootName[64]{'p', 'e', 'r', 'f', '\0'};
+    std::string mRootName{"perf"};  ///< guarded by gRootNameMutex (xtimer.cpp)
 };
 
 // ---------------------------------------------------------------------------
-// XTimer — bare stopwatch
+//  XTimer — bare stopwatch
 // ---------------------------------------------------------------------------
 
 /// Lightweight stopwatch. Use for explicit elapsed-millisecond readings.
@@ -152,7 +143,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// XTimerScoped — RAII hierarchical timer
+//  XTimerScoped — RAII hierarchical timer
 // ---------------------------------------------------------------------------
 
 /**
@@ -161,9 +152,7 @@ private:
  * Activation rules (evaluated once at construction):
  *  - @c PerfConfig::get().isEnabled() must be true
  *  - the scope's tree depth must be ≤ @c getTimerLevel()
- *  - the depth must be < @c kHardMaxDepth
- *
- * If inactive, every member is a no-op with zero allocation.
+ *  - the depth must be < @c PerfConfig::HARD_MAX_DEPTH
  *
  * @note This class intentionally does not expose @c elapsedMs().
  *       Use @c XTimer for explicit measurement.
@@ -181,8 +170,6 @@ public:
     void sub() noexcept;
 
 private:
-    void begin(const std::string& name) noexcept;
-
     std::chrono::steady_clock::time_point closeOpenSub() noexcept;
 
     int32_t                               mNodeIdx;     ///< -1 inactive, -2 active-no-tree
@@ -191,13 +178,8 @@ private:
     bool                                  mIsRoot;
     std::chrono::steady_clock::time_point mBegin;
     std::chrono::steady_clock::time_point mSubBegin;
-
-    static constexpr std::size_t kInlineNameCap = 96;
-    char                         mNameInline[kInlineNameCap];
-    uint32_t                     mNameLen;
-
-    char     mSubNameInline[kInlineNameCap];
-    uint32_t mSubNameLen;
+    std::string                           mName;
+    std::string                           mSubName;
 };
 
 }  // namespace perf

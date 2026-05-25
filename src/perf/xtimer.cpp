@@ -2,38 +2,36 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <chrono>
-#include <cstdarg>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <ctime>
 #include <mutex>
-#include <string>
 #include <thread>
 #include <vector>
 
 #include "log/xlogger.h"
-#include "sys/xplatform.h"
 
 #if AU_OS_WINDOWS
 #include <windows.h>
 #else
 #include <time.h>
-#include <unistd.h>
 #endif
 
 namespace au {
 namespace perf {
 
 // ===========================================================================
-//  Internal node / TLS data structures (file-local)
+//  File-local types, globals, and helpers
 // ===========================================================================
 
 namespace {
 
-/// One node in the per-thread tree. ~64 bytes on x86_64.
+// ---------------------------------------------------------------------------
+//  Data structures
+// ---------------------------------------------------------------------------
+
+/// One node in the per-thread tree.
+/// durationMs == -1.0f  →  node is still open (not yet closed).
+/// durationMs >= 0.0f   →  node is closed; value is elapsed milliseconds.
 struct PerfNode
 {
     uint32_t                              nameOffset;
@@ -43,34 +41,50 @@ struct PerfNode
     int32_t                               lastChild;
     int32_t                               nextSibling;
     uint32_t                              depth;
-    uint32_t                              flags;  ///< bit0 closed, bit1 truncated
+    float                                 durationMs;  ///< -1.0f = open sentinel
     std::chrono::steady_clock::time_point begin;
-    uint64_t                              durationNs;
 };
 
-constexpr uint32_t kFlagClosed    = 1u << 0;
-constexpr uint32_t kFlagTruncated = 1u << 1;
-
-struct PerCtxTree
+struct PerfThreadCtx
 {
     std::vector<PerfNode> pool;
     std::vector<char>     nameArena;
     std::vector<int32_t>  openStack;
-};
 
-constexpr std::size_t kPoolReserve   = 256;
-constexpr std::size_t kArenaReserve  = 8192;
-constexpr std::size_t kStackReserve  = 64;
-constexpr std::size_t kMaxNameLen    = 1023;
-constexpr uint32_t    kPrintNameClip = 256;
-
-struct PerfThreadCtx
-{
-    PerCtxTree      tree;
     std::thread::id tid;
     bool            inited{false};
     bool            inFlush{false};
 };
+
+struct FlushedTree
+{
+    std::vector<PerfNode> pool;
+    std::vector<char>     nameArena;
+    std::vector<int32_t>  roots;
+    uint64_t              tid;
+    std::string           rootName;
+};
+
+// Intentional-leak singleton: the atexit safety-net fires before static
+// destructors, so AggregateData's mutex and vector must remain valid then.
+struct AggregateData
+{
+    std::mutex               mMutex;
+    std::vector<FlushedTree> mTrees;
+};
+
+// ---------------------------------------------------------------------------
+//  Globals
+// ---------------------------------------------------------------------------
+
+std::mutex            gRootNameMutex;
+thread_local uint32_t gTimerReleaseDepth = 0;  ///< Release-mode per-thread depth counter.
+std::atomic<bool>     gSafetyNetDone{false};
+std::atomic<bool>     gShuttingDown{false};
+
+// ---------------------------------------------------------------------------
+//  Functions
+// ---------------------------------------------------------------------------
 
 PerfThreadCtx& tlsCtx() noexcept
 {
@@ -78,52 +92,123 @@ PerfThreadCtx& tlsCtx() noexcept
     if (!ctx.inited) {
         ctx.tid    = std::this_thread::get_id();
         ctx.inited = true;
+        ctx.pool.reserve(128);
+        ctx.nameArena.reserve(2048);
+        ctx.openStack.reserve(16);
     }
     return ctx;
 }
 
-PerCtxTree& tlsTree() noexcept { return tlsCtx().tree; }
-
-/// Release-mode per-thread depth counter.
-thread_local uint32_t gTimerReleaseDepth = 0;
-
 uint64_t tidHash(std::thread::id id) noexcept { return static_cast<uint64_t>(std::hash<std::thread::id>{}(id)); }
 
-}  // anonymous namespace
-
-// ===========================================================================
-//  Aggregate buffer (global, single)
-// ===========================================================================
-
-struct FlushedTree
+int32_t emplaceNode(PerfThreadCtx& ctx, int32_t parent, const std::string& name, uint32_t depth,
+                    std::chrono::steady_clock::time_point beginTp) noexcept
 {
-    std::vector<PerfNode> pool;
-    std::vector<char>     arena;
-    std::vector<int32_t>  roots;
-    uint64_t              tid;
-    char                  rootName[64];
-};
+    try {
+        const int32_t idx = static_cast<int32_t>(ctx.pool.size());
 
-namespace {
+        PerfNode node{};
+        node.nameOffset  = static_cast<uint32_t>(ctx.nameArena.size());
+        node.nameLen     = static_cast<uint32_t>(name.size());
+        node.parent      = parent;
+        node.firstChild  = -1;
+        node.lastChild   = -1;
+        node.nextSibling = -1;
+        node.depth       = depth;
+        node.durationMs  = -1.0f;  // open sentinel
+        node.begin       = beginTp;
+        ctx.pool.push_back(node);
+        ctx.nameArena.insert(ctx.nameArena.end(), name.begin(), name.end());
 
-void emitFormatted(const char* fmt, ...) noexcept;
-void printTree(const std::vector<PerfNode>& pool, const std::vector<char>& arena, const std::vector<int32_t>& roots,
-               uint64_t tid, const char* rootName) noexcept;
+        // Root nodes are collected lazily via collectRoots() at flush time;
+        // their nextSibling field is never traversed, so we only maintain
+        // the sibling chain for non-root nodes.
+        if (parent != -1) {
+            PerfNode& parentNode = ctx.pool[static_cast<std::size_t>(parent)];
+            if (parentNode.firstChild == -1) {
+                parentNode.firstChild = idx;
+            } else {
+                ctx.pool[static_cast<std::size_t>(parentNode.lastChild)].nextSibling = idx;
+            }
+            parentNode.lastChild = idx;
+        }
+        return idx;
+    } catch (...) {
+        return -1;
+    }
+}
 
-struct AggregateData
+std::vector<int32_t> collectRoots(const std::vector<PerfNode>& pool)
 {
-    std::mutex               mMutex;
-    std::vector<FlushedTree> mTrees;
-};
+    std::vector<int32_t> roots;
+    roots.reserve(8);
+    for (int32_t i = 0; i < static_cast<int32_t>(pool.size()); ++i) {
+        if (pool[static_cast<std::size_t>(i)].parent == -1) {
+            roots.push_back(i);
+        }
+    }
+    return roots;
+}
+
+void printNodeLine(const FlushedTree& t, int32_t idx, const std::string& prefix, bool isLast) noexcept
+{
+    const PerfNode& n    = t.pool[static_cast<std::size_t>(idx)];
+    const char*     name = (n.nameLen == 0) ? "" : (t.nameArena.data() + n.nameOffset);
+
+    const bool  closed   = (n.durationMs >= 0.0f);
+    const char* branch   = prefix.empty() ? "" : (isLast ? "`-- " : "|-- ");
+    const float ms       = closed ? n.durationMs : 0.0f;
+    const char* openMark = closed ? "" : " (open)";
+
+    XLOG_I("%s%s%.*s: %.3f ms%s\n", prefix.c_str(), branch, static_cast<int>(n.nameLen), name, ms, openMark);
+}
+
+void printTree(const FlushedTree& t) noexcept
+{
+    if (t.roots.empty()) {
+        return;
+    }
+
+    XLOG_I("[perf][tid=0x%llx] %s\n", static_cast<unsigned long long>(t.tid),
+           t.rootName.empty() ? "perf" : t.rootName.c_str());
+
+    for (std::size_t i = 0; i < t.roots.size(); ++i) {
+        const bool rootIsLast = (i + 1 == t.roots.size());
+
+        struct Frame
+        {
+            int32_t     idx;
+            std::string prefix;
+            bool        isLast;
+        };
+        std::vector<Frame> dfs;
+        dfs.push_back({t.roots[i], std::string(), rootIsLast});
+
+        while (!dfs.empty()) {
+            Frame cur = std::move(dfs.back());
+            dfs.pop_back();
+
+            printNodeLine(t, cur.idx, cur.prefix, cur.isLast);
+
+            const PerfNode&      n = t.pool[static_cast<std::size_t>(cur.idx)];
+            std::vector<int32_t> children;
+            for (int32_t c = n.firstChild; c != -1; c = t.pool[static_cast<std::size_t>(c)].nextSibling) {
+                children.push_back(c);
+            }
+            const std::string childPrefix = cur.prefix + (cur.isLast ? "    " : "|   ");
+            for (std::size_t k = children.size(); k-- > 0;) {
+                const bool last = (k == children.size() - 1);
+                dfs.push_back({children[k], childPrefix, last});
+            }
+        }
+    }
+}
 
 AggregateData& gAggData() noexcept
 {
     static AggregateData* const instance = new AggregateData();
     return *instance;
 }
-
-std::atomic<bool> gSafetyNetDone{false};
-std::atomic<bool> gShuttingDown{false};
 
 void registerSafetyNetOnce() noexcept
 {
@@ -146,11 +231,11 @@ void registerSafetyNetOnce() noexcept
         }
         std::stable_sort(local.begin(), local.end(),
                          [](const FlushedTree& a, const FlushedTree& b) { return a.tid < b.tid; });
-        emitFormatted("[perf] ===== safety-net flush: %zu block(s) =====", local.size());
+        XLOG_I("[perf] ===== safety-net flush: %zu block(s) =====\n", local.size());
         for (const FlushedTree& t : local) {
-            printTree(t.pool, t.arena, t.roots, t.tid, t.rootName);
+            printTree(t);
         }
-        emitFormatted("[perf] ===== end =====");
+        XLOG_I("[perf] ===== end =====\n");
     });
 }
 
@@ -161,45 +246,38 @@ void registerSafetyNetOnce() noexcept
 // ===========================================================================
 
 void PerfConfig::setEnabled(bool on) noexcept { mEnabled.store(on, std::memory_order_relaxed); }
+
 bool PerfConfig::isEnabled() const noexcept { return mEnabled.load(std::memory_order_relaxed); }
 
-void PerfConfig::setMode(Mode mode) noexcept { mMode.store(mode, std::memory_order_relaxed); }
-Mode PerfConfig::getMode() const noexcept { return mMode.load(std::memory_order_relaxed); }
+void PerfConfig::setDebugMode(bool on) noexcept { mDebugMode.store(on, std::memory_order_relaxed); }
+
+bool PerfConfig::isDebugMode() const noexcept { return mDebugMode.load(std::memory_order_relaxed); }
 
 void PerfConfig::setTimerLevel(int32_t threshold) noexcept { mTimerLevel.store(threshold, std::memory_order_relaxed); }
+
 int32_t PerfConfig::getTimerLevel() const noexcept { return mTimerLevel.load(std::memory_order_relaxed); }
 
 void PerfConfig::setTracerLevel(int32_t threshold) noexcept
 {
     mTracerLevel.store(threshold, std::memory_order_relaxed);
 }
+
 int32_t PerfConfig::getTracerLevel() const noexcept { return mTracerLevel.load(std::memory_order_relaxed); }
 
 void PerfConfig::setRootName(const std::string& name) noexcept
 {
-    std::lock_guard<std::mutex> lk(mRootNameMutex);
-    const std::size_t cap = sizeof(mRootName) - 1;
-    const std::size_t cp  = std::min(name.size(), cap);
-    if (cp > 0u) {
-        std::memcpy(mRootName, name.data(), cp);
-    }
-    mRootName[cp] = '\0';
-    mRootNameLen  = static_cast<uint32_t>(cp);
+    std::lock_guard<std::mutex> lk(gRootNameMutex);
+    mRootName = name;
 }
 
-void PerfConfig::getRootName(char* outBuf, std::size_t bufSize) const noexcept
+std::string PerfConfig::getRootName() const noexcept
 {
-    if (outBuf == nullptr || bufSize == 0) {
-        return;
-    }
-    std::lock_guard<std::mutex> lk(mRootNameMutex);
-    const uint32_t    len = mRootNameLen;
-    const std::size_t cp  = std::min(static_cast<std::size_t>(len), bufSize - 1);
-    std::memcpy(outBuf, mRootName, cp);
-    outBuf[cp] = '\0';
+    std::lock_guard<std::mutex> lk(gRootNameMutex);
+    return mRootName;
 }
 
 void PerfConfig::setAggregateMode(bool on) noexcept { mAggregate.store(on, std::memory_order_relaxed); }
+
 bool PerfConfig::isAggregateMode() const noexcept { return mAggregate.load(std::memory_order_relaxed); }
 
 void PerfConfig::flushAggregated() noexcept
@@ -216,194 +294,12 @@ void PerfConfig::flushAggregated() noexcept
     }
     std::stable_sort(local.begin(), local.end(),
                      [](const FlushedTree& a, const FlushedTree& b) { return a.tid < b.tid; });
-
-    emitFormatted("[perf] ===== aggregate flush: %zu block(s) =====", local.size());
+    XLOG_I("[perf] ===== aggregate flush: %zu block(s) =====\n", local.size());
     for (const FlushedTree& t : local) {
-        printTree(t.pool, t.arena, t.roots, t.tid, t.rootName);
+        printTree(t);
     }
-    emitFormatted("[perf] ===== end =====");
+    XLOG_I("[perf] ===== end =====\n");
 }
-
-void PerfConfig::loadFromSystemProperty(const std::string& propEnabled, const std::string& propMode,
-                                        const std::string& propTimerLevel, const std::string& propTracerLevel) noexcept
-{
-    if (!propEnabled.empty()) {
-        const int v = au::sys::getSystemPropertyValue(propEnabled.c_str(), isEnabled() ? 1 : 0);
-        setEnabled(v != 0);
-    }
-    if (!propMode.empty()) {
-        const int v = au::sys::getSystemPropertyValue(propMode.c_str(), static_cast<int>(getMode()));
-        setMode(v != 0 ? Mode::Debug : Mode::Release);
-    }
-    if (!propTimerLevel.empty()) {
-        const int v = au::sys::getSystemPropertyValue(propTimerLevel.c_str(), getTimerLevel());
-        setTimerLevel(v);
-    }
-    if (!propTracerLevel.empty()) {
-        const int v = au::sys::getSystemPropertyValue(propTracerLevel.c_str(), getTracerLevel());
-        setTracerLevel(v);
-    }
-}
-
-// ===========================================================================
-//  Output, printer, TLS helpers (file-local)
-// ===========================================================================
-
-namespace {
-
-void emitFormatted(const char* fmt, ...) noexcept
-{
-    char    buf[512];
-    va_list ap;
-    va_start(ap, fmt);
-    int n = std::vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    if (n <= 0) {
-        return;
-    }
-    if (static_cast<std::size_t>(n) >= sizeof(buf)) {
-        buf[sizeof(buf) - 1] = '\0';
-    }
-    XLOG_I("%s", buf);
-}
-
-std::vector<int32_t> collectRoots(const std::vector<PerfNode>& pool)
-{
-    std::vector<int32_t> roots;
-    roots.reserve(8);
-    for (int32_t i = 0; i < static_cast<int32_t>(pool.size()); ++i) {
-        if (pool[static_cast<std::size_t>(i)].parent == -1) {
-            roots.push_back(i);
-        }
-    }
-    return roots;
-}
-
-void printNodeLine(const std::vector<PerfNode>& pool, const std::vector<char>& arena, int32_t idx,
-                   const std::string& prefix, bool isLast) noexcept
-{
-    const PerfNode& n    = pool[static_cast<std::size_t>(idx)];
-    const char*     name = (n.nameLen == 0) ? "" : (arena.data() + n.nameOffset);
-
-    const char* branch = prefix.empty() ? "" : (isLast ? "`-- " : "|-- ");
-
-    const uint32_t printLen  = (n.nameLen > kPrintNameClip) ? kPrintNameClip : n.nameLen;
-    const bool     printClip = (n.nameLen > kPrintNameClip);
-    const bool     truncFlag = (n.flags & kFlagTruncated) != 0u;
-
-    const float ms = (n.flags & kFlagClosed) ? static_cast<float>(static_cast<double>(n.durationNs) / 1.0e6) : 0.0f;
-    const char* openMark  = (n.flags & kFlagClosed) ? "" : " (open)";
-    const char* truncMark = (truncFlag || printClip) ? " (truncated)" : "";
-
-    emitFormatted("%s%s%.*s: %.3f ms%s%s", prefix.c_str(), branch, static_cast<int>(printLen), name, ms, openMark,
-                  truncMark);
-}
-
-void printTree(const std::vector<PerfNode>& pool, const std::vector<char>& arena, const std::vector<int32_t>& roots,
-               uint64_t tid, const char* rootName) noexcept
-{
-    if (roots.empty()) {
-        return;
-    }
-
-    emitFormatted("[perf][tid=0x%llx] %s", static_cast<unsigned long long>(tid),
-                  (rootName != nullptr && rootName[0] != '\0') ? rootName : "perf");
-
-    for (std::size_t i = 0; i < roots.size(); ++i) {
-        const bool rootIsLast = (i + 1 == roots.size());
-
-        struct Frame
-        {
-            int32_t     idx;
-            std::string prefix;
-            bool        isLast;
-        };
-        std::vector<Frame> dfs;
-        dfs.push_back({roots[i], std::string(), rootIsLast});
-
-        while (!dfs.empty()) {
-            Frame cur = std::move(dfs.back());
-            dfs.pop_back();
-
-            printNodeLine(pool, arena, cur.idx, cur.prefix, cur.isLast);
-
-            const PerfNode&      n = pool[static_cast<std::size_t>(cur.idx)];
-            std::vector<int32_t> children;
-            for (int32_t c = n.firstChild; c != -1; c = pool[static_cast<std::size_t>(c)].nextSibling) {
-                children.push_back(c);
-            }
-            const std::string childPrefix = cur.prefix + (cur.isLast ? "    " : "|   ");
-            for (std::size_t k = children.size(); k-- > 0;) {
-                const bool last = (k == children.size() - 1);
-                dfs.push_back({children[k], childPrefix, last});
-            }
-        }
-    }
-}
-
-struct ArenaPutResult
-{
-    uint32_t offset;
-    uint32_t len;
-    bool     truncated;
-};
-
-ArenaPutResult arenaPut(PerCtxTree& tree, const char* name, std::size_t inLen) noexcept
-{
-    const bool     truncated = inLen > kMaxNameLen;
-    const uint32_t len       = static_cast<uint32_t>(truncated ? kMaxNameLen : inLen);
-    const uint32_t offset    = static_cast<uint32_t>(tree.nameArena.size());
-    try {
-        tree.nameArena.insert(tree.nameArena.end(), name, name + len);
-    } catch (...) {
-        return {0u, 0u, false};
-    }
-    return {offset, len, truncated};
-}
-
-int32_t appendNodeUnsafe(PerCtxTree& tree, int32_t parent, const char* name, std::size_t nameLen, uint32_t depth,
-                         std::chrono::steady_clock::time_point beginTp) noexcept
-{
-    try {
-        const int32_t        idx      = static_cast<int32_t>(tree.pool.size());
-        const ArenaPutResult arenaRet = arenaPut(tree, name, nameLen);
-
-        PerfNode node{};
-        node.nameOffset  = arenaRet.offset;
-        node.nameLen     = arenaRet.len;
-        node.parent      = parent;
-        node.firstChild  = -1;
-        node.lastChild   = -1;
-        node.nextSibling = -1;
-        node.depth       = depth;
-        node.flags       = arenaRet.truncated ? kFlagTruncated : 0u;
-        node.begin       = beginTp;
-        node.durationNs  = 0;
-        tree.pool.push_back(node);
-
-        if (parent == -1) {
-            for (int32_t i = idx - 1; i >= 0; --i) {
-                if (tree.pool[static_cast<std::size_t>(i)].parent == -1) {
-                    tree.pool[static_cast<std::size_t>(i)].nextSibling = idx;
-                    break;
-                }
-            }
-        } else {
-            PerfNode& parentNode = tree.pool[static_cast<std::size_t>(parent)];
-            if (parentNode.firstChild == -1) {
-                parentNode.firstChild = idx;
-            } else {
-                tree.pool[static_cast<std::size_t>(parentNode.lastChild)].nextSibling = idx;
-            }
-            parentNode.lastChild = idx;
-        }
-        return idx;
-    } catch (...) {
-        return -1;
-    }
-}
-
-}  // anonymous namespace
 
 // ===========================================================================
 //  XTimer — bare stopwatch + static helpers
@@ -459,58 +355,38 @@ float XTimer::elapsedMs() const noexcept
 //  XTimerScoped
 // ===========================================================================
 
-XTimerScoped::XTimerScoped(const std::string& name) noexcept { begin(name); }
-
-void XTimerScoped::begin(const std::string& name) noexcept
+XTimerScoped::XTimerScoped(const std::string& name) noexcept
+    : mNodeIdx(-1),
+      mSubNodeIdx(-1),
+      mDepth(0),
+      mIsRoot(false),
+      mBegin(std::chrono::steady_clock::now()),
+      mSubBegin(mBegin),
+      mName(name)
 {
-    mNodeIdx          = -1;
-    mSubNodeIdx       = -1;
-    mDepth            = 0;
-    mIsRoot           = false;
-    mNameLen          = 0;
-    mNameInline[0]    = '\0';
-    mSubNameLen       = 0;
-    mSubNameInline[0] = '\0';
-
     PerfConfig& cfg = PerfConfig::get();
     if (!cfg.isEnabled()) {
         return;
     }
 
-    const Mode mode = cfg.getMode();
-
-    PerfThreadCtx* tls = nullptr;
-    uint32_t       depth;
-    if (mode == Mode::Release) {
-        depth = gTimerReleaseDepth;
-    } else {
-        tls = &tlsCtx();
-        if (tls->inFlush) {
-            return;
-        }
-        depth = static_cast<uint32_t>(tls->tree.openStack.size());
+    PerfThreadCtx& tls = tlsCtx();
+    if (tls.inFlush) {
+        return;
     }
 
-    if (depth >= kHardMaxDepth) {
+    const bool     debugMode = cfg.isDebugMode();
+    const uint32_t depth     = debugMode ? static_cast<uint32_t>(tls.openStack.size()) : gTimerReleaseDepth;
+
+    if (depth >= PerfConfig::HARD_MAX_DEPTH) {
         return;
     }
 
     const int32_t threshold = cfg.getTimerLevel();
-    if (threshold == kPerfLevelOff || static_cast<int32_t>(depth) > threshold) {
+    if (threshold == PerfConfig::LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
         return;
     }
 
-    mBegin    = std::chrono::steady_clock::now();
-    mSubBegin = mBegin;
-
-    if (!name.empty()) {
-        const std::size_t cp = std::min(name.size(), kInlineNameCap - 1);
-        std::memcpy(mNameInline, name.data(), cp);
-        mNameInline[cp] = '\0';
-        mNameLen        = static_cast<uint32_t>(cp);
-    }
-
-    if (mode == Mode::Release) {
+    if (!debugMode) {
         mNodeIdx = -2;
         mDepth   = depth;
         ++gTimerReleaseDepth;
@@ -518,16 +394,15 @@ void XTimerScoped::begin(const std::string& name) noexcept
     }
 
     // -- Debug path --
-    PerCtxTree&   tree   = tls->tree;
-    const int32_t parent = tree.openStack.empty() ? -1 : tree.openStack.back();
-    const int32_t idx    = appendNodeUnsafe(tree, parent, name.data(), name.size(), depth, mBegin);
+    const int32_t parent = tls.openStack.empty() ? -1 : tls.openStack.back();
+    const int32_t idx    = emplaceNode(tls, parent, mName, depth, mBegin);
     if (idx < 0) {
         mNodeIdx = -2;
         mDepth   = depth;
         return;
     }
     try {
-        tree.openStack.push_back(idx);
+        tls.openStack.push_back(idx);
     } catch (...) {
         mNodeIdx = -2;
         mDepth   = depth;
@@ -544,20 +419,16 @@ XTimerScoped::~XTimerScoped() noexcept
         return;
     }
 
-    const auto     now = std::chrono::steady_clock::now();
-    const uint64_t ns =
-        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - mBegin).count());
-    const float msF = static_cast<float>(static_cast<double>(ns) / 1.0e6);
+    const auto  now = std::chrono::steady_clock::now();
+    const float msF = std::chrono::duration<float, std::milli>(now - mBegin).count();
 
     // -- Release / degraded path: one-liner --
     if (mNodeIdx == -2) {
-        if (mSubNameLen > 0u) {
-            const uint64_t subNs =
-                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - mSubBegin).count());
-            const float subMs = static_cast<float>(static_cast<double>(subNs) / 1.0e6);
-            emitFormatted("[perf] %.*s: %.3f ms", static_cast<int>(mSubNameLen), mSubNameInline, subMs);
+        if (!mSubName.empty()) {
+            const float subMs = std::chrono::duration<float, std::milli>(now - mSubBegin).count();
+            XLOG_I("[perf] %s: %.3f ms\n", mSubName.c_str(), subMs);
         }
-        emitFormatted("[perf] %.*s: %.3f ms", static_cast<int>(mNameLen), mNameInline, msF);
+        XLOG_I("[perf] %s: %.3f ms\n", mName.c_str(), msF);
         if (gTimerReleaseDepth > 0u) {
             --gTimerReleaseDepth;
         }
@@ -569,51 +440,46 @@ XTimerScoped::~XTimerScoped() noexcept
     if (tls.inFlush) {
         return;
     }
-    PerCtxTree& tree = tlsTree();
 
-    if (mNodeIdx >= 0 && mNodeIdx < static_cast<int32_t>(tree.pool.size())) {
-        PerfNode& node  = tree.pool[static_cast<std::size_t>(mNodeIdx)];
-        node.durationNs = ns;
-        node.flags |= kFlagClosed;
+    if (mNodeIdx >= 0 && mNodeIdx < static_cast<int32_t>(tls.pool.size())) {
+        tls.pool[static_cast<std::size_t>(mNodeIdx)].durationMs = msF;
     }
-    if (!tree.openStack.empty() && tree.openStack.back() == mNodeIdx) {
-        tree.openStack.pop_back();
+    if (!tls.openStack.empty() && tls.openStack.back() == mNodeIdx) {
+        tls.openStack.pop_back();
     }
 
-    if (!mIsRoot || !tree.openStack.empty()) {
+    if (!mIsRoot || !tls.openStack.empty()) {
         return;
     }
 
     // -- Outermost scope: flush this thread's tree --
     tls.inFlush = true;
 
-    PerfConfig& cfg       = PerfConfig::get();
-    const bool  aggregate = cfg.isAggregateMode();
-    char        rootName[64];
-    cfg.getRootName(rootName, sizeof(rootName));
+    PerfConfig& cfg      = PerfConfig::get();
+    std::string rootName = cfg.getRootName();
 
     try {
-        if (aggregate) {
-            FlushedTree snap;
-            snap.pool  = tree.pool;
-            snap.arena = tree.nameArena;
-            snap.roots = collectRoots(tree.pool);
-            snap.tid   = tidHash(tls.tid);
-            std::memcpy(snap.rootName, rootName, sizeof(snap.rootName));
+        // Build a snapshot by moving TLS data — O(1), no copies.
+        FlushedTree snap;
+        snap.pool      = std::move(tls.pool);
+        snap.nameArena = std::move(tls.nameArena);
+        snap.roots     = collectRoots(snap.pool);
+        snap.tid       = tidHash(tls.tid);
+        snap.rootName  = std::move(rootName);
 
+        if (cfg.isAggregateMode()) {
             std::lock_guard<std::mutex> lk(gAggData().mMutex);
             gAggData().mTrees.emplace_back(std::move(snap));
             registerSafetyNetOnce();
         } else {
-            const auto roots = collectRoots(tree.pool);
-            printTree(tree.pool, tree.nameArena, roots, tidHash(tls.tid), rootName);
+            printTree(snap);
         }
     } catch (...) {
     }
 
-    tree.pool.clear();
-    tree.nameArena.clear();
-    tree.openStack.clear();
+    tls.pool.clear();
+    tls.nameArena.clear();
+    tls.openStack.clear();
     tls.inFlush = false;
 }
 
@@ -623,13 +489,10 @@ std::chrono::steady_clock::time_point XTimerScoped::closeOpenSub() noexcept
 
     // ── Release path ──
     if (mNodeIdx == -2) {
-        if (mSubNameLen > 0u) {
-            const uint64_t ns =
-                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - mSubBegin).count());
-            const float ms = static_cast<float>(static_cast<double>(ns) / 1.0e6);
-            emitFormatted("[perf] %.*s: %.3f ms", static_cast<int>(mSubNameLen), mSubNameInline, ms);
-            mSubNameLen       = 0;
-            mSubNameInline[0] = '\0';
+        if (!mSubName.empty()) {
+            const float ms = std::chrono::duration<float, std::milli>(now - mSubBegin).count();
+            XLOG_I("[perf] %s: %.3f ms\n", mSubName.c_str(), ms);
+            mSubName.clear();
         }
         return now;
     }
@@ -642,18 +505,16 @@ std::chrono::steady_clock::time_point XTimerScoped::closeOpenSub() noexcept
     if (tls.inFlush) {
         return now;
     }
-    PerCtxTree& tree = tlsTree();
 
-    if (mSubNodeIdx < static_cast<int32_t>(tree.pool.size())) {
-        PerfNode& prev = tree.pool[static_cast<std::size_t>(mSubNodeIdx)];
-        if ((prev.flags & kFlagClosed) == 0) {
-            prev.durationNs =
-                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - prev.begin).count());
-            prev.flags |= kFlagClosed;
+    if (mSubNodeIdx < static_cast<int32_t>(tls.pool.size())) {
+        PerfNode& prev = tls.pool[static_cast<std::size_t>(mSubNodeIdx)];
+        // Guard against double-close: only write if still open.
+        if (prev.durationMs < 0.0f) {
+            prev.durationMs = std::chrono::duration<float, std::milli>(now - prev.begin).count();
         }
     }
-    if (!tree.openStack.empty() && tree.openStack.back() == mSubNodeIdx) {
-        tree.openStack.pop_back();
+    if (!tls.openStack.empty() && tls.openStack.back() == mSubNodeIdx) {
+        tls.openStack.pop_back();
     }
     mSubNodeIdx = -1;
     return now;
@@ -667,15 +528,10 @@ void XTimerScoped::sub(const std::string& name) noexcept
 
     const auto now = closeOpenSub();
 
-    // ── Release path: arm the new inline segment ──
+    // ── Release path: arm the new sub-segment ──
     if (mNodeIdx == -2) {
-        const std::size_t cp = std::min(name.size(), kInlineNameCap - 1);
-        if (cp > 0u) {
-            std::memcpy(mSubNameInline, name.data(), cp);
-        }
-        mSubNameInline[cp] = '\0';
-        mSubNameLen        = static_cast<uint32_t>(cp);
-        mSubBegin          = now;
+        mSubName  = name;
+        mSubBegin = now;
         return;
     }
 
@@ -686,22 +542,21 @@ void XTimerScoped::sub(const std::string& name) noexcept
     }
 
     const uint32_t depth = mDepth + 1;
-    if (depth >= kHardMaxDepth) {
+    if (depth >= PerfConfig::HARD_MAX_DEPTH) {
         return;
     }
     PerfConfig&   cfg       = PerfConfig::get();
     const int32_t threshold = cfg.getTimerLevel();
-    if (threshold == kPerfLevelOff || static_cast<int32_t>(depth) > threshold) {
+    if (threshold == PerfConfig::LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
         return;
     }
 
-    PerCtxTree&   tree = tlsTree();
-    const int32_t idx  = appendNodeUnsafe(tree, mNodeIdx, name.data(), name.size(), depth, now);
+    const int32_t idx = emplaceNode(tls, mNodeIdx, name, depth, now);
     if (idx < 0) {
         return;
     }
     try {
-        tree.openStack.push_back(idx);
+        tls.openStack.push_back(idx);
     } catch (...) {
         return;
     }

@@ -1,8 +1,6 @@
 #include "perf/xtracer.h"
 
-#include <algorithm>
 #include <cstdio>
-#include <cstring>
 
 #include "perf/xtimer.h"
 #include "sys/xplatform.h"
@@ -72,38 +70,26 @@ thread_local uint32_t gTracerDepth = 0;
 //  XTracerScoped
 // ===========================================================================
 
-XTracerScoped::XTracerScoped(const std::string& name) noexcept { begin(name); }
-
-void XTracerScoped::begin(const std::string& name) noexcept
+XTracerScoped::XTracerScoped(const std::string& name) noexcept : mActive(false), mSubOpen(false)
 {
-    mActive  = false;
-    mSubOpen = false;
-    mNameLen = 0;
-    mName[0] = '\0';
-
     if (!PerfConfig::get().isEnabled()) {
         return;
     }
 
-    if (gTracerDepth >= kHardMaxDepth) {
+    if (gTracerDepth >= PerfConfig::HARD_MAX_DEPTH) {
         return;
     }
     const int32_t threshold = PerfConfig::get().getTracerLevel();
-    if (threshold == kPerfLevelOff || static_cast<int32_t>(gTracerDepth) > threshold) {
+    if (threshold == PerfConfig::LEVEL_OFF || static_cast<int32_t>(gTracerDepth) > threshold) {
         return;
     }
 
-    const std::size_t cp = std::min(name.size(), kMaxName - 1);
-    if (cp > 0) {
-        std::memcpy(mName, name.data(), cp);
-    }
-    mName[cp] = '\0';
-    mNameLen  = static_cast<uint8_t>(cp);
-    mActive   = true;
+    mName   = name;
+    mActive = true;
     ++gTracerDepth;
 
 #if AU_OS_ANDROID
-    writeTraceMarker('B', getpid(), mName, mNameLen);
+    writeTraceMarker('B', getpid(), mName.c_str(), mName.size());
 #endif
 }
 
@@ -136,23 +122,9 @@ void XTracerScoped::sub(const std::string& name) noexcept
         sub();
     }
 
-    if (gTracerDepth >= kHardMaxDepth) {
-        return;
-    }
-    const int32_t threshold = PerfConfig::get().getTracerLevel();
-    if (threshold == kPerfLevelOff || static_cast<int32_t>(gTracerDepth) > threshold) {
-        return;
-    }
-
     ++gTracerDepth;
 #if AU_OS_ANDROID
-    char        buf[kMaxName];
-    std::size_t cp = std::min(name.size(), kMaxName - 1);
-    if (cp > 0) {
-        std::memcpy(buf, name.data(), cp);
-    }
-    buf[cp] = '\0';
-    writeTraceMarker('B', getpid(), buf, cp);
+    writeTraceMarker('B', getpid(), name.c_str(), name.size());
 #else
     (void)name;
 #endif

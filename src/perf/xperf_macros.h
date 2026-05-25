@@ -3,10 +3,19 @@
 
 /**
  * @file xperf_macros.h
- * @brief Convenience macros for the perf subsystem.
+ * @brief Convenience macros for the @c au::perf subsystem.
  *
- * Define @c AU_PERF_DISABLE_ALL=1 in build flags to strip every scope
- * to @c ((void)0) for shipping builds.
+ * Provides three composable macros:
+ *  - @c AU_TIMER(name)      : RAII hierarchical timer scope.
+ *  - @c AU_TRACE(name)      : Perfetto / ftrace slice (Android-only payload).
+ *  - @c AU_PERF_SCOPE(name) : Composite of the above two.
+ *
+ * Each macro generates a uniquely-named local via @c __COUNTER__, so multiple
+ * macros may coexist on the same source line without collision.
+ *
+ * Define @c AU_PERF_DISABLE_ALL=1 in build flags to compile every scope down
+ * to @c ((void)0) — useful for shipping builds where even the no-op activation
+ * checks are undesirable.
  */
 
 #include "perf/xtimer.h"
