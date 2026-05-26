@@ -2,19 +2,13 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdlib>
 #include <ctime>
 #include <mutex>
 #include <thread>
 #include <vector>
 
 #include "log/xlogger.h"
-
-#if AU_OS_WINDOWS
-#include <windows.h>
-#else
-#include <time.h>
-#endif
+#include "sys/xplatform.h"
 
 namespace au {
 namespace perf {
@@ -32,91 +26,84 @@ namespace {
 /// One node in the per-thread tree.
 /// durationMs == -1.0f  →  node is still open (not yet closed).
 /// durationMs >= 0.0f   →  node is closed; value is elapsed milliseconds.
-struct PerfNode
+struct NodePerf
 {
-    uint32_t                              nameOffset;
-    uint32_t                              nameLen;
-    int32_t                               parent;
-    int32_t                               firstChild;
-    int32_t                               lastChild;
-    int32_t                               nextSibling;
-    uint32_t                              depth;
-    float                                 durationMs;  ///< -1.0f = open sentinel
-    std::chrono::steady_clock::time_point begin;
+    uint32_t                              nameOffset{0};
+    uint32_t                              nameLen{0};
+    int32_t                               parent{-1};
+    int32_t                               firstChild{-1};
+    int32_t                               lastChild{-1};
+    int32_t                               nextSibling{-1};
+    uint32_t                              depth{0};
+    float                                 durationMs{-1.0f};  ///< -1.0f = open sentinel
+    std::chrono::steady_clock::time_point begin{};
 };
 
-struct PerfThreadCtx
+struct CtxThread
 {
-    std::vector<PerfNode> pool;
+    std::vector<NodePerf> pool;
     std::vector<char>     nameArena;
     std::vector<int32_t>  openStack;
 
-    std::thread::id tid;
-    bool            inited{false};
-    bool            inFlush{false};
+    uint64_t tid{0};
+    bool     inited{false};
+    bool     inFlush{false};
+    uint32_t releaseDepth{0};  ///< Release-mode per-thread depth counter.
+
+    /// Meyers-style thread-local accessor; lazy-initialises on first call per thread.
+    static CtxThread& get() noexcept
+    {
+        thread_local CtxThread ctx;
+        if (!ctx.inited) {
+            ctx.tid    = au::sys::getCurrentThreadId();
+            ctx.inited = true;
+            ctx.pool.reserve(128);
+            ctx.nameArena.reserve(2048);
+            ctx.openStack.reserve(16);
+        }
+        return ctx;
+    }
 };
 
-struct FlushedTree
+/// Snapshot of one thread's complete timing tree, captured at outermost-scope close.
+struct TreeSnapThread
 {
-    std::vector<PerfNode> pool;
+    std::vector<NodePerf> pool;
     std::vector<char>     nameArena;
     std::vector<int32_t>  roots;
     uint64_t              tid;
     std::string           rootName;
 };
 
-// Intentional-leak singleton: the atexit safety-net fires before static
-// destructors, so AggregateData's mutex and vector must remain valid then.
-struct AggregateData
+struct TreesSnap
 {
-    std::mutex               mMutex;
-    std::vector<FlushedTree> mTrees;
+    std::mutex                  mMutex;
+    std::vector<TreeSnapThread> mTrees;
+
+    /// Meyers singleton; owns the aggregate buffer for all threads.
+    static TreesSnap& get() noexcept
+    {
+        static TreesSnap instance;
+        return instance;
+    }
 };
-
-// ---------------------------------------------------------------------------
-//  Globals
-// ---------------------------------------------------------------------------
-
-std::mutex            gRootNameMutex;
-thread_local uint32_t gTimerReleaseDepth = 0;  ///< Release-mode per-thread depth counter.
-std::atomic<bool>     gSafetyNetDone{false};
-std::atomic<bool>     gShuttingDown{false};
 
 // ---------------------------------------------------------------------------
 //  Functions
 // ---------------------------------------------------------------------------
 
-PerfThreadCtx& tlsCtx() noexcept
-{
-    thread_local PerfThreadCtx ctx;
-    if (!ctx.inited) {
-        ctx.tid    = std::this_thread::get_id();
-        ctx.inited = true;
-        ctx.pool.reserve(128);
-        ctx.nameArena.reserve(2048);
-        ctx.openStack.reserve(16);
-    }
-    return ctx;
-}
-
-uint64_t tidHash(std::thread::id id) noexcept { return static_cast<uint64_t>(std::hash<std::thread::id>{}(id)); }
-
-int32_t emplaceNode(PerfThreadCtx& ctx, int32_t parent, const std::string& name, uint32_t depth,
+int32_t emplaceNode(CtxThread& ctx, int32_t parent, const std::string& name, uint32_t depth,
                     std::chrono::steady_clock::time_point beginTp) noexcept
 {
     try {
         const int32_t idx = static_cast<int32_t>(ctx.pool.size());
 
-        PerfNode node{};
-        node.nameOffset  = static_cast<uint32_t>(ctx.nameArena.size());
-        node.nameLen     = static_cast<uint32_t>(name.size());
-        node.parent      = parent;
-        node.firstChild  = -1;
-        node.lastChild   = -1;
-        node.nextSibling = -1;
-        node.depth       = depth;
-        node.durationMs  = -1.0f;  // open sentinel
-        node.begin       = beginTp;
+        NodePerf node{};
+        node.nameOffset = static_cast<uint32_t>(ctx.nameArena.size());
+        node.nameLen    = static_cast<uint32_t>(name.size());
+        node.parent     = parent;
+        node.depth      = depth;
+        node.begin      = beginTp;
         ctx.pool.push_back(node);
         ctx.nameArena.insert(ctx.nameArena.end(), name.begin(), name.end());
 
@@ -124,7 +111,7 @@ int32_t emplaceNode(PerfThreadCtx& ctx, int32_t parent, const std::string& name,
         // their nextSibling field is never traversed, so we only maintain
         // the sibling chain for non-root nodes.
         if (parent != -1) {
-            PerfNode& parentNode = ctx.pool[static_cast<std::size_t>(parent)];
+            NodePerf& parentNode = ctx.pool[static_cast<std::size_t>(parent)];
             if (parentNode.firstChild == -1) {
                 parentNode.firstChild = idx;
             } else {
@@ -138,7 +125,7 @@ int32_t emplaceNode(PerfThreadCtx& ctx, int32_t parent, const std::string& name,
     }
 }
 
-std::vector<int32_t> collectRoots(const std::vector<PerfNode>& pool)
+std::vector<int32_t> collectRoots(const std::vector<NodePerf>& pool)
 {
     std::vector<int32_t> roots;
     roots.reserve(8);
@@ -150,9 +137,13 @@ std::vector<int32_t> collectRoots(const std::vector<PerfNode>& pool)
     return roots;
 }
 
-void printNodeLine(const FlushedTree& t, int32_t idx, const std::string& prefix, bool isLast) noexcept
+// Recursively print one node and all its descendants.
+// isLast     — whether this node is the last child of its parent (drives branch glyph).
+// prefix     — the indentation string inherited from all ancestor levels.
+// childIsLast is derived directly from nextSibling == -1, so no child-list allocation is needed.
+void printNode(const TreeSnapThread& t, int32_t idx, const std::string& prefix, bool isLast) noexcept
 {
-    const PerfNode& n    = t.pool[static_cast<std::size_t>(idx)];
+    const NodePerf& n    = t.pool[static_cast<std::size_t>(idx)];
     const char*     name = (n.nameLen == 0) ? "" : (t.nameArena.data() + n.nameOffset);
 
     const bool  closed   = (n.durationMs >= 0.0f);
@@ -161,9 +152,15 @@ void printNodeLine(const FlushedTree& t, int32_t idx, const std::string& prefix,
     const char* openMark = closed ? "" : " (open)";
 
     XLOG_I("%s%s%.*s: %.3f ms%s\n", prefix.c_str(), branch, static_cast<int>(n.nameLen), name, ms, openMark);
+
+    const std::string childPrefix = prefix + (isLast ? "    " : "|   ");
+    for (int32_t c = n.firstChild; c != -1; c = t.pool[static_cast<std::size_t>(c)].nextSibling) {
+        const bool childIsLast = (t.pool[static_cast<std::size_t>(c)].nextSibling == -1);
+        printNode(t, c, childPrefix, childIsLast);
+    }
 }
 
-void printTree(const FlushedTree& t) noexcept
+void printTree(const TreeSnapThread& t) noexcept
 {
     if (t.roots.empty()) {
         return;
@@ -173,119 +170,55 @@ void printTree(const FlushedTree& t) noexcept
            t.rootName.empty() ? "perf" : t.rootName.c_str());
 
     for (std::size_t i = 0; i < t.roots.size(); ++i) {
-        const bool rootIsLast = (i + 1 == t.roots.size());
-
-        struct Frame
-        {
-            int32_t     idx;
-            std::string prefix;
-            bool        isLast;
-        };
-        std::vector<Frame> dfs;
-        dfs.push_back({t.roots[i], std::string(), rootIsLast});
-
-        while (!dfs.empty()) {
-            Frame cur = std::move(dfs.back());
-            dfs.pop_back();
-
-            printNodeLine(t, cur.idx, cur.prefix, cur.isLast);
-
-            const PerfNode&      n = t.pool[static_cast<std::size_t>(cur.idx)];
-            std::vector<int32_t> children;
-            for (int32_t c = n.firstChild; c != -1; c = t.pool[static_cast<std::size_t>(c)].nextSibling) {
-                children.push_back(c);
-            }
-            const std::string childPrefix = cur.prefix + (cur.isLast ? "    " : "|   ");
-            for (std::size_t k = children.size(); k-- > 0;) {
-                const bool last = (k == children.size() - 1);
-                dfs.push_back({children[k], childPrefix, last});
-            }
-        }
+        printNode(t, t.roots[i], std::string(), i + 1 == t.roots.size());
     }
-}
-
-AggregateData& gAggData() noexcept
-{
-    static AggregateData* const instance = new AggregateData();
-    return *instance;
-}
-
-void registerSafetyNetOnce() noexcept
-{
-    if (gSafetyNetDone.exchange(true, std::memory_order_acq_rel)) {
-        return;
-    }
-    std::atexit([]() noexcept {
-        if (gShuttingDown.exchange(true, std::memory_order_acq_rel)) {
-            return;
-        }
-        std::vector<FlushedTree> local;
-        try {
-            std::lock_guard<std::mutex> lk(gAggData().mMutex);
-            local.swap(gAggData().mTrees);
-        } catch (...) {
-            return;
-        }
-        if (local.empty()) {
-            return;
-        }
-        std::stable_sort(local.begin(), local.end(),
-                         [](const FlushedTree& a, const FlushedTree& b) { return a.tid < b.tid; });
-        XLOG_I("[perf] ===== safety-net flush: %zu block(s) =====\n", local.size());
-        for (const FlushedTree& t : local) {
-            printTree(t);
-        }
-        XLOG_I("[perf] ===== end =====\n");
-    });
 }
 
 }  // anonymous namespace
 
 // ===========================================================================
-//  PerfConfig — Meyers singleton
+//  Config — Meyers singleton
 // ===========================================================================
 
-void PerfConfig::setEnabled(bool on) noexcept { mEnabled.store(on, std::memory_order_relaxed); }
+void Config::setEnabled(bool on) noexcept { mEnabled.store(on, std::memory_order_relaxed); }
 
-bool PerfConfig::isEnabled() const noexcept { return mEnabled.load(std::memory_order_relaxed); }
+bool Config::isEnabled() const noexcept { return mEnabled.load(std::memory_order_relaxed); }
 
-void PerfConfig::setDebugMode(bool on) noexcept { mDebugMode.store(on, std::memory_order_relaxed); }
+void Config::setDebugMode(bool on) noexcept { mDebugMode.store(on, std::memory_order_relaxed); }
 
-bool PerfConfig::isDebugMode() const noexcept { return mDebugMode.load(std::memory_order_relaxed); }
+bool Config::isDebugMode() const noexcept { return mDebugMode.load(std::memory_order_relaxed); }
 
-void PerfConfig::setTimerLevel(int32_t threshold) noexcept { mTimerLevel.store(threshold, std::memory_order_relaxed); }
+void Config::setTimerLevel(int32_t threshold) noexcept { mTimerLevel.store(threshold, std::memory_order_relaxed); }
 
-int32_t PerfConfig::getTimerLevel() const noexcept { return mTimerLevel.load(std::memory_order_relaxed); }
+int32_t Config::getTimerLevel() const noexcept { return mTimerLevel.load(std::memory_order_relaxed); }
 
-void PerfConfig::setTracerLevel(int32_t threshold) noexcept
+void Config::setTracerLevel(int32_t threshold) noexcept { mTracerLevel.store(threshold, std::memory_order_relaxed); }
+
+int32_t Config::getTracerLevel() const noexcept { return mTracerLevel.load(std::memory_order_relaxed); }
+
+void Config::setRootName(const std::string& name) noexcept
 {
-    mTracerLevel.store(threshold, std::memory_order_relaxed);
-}
-
-int32_t PerfConfig::getTracerLevel() const noexcept { return mTracerLevel.load(std::memory_order_relaxed); }
-
-void PerfConfig::setRootName(const std::string& name) noexcept
-{
-    std::lock_guard<std::mutex> lk(gRootNameMutex);
+    std::lock_guard<std::mutex> lk(mRootNameMutex);
     mRootName = name;
 }
 
-std::string PerfConfig::getRootName() const noexcept
+std::string Config::getRootName() const noexcept
 {
-    std::lock_guard<std::mutex> lk(gRootNameMutex);
+    std::lock_guard<std::mutex> lk(mRootNameMutex);
     return mRootName;
 }
 
-void PerfConfig::setAggregateMode(bool on) noexcept { mAggregate.store(on, std::memory_order_relaxed); }
+void Config::setAggregateMode(bool on) noexcept { mAggregate.store(on, std::memory_order_relaxed); }
 
-bool PerfConfig::isAggregateMode() const noexcept { return mAggregate.load(std::memory_order_relaxed); }
+bool Config::isAggregateMode() const noexcept { return mAggregate.load(std::memory_order_relaxed); }
 
-void PerfConfig::flushAggregated() noexcept
+void Config::flushAggregated() noexcept
 {
-    std::vector<FlushedTree> local;
+    std::vector<TreeSnapThread> local;
     try {
-        std::lock_guard<std::mutex> lk(gAggData().mMutex);
-        local.swap(gAggData().mTrees);
+        TreesSnap&                  agg = TreesSnap::get();
+        std::lock_guard<std::mutex> lk(agg.mMutex);
+        local.swap(agg.mTrees);
     } catch (...) {
         return;
     }
@@ -293,9 +226,9 @@ void PerfConfig::flushAggregated() noexcept
         return;
     }
     std::stable_sort(local.begin(), local.end(),
-                     [](const FlushedTree& a, const FlushedTree& b) { return a.tid < b.tid; });
+                     [](const TreeSnapThread& a, const TreeSnapThread& b) { return a.tid < b.tid; });
     XLOG_I("[perf] ===== aggregate flush: %zu block(s) =====\n", local.size());
-    for (const FlushedTree& t : local) {
+    for (const TreeSnapThread& t : local) {
         printTree(t);
     }
     XLOG_I("[perf] ===== end =====\n");
@@ -364,52 +297,45 @@ XTimerScoped::XTimerScoped(const std::string& name) noexcept
       mSubBegin(mBegin),
       mName(name)
 {
-    PerfConfig& cfg = PerfConfig::get();
-    if (!cfg.isEnabled()) {
+    if (!Config::get().isEnabled())
+        return;
+
+    if (CtxThread::get().inFlush)
+        return;
+
+    const bool     debugMode = Config::get().isDebugMode();
+    const uint32_t depth =
+        debugMode ? static_cast<uint32_t>(CtxThread::get().openStack.size()) : CtxThread::get().releaseDepth;
+    const int32_t threshold = Config::get().getTimerLevel();
+
+    if (depth >= Config::HARD_MAX_DEPTH || threshold == Config::LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
         return;
     }
 
-    PerfThreadCtx& tls = tlsCtx();
-    if (tls.inFlush) {
-        return;
-    }
-
-    const bool     debugMode = cfg.isDebugMode();
-    const uint32_t depth     = debugMode ? static_cast<uint32_t>(tls.openStack.size()) : gTimerReleaseDepth;
-
-    if (depth >= PerfConfig::HARD_MAX_DEPTH) {
-        return;
-    }
-
-    const int32_t threshold = cfg.getTimerLevel();
-    if (threshold == PerfConfig::LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
-        return;
-    }
+    // All active paths need depth; assign once after all guards pass.
+    mDepth = depth;
 
     if (!debugMode) {
         mNodeIdx = -2;
-        mDepth   = depth;
-        ++gTimerReleaseDepth;
+        ++CtxThread::get().releaseDepth;
         return;
     }
 
     // -- Debug path --
-    const int32_t parent = tls.openStack.empty() ? -1 : tls.openStack.back();
-    const int32_t idx    = emplaceNode(tls, parent, mName, depth, mBegin);
+    const int32_t parent = CtxThread::get().openStack.empty() ? -1 : CtxThread::get().openStack.back();
+    const int32_t idx    = emplaceNode(CtxThread::get(), parent, mName, depth, mBegin);
     if (idx < 0) {
         mNodeIdx = -2;
-        mDepth   = depth;
         return;
     }
+
     try {
-        tls.openStack.push_back(idx);
+        CtxThread::get().openStack.push_back(idx);
     } catch (...) {
         mNodeIdx = -2;
-        mDepth   = depth;
         return;
     }
     mNodeIdx = idx;
-    mDepth   = depth;
     mIsRoot  = (depth == 0);
 }
 
@@ -429,58 +355,54 @@ XTimerScoped::~XTimerScoped() noexcept
             XLOG_I("[perf] %s: %.3f ms\n", mSubName.c_str(), subMs);
         }
         XLOG_I("[perf] %s: %.3f ms\n", mName.c_str(), msF);
-        if (gTimerReleaseDepth > 0u) {
-            --gTimerReleaseDepth;
+        if (CtxThread::get().releaseDepth > 0u) {
+            --CtxThread::get().releaseDepth;
         }
         return;
     }
 
     // -- Debug path --
-    PerfThreadCtx& tls = tlsCtx();
-    if (tls.inFlush) {
+    if (CtxThread::get().inFlush) {
         return;
     }
 
-    if (mNodeIdx >= 0 && mNodeIdx < static_cast<int32_t>(tls.pool.size())) {
-        tls.pool[static_cast<std::size_t>(mNodeIdx)].durationMs = msF;
+    if (mNodeIdx >= 0 && mNodeIdx < static_cast<int32_t>(CtxThread::get().pool.size())) {
+        CtxThread::get().pool[static_cast<std::size_t>(mNodeIdx)].durationMs = msF;
     }
-    if (!tls.openStack.empty() && tls.openStack.back() == mNodeIdx) {
-        tls.openStack.pop_back();
+    if (!CtxThread::get().openStack.empty() && CtxThread::get().openStack.back() == mNodeIdx) {
+        CtxThread::get().openStack.pop_back();
     }
 
-    if (!mIsRoot || !tls.openStack.empty()) {
+    if (!mIsRoot || !CtxThread::get().openStack.empty()) {
         return;
     }
 
     // -- Outermost scope: flush this thread's tree --
-    tls.inFlush = true;
-
-    PerfConfig& cfg      = PerfConfig::get();
-    std::string rootName = cfg.getRootName();
+    CtxThread::get().inFlush = true;
 
     try {
         // Build a snapshot by moving TLS data — O(1), no copies.
-        FlushedTree snap;
-        snap.pool      = std::move(tls.pool);
-        snap.nameArena = std::move(tls.nameArena);
+        TreeSnapThread snap;
+        snap.pool      = std::move(CtxThread::get().pool);
+        snap.nameArena = std::move(CtxThread::get().nameArena);
         snap.roots     = collectRoots(snap.pool);
-        snap.tid       = tidHash(tls.tid);
-        snap.rootName  = std::move(rootName);
+        snap.tid       = CtxThread::get().tid;
+        snap.rootName  = Config::get().getRootName();
 
-        if (cfg.isAggregateMode()) {
-            std::lock_guard<std::mutex> lk(gAggData().mMutex);
-            gAggData().mTrees.emplace_back(std::move(snap));
-            registerSafetyNetOnce();
+        if (Config::get().isAggregateMode()) {
+            TreesSnap&                  agg = TreesSnap::get();
+            std::lock_guard<std::mutex> lk(agg.mMutex);
+            agg.mTrees.emplace_back(std::move(snap));
         } else {
             printTree(snap);
         }
     } catch (...) {
     }
 
-    tls.pool.clear();
-    tls.nameArena.clear();
-    tls.openStack.clear();
-    tls.inFlush = false;
+    CtxThread::get().pool.clear();
+    CtxThread::get().nameArena.clear();
+    CtxThread::get().openStack.clear();
+    CtxThread::get().inFlush = false;
 }
 
 std::chrono::steady_clock::time_point XTimerScoped::closeOpenSub() noexcept
@@ -501,20 +423,19 @@ std::chrono::steady_clock::time_point XTimerScoped::closeOpenSub() noexcept
     if (mSubNodeIdx < 0) {
         return now;
     }
-    PerfThreadCtx& tls = tlsCtx();
-    if (tls.inFlush) {
+    if (CtxThread::get().inFlush) {
         return now;
     }
 
-    if (mSubNodeIdx < static_cast<int32_t>(tls.pool.size())) {
-        PerfNode& prev = tls.pool[static_cast<std::size_t>(mSubNodeIdx)];
+    if (mSubNodeIdx < static_cast<int32_t>(CtxThread::get().pool.size())) {
+        NodePerf& prev = CtxThread::get().pool[static_cast<std::size_t>(mSubNodeIdx)];
         // Guard against double-close: only write if still open.
         if (prev.durationMs < 0.0f) {
             prev.durationMs = std::chrono::duration<float, std::milli>(now - prev.begin).count();
         }
     }
-    if (!tls.openStack.empty() && tls.openStack.back() == mSubNodeIdx) {
-        tls.openStack.pop_back();
+    if (!CtxThread::get().openStack.empty() && CtxThread::get().openStack.back() == mSubNodeIdx) {
+        CtxThread::get().openStack.pop_back();
     }
     mSubNodeIdx = -1;
     return now;
@@ -536,27 +457,25 @@ void XTimerScoped::sub(const std::string& name) noexcept
     }
 
     // ── Debug path: open a new sub-node under the outer scope ──
-    PerfThreadCtx& tls = tlsCtx();
-    if (tls.inFlush) {
+    if (CtxThread::get().inFlush) {
         return;
     }
 
     const uint32_t depth = mDepth + 1;
-    if (depth >= PerfConfig::HARD_MAX_DEPTH) {
+    if (depth >= Config::HARD_MAX_DEPTH) {
         return;
     }
-    PerfConfig&   cfg       = PerfConfig::get();
-    const int32_t threshold = cfg.getTimerLevel();
-    if (threshold == PerfConfig::LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
+    const int32_t threshold = Config::get().getTimerLevel();
+    if (threshold == Config::LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
         return;
     }
 
-    const int32_t idx = emplaceNode(tls, mNodeIdx, name, depth, now);
+    const int32_t idx = emplaceNode(CtxThread::get(), mNodeIdx, name, depth, now);
     if (idx < 0) {
         return;
     }
     try {
-        tls.openStack.push_back(idx);
+        CtxThread::get().openStack.push_back(idx);
     } catch (...) {
         return;
     }

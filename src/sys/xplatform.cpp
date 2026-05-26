@@ -12,9 +12,11 @@
 #include <sys/sysctl.h>
 #include <mach/mach.h>
 #include <unistd.h>
+#include <pthread.h>
 #elif defined(AU_OS_LINUX)
 #include <unistd.h>
 #include <sys/sysinfo.h>
+#include <sys/syscall.h>
 #endif
 
 #ifdef AU_OS_ANDROID
@@ -266,6 +268,30 @@ bool setSystemPropertyValue(const char* name, float value) {
     return __system_property_set(name, valStr.c_str()) == 0;
 #else
     return false;
+#endif
+}
+
+// ============================================================================
+// Process / Thread
+// ============================================================================
+
+uint64_t getCurrentProcessId() {
+#ifdef AU_OS_WINDOWS
+    return static_cast<uint64_t>(GetCurrentProcessId());
+#else
+    return static_cast<uint64_t>(::getpid());
+#endif
+}
+
+uint64_t getCurrentThreadId() {
+#ifdef AU_OS_WINDOWS
+    return static_cast<uint64_t>(GetCurrentThreadId());
+#elif defined(AU_OS_APPLE)
+    uint64_t tid = 0;
+    ::pthread_threadid_np(::pthread_self(), &tid);
+    return tid;
+#else
+    return static_cast<uint64_t>(::syscall(SYS_gettid));
 #endif
 }
 

@@ -196,6 +196,14 @@ bool setSystemPropertyValue(const char* name, const char* value);
 bool setSystemPropertyValue(const char* name, int value);
 bool setSystemPropertyValue(const char* name, float value);
 
+// ── Process / Thread ──
+
+/** @brief Get current process ID (cross-platform). */
+uint64_t getCurrentProcessId();
+
+/** @brief Get current thread ID (cross-platform). */
+uint64_t getCurrentThreadId();
+
 // ── Misc ──
 
 /** @brief Get the system hostname. */

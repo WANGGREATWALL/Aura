@@ -3,6 +3,8 @@
 #include "gtest/gtest.h"
 #include "sys/xplatform.h"
 
+#include <thread>
+
 using namespace au::sys;
 
 TEST(XPlatform, BuildPlatform) {
@@ -92,6 +94,48 @@ TEST(XPlatform, GpuInfo) {
     for (const auto& gpu : gpus) {
         EXPECT_FALSE(gpu.name.empty());
     }
+}
+
+// ============================================================================
+// Process / Thread ID — edge cases
+// ============================================================================
+
+TEST(XPlatform, ProcessAndThreadId) {
+    const uint64_t pid = getCurrentProcessId();
+    const uint64_t tid = getCurrentThreadId();
+
+    // Process ID must be positive on all platforms.
+    EXPECT_GT(pid, 0u);
+
+    // Thread ID must be non-zero; on most systems it is also positive (> 0).
+    EXPECT_NE(tid, 0u);
+
+    // The main thread's ID must differ from the process ID on most platforms
+    // (Linux/Android: tid ≠ pid unless it's the main thread of a single-threaded
+    // process; macOS: pthread_threadid_np returns a unique opaque value).
+    // We only assert that both values are valid; equality is platform-specific.
+}
+
+// ============================================================================
+// Process / Thread ID — multi-thread divergence
+// ============================================================================
+
+TEST(XPlatform, ThreadIdMultiThread) {
+    const uint64_t pidMain  = getCurrentProcessId();
+    const uint64_t tidMain  = getCurrentThreadId();
+    uint64_t       tidOther = 0;
+
+    std::thread worker([&] {
+        tidOther = getCurrentThreadId();
+    });
+    worker.join();
+
+    // All threads in the same process must report the same PID.
+    EXPECT_EQ(getCurrentProcessId(), pidMain);
+
+    // The spawned thread must have a distinct TID from the main thread.
+    EXPECT_NE(tidOther, 0u);
+    EXPECT_NE(tidOther, tidMain);
 }
 
 #endif  // ENABLE_TEST_XPLATFORM

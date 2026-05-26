@@ -49,11 +49,11 @@ protected:
 #if AU_OS_ANDROID
         au::log::Config::get().setShellPrintEnabled(true);
 #endif
-        auto& cfg = au::perf::PerfConfig::get();
+        auto& cfg = au::perf::Config::get();
         cfg.setEnabled(true);
         cfg.setDebugMode(false);
         cfg.setTimerLevel(3);
-        cfg.setTracerLevel(au::perf::PerfConfig::LEVEL_ALL);
+        cfg.setTracerLevel(au::perf::Config::LEVEL_ALL);
         cfg.setAggregateMode(false);
         cfg.setRootName("perf");
     }
@@ -80,9 +80,9 @@ protected:
     }
 };
 
-TEST_F(XTimerTest, PerfConfigAccessors)
+TEST_F(XTimerTest, ConfigAccessors)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
 
     cfg.setEnabled(false);
     EXPECT_FALSE(cfg.isEnabled());
@@ -94,8 +94,8 @@ TEST_F(XTimerTest, PerfConfigAccessors)
 
     cfg.setTimerLevel(7);
     EXPECT_EQ(cfg.getTimerLevel(), 7);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_OFF);
-    EXPECT_EQ(cfg.getTimerLevel(), au::perf::PerfConfig::LEVEL_OFF);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_OFF);
+    EXPECT_EQ(cfg.getTimerLevel(), au::perf::Config::LEVEL_OFF);
 
     cfg.setTracerLevel(0);
     EXPECT_EQ(cfg.getTracerLevel(), 0);
@@ -143,9 +143,9 @@ TEST_F(XTimerTest, TimerGetTimeFormatted)
 
 TEST_F(XTimerTest, SubReleaseImmediateOutput)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(false);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -170,9 +170,9 @@ TEST_F(XTimerTest, SubReleaseImmediateOutput)
 
 TEST_F(XTimerTest, DebugModeTreeHierarchy)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -205,9 +205,9 @@ TEST_F(XTimerTest, DebugModeTreeHierarchy)
 
 TEST_F(XTimerTest, SubAndSubNamedDebug)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -228,9 +228,9 @@ TEST_F(XTimerTest, SubAndSubNamedDebug)
 
 TEST_F(XTimerTest, WideTreeSiblingOrdering)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -260,7 +260,7 @@ TEST_F(XTimerTest, WideTreeSiblingOrdering)
 
 TEST_F(XTimerTest, LevelFiltering)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(false);
 
     cfg.setTimerLevel(0);
@@ -277,7 +277,7 @@ TEST_F(XTimerTest, LevelFiltering)
         EXPECT_EQ(out.find("depth1"), std::string::npos) << "depth>level must be silent";
     }
 
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_OFF);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_OFF);
     {
         StdoutCapture cap;
         {
@@ -289,10 +289,10 @@ TEST_F(XTimerTest, LevelFiltering)
 
 TEST_F(XTimerTest, DisabledHardOff)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setEnabled(false);
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -308,9 +308,9 @@ TEST_F(XTimerTest, DisabledHardOff)
 
 TEST_F(XTimerTest, MultiThreadIsolation)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
     cfg.setAggregateMode(false);
 
     constexpr int kThreads = 4;
@@ -340,9 +340,9 @@ TEST_F(XTimerTest, MultiThreadIsolation)
 
 TEST_F(XTimerTest, AggregateModeFlush)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
     cfg.setAggregateMode(true);
 
     {
@@ -385,9 +385,9 @@ TEST_F(XTimerTest, AggregateModeFlush)
 
 TEST_F(XTimerTest, NameCorruptionDefense)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(false);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     // Embedded newline.
     {
@@ -445,9 +445,9 @@ TEST_F(XTimerTest, NameCorruptionDefense)
 
 TEST_F(XTimerTest, TemporaryStringNameNoDangle)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(false);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -460,9 +460,9 @@ TEST_F(XTimerTest, TemporaryStringNameNoDangle)
 
 TEST_F(XTimerTest, ColorOutput)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(false);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     // Color enabled: ANSI escape codes present, reset count ≥ line count.
     au::log::Config::get().setColorEnabled(true);
@@ -500,9 +500,9 @@ TEST_F(XTimerTest, ColorOutput)
 
 TEST_F(XTimerTest, ConvenienceMacros)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(false);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     {
         StdoutCapture cap;
@@ -557,9 +557,9 @@ TEST_F(XTimerTest, TimerRestartElapsed)
 
 TEST_F(XTimerTest, HardDepthCapNoCrash)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture            cap;
     std::function<void(int)> recurse = [&](int n) {
@@ -568,16 +568,16 @@ TEST_F(XTimerTest, HardDepthCapNoCrash)
         au::perf::XTimerScoped s(std::string("d"));
         recurse(n - 1);
     };
-    recurse(static_cast<int>(au::perf::PerfConfig::HARD_MAX_DEPTH) + 16);
+    recurse(static_cast<int>(au::perf::Config::HARD_MAX_DEPTH) + 16);
     (void)cap.drain();
     SUCCEED();
 }
 
 TEST_F(XTimerTest, StressTenThousandScopes)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(false);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     auto          begin = std::chrono::steady_clock::now();
@@ -593,9 +593,9 @@ TEST_F(XTimerTest, StressTenThousandScopes)
 
 TEST_F(XTimerTest, StressHundredThousandScopesDebug)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     au::log::Config::get().setLevel(au::log::Level::Silent);
     {
@@ -609,9 +609,9 @@ TEST_F(XTimerTest, StressHundredThousandScopesDebug)
 
 TEST_F(XTimerTest, StressMixedPatterns)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     au::log::Config::get().setLevel(au::log::Level::Silent);
     {
@@ -642,9 +642,9 @@ TEST_F(XTimerTest, StressMixedPatterns)
 
 TEST_F(XTimerTest, SubStateExceptionRecovery)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(true);
-    cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     // Unbalanced subs: extra bare sub() must be safe no-ops.
     {

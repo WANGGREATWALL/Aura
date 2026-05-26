@@ -21,6 +21,12 @@ namespace {
 
 #if AU_OS_ANDROID
 
+static int getTracePid() noexcept
+{
+    static int pid = static_cast<int>(au::sys::getCurrentProcessId());
+    return pid;
+}
+
 int getTraceFd() noexcept
 {
     static int fd = []() {
@@ -33,12 +39,14 @@ int getTraceFd() noexcept
     return fd;
 }
 
-void writeTraceMarker(char mode, int pid, const char* name, std::size_t nameLen) noexcept
+void writeTraceMarker(char mode, const char* name, std::size_t nameLen) noexcept
 {
     int fd = getTraceFd();
     if (fd < 0) {
         return;
     }
+
+    const int pid = getTracePid();
 
     char        buf[256];
     std::size_t n = 0;
@@ -72,15 +80,15 @@ thread_local uint32_t gTracerDepth = 0;
 
 XTracerScoped::XTracerScoped(const std::string& name) noexcept : mActive(false), mSubOpen(false)
 {
-    if (!PerfConfig::get().isEnabled()) {
+    if (!Config::get().isEnabled()) {
         return;
     }
 
-    if (gTracerDepth >= PerfConfig::HARD_MAX_DEPTH) {
+    if (gTracerDepth >= Config::HARD_MAX_DEPTH) {
         return;
     }
-    const int32_t threshold = PerfConfig::get().getTracerLevel();
-    if (threshold == PerfConfig::LEVEL_OFF || static_cast<int32_t>(gTracerDepth) > threshold) {
+    const int32_t threshold = Config::get().getTracerLevel();
+    if (threshold == Config::LEVEL_OFF || static_cast<int32_t>(gTracerDepth) > threshold) {
         return;
     }
 
@@ -89,7 +97,7 @@ XTracerScoped::XTracerScoped(const std::string& name) noexcept : mActive(false),
     ++gTracerDepth;
 
 #if AU_OS_ANDROID
-    writeTraceMarker('B', getpid(), mName.c_str(), mName.size());
+    writeTraceMarker('B', mName.c_str(), mName.size());
 #endif
 }
 
@@ -104,7 +112,7 @@ XTracerScoped::~XTracerScoped() noexcept
     }
 
 #if AU_OS_ANDROID
-    writeTraceMarker('E', getpid(), nullptr, 0);
+    writeTraceMarker('E', nullptr, 0);
 #endif
 
     if (gTracerDepth > 0u) {
@@ -124,7 +132,7 @@ void XTracerScoped::sub(const std::string& name) noexcept
 
     ++gTracerDepth;
 #if AU_OS_ANDROID
-    writeTraceMarker('B', getpid(), name.c_str(), name.size());
+    writeTraceMarker('B', name.c_str(), name.size());
 #else
     (void)name;
 #endif
@@ -138,7 +146,7 @@ void XTracerScoped::sub() noexcept
     }
 
 #if AU_OS_ANDROID
-    writeTraceMarker('E', getpid(), nullptr, 0);
+    writeTraceMarker('E', nullptr, 0);
 #endif
     if (gTracerDepth > 0u) {
         --gTracerDepth;

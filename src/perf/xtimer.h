@@ -6,10 +6,10 @@
  * @brief Hierarchical performance timer with Release/Debug dual-mode output.
  *
  * Key design:
- *  - Global unified configuration via @c PerfConfig::get() (Meyers singleton).
+ *  - Global unified configuration via @c Config::get() (Meyers singleton).
  *  - Level == tree depth: no caller-supplied level parameter.
  *    @c setTimerLevel(N) means "show only nodes whose depth ≤ N".
- *    An internal hard depth cap (@c PerfConfig::HARD_MAX_DEPTH = 512) guards
+ *    An internal hard depth cap (@c Config::HARD_MAX_DEPTH = 512) guards
  *    against runaway recursion.
  *  - Name lifetime: the constructor copies @p name into @c mName (both
  *    modes); Debug mode additionally stores into the TLS arena.
@@ -20,7 +20,7 @@
  *
  * Quick start:
  * @code
- *   auto& cfg = au::perf::PerfConfig::get();
+ *   auto& cfg = au::perf::Config::get();
  *   cfg.setDebugMode(true);
  *   cfg.setTimerLevel(3);
  *
@@ -42,13 +42,14 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 #include <string>
 
 namespace au {
 namespace perf {
 
 // ---------------------------------------------------------------------------
-//  PerfConfig — Meyers singleton
+//  Config — Meyers singleton
 // ---------------------------------------------------------------------------
 
 /**
@@ -59,7 +60,7 @@ namespace perf {
  * an internal mutex hidden in the implementation; they are not on the hot
  * path and safe to call from any thread.
  */
-class PerfConfig
+class Config
 {
 public:
     /// Hard-off sentinel: pass to @c setTimerLevel / @c setTracerLevel to
@@ -72,9 +73,9 @@ public:
     /// Maximum tree depth before a new scope is silently dropped.
     static constexpr uint32_t HARD_MAX_DEPTH = 512;
 
-    static PerfConfig& get() noexcept
+    static Config& get() noexcept
     {
-        static PerfConfig instance;
+        static Config instance;
         return instance;
     }
 
@@ -103,9 +104,9 @@ public:
     void flushAggregated() noexcept;
 
 private:
-    PerfConfig()                             = default;
-    PerfConfig(const PerfConfig&)            = delete;
-    PerfConfig& operator=(const PerfConfig&) = delete;
+    Config()                         = default;
+    Config(const Config&)            = delete;
+    Config& operator=(const Config&) = delete;
 
     std::atomic<bool>    mEnabled{true};
     std::atomic<bool>    mDebugMode{false};
@@ -113,7 +114,8 @@ private:
     std::atomic<int32_t> mTracerLevel{LEVEL_ALL};
     std::atomic<bool>    mAggregate{false};
 
-    std::string mRootName{"perf"};  ///< guarded by gRootNameMutex (xtimer.cpp)
+    mutable std::mutex mRootNameMutex;
+    std::string        mRootName{"perf"};
 };
 
 // ---------------------------------------------------------------------------
@@ -150,9 +152,9 @@ private:
  * @brief RAII scoped timer with optional thread-local tree building.
  *
  * Activation rules (evaluated once at construction):
- *  - @c PerfConfig::get().isEnabled() must be true
+ *  - @c Config::get().isEnabled() must be true
  *  - the scope's tree depth must be ≤ @c getTimerLevel()
- *  - the depth must be < @c PerfConfig::HARD_MAX_DEPTH
+ *  - the depth must be < @c Config::HARD_MAX_DEPTH
  *
  * @note This class intentionally does not expose @c elapsedMs().
  *       Use @c XTimer for explicit measurement.

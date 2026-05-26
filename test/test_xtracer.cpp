@@ -24,11 +24,11 @@ protected:
 #if AU_OS_ANDROID
         au::log::Config::get().setShellPrintEnabled(true);
 #endif
-        auto& cfg = au::perf::PerfConfig::get();
+        auto& cfg = au::perf::Config::get();
         cfg.setEnabled(true);
         cfg.setDebugMode(false);
-        cfg.setTimerLevel(au::perf::PerfConfig::LEVEL_OFF);  // silence timer noise
-        cfg.setTracerLevel(au::perf::PerfConfig::LEVEL_ALL);
+        cfg.setTimerLevel(au::perf::Config::LEVEL_OFF);  // silence timer noise
+        cfg.setTracerLevel(au::perf::Config::LEVEL_ALL);
         cfg.setAggregateMode(false);
         cfg.setRootName("perf");
     }
@@ -45,7 +45,7 @@ TEST_F(XTracerTest, BasicScopeNoCrash)
 
 TEST_F(XTracerTest, DisabledHardOff)
 {
-    au::perf::PerfConfig::get().setEnabled(false);
+    au::perf::Config::get().setEnabled(false);
 
     {
         au::perf::XTracerScoped a(std::string("off.tracer.a"));
@@ -56,9 +56,9 @@ TEST_F(XTracerTest, DisabledHardOff)
 
 TEST_F(XTracerTest, LevelGating)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
 
-    cfg.setTracerLevel(au::perf::PerfConfig::LEVEL_OFF);
+    cfg.setTracerLevel(au::perf::Config::LEVEL_OFF);
     {
         au::perf::XTracerScoped s(std::string("never.traced"));
     }
@@ -68,7 +68,7 @@ TEST_F(XTracerTest, LevelGating)
         au::perf::XTracerScoped s(std::string("traced"));
     }
 
-    cfg.setTracerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    cfg.setTracerLevel(au::perf::Config::LEVEL_ALL);
     SUCCEED();
 }
 
@@ -87,7 +87,7 @@ TEST_F(XTracerTest, SubPhaseTransitions)
 
 TEST_F(XTracerTest, CompositeMacroSafe)
 {
-    au::perf::PerfConfig::get().setTimerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    au::perf::Config::get().setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     {
         AU_PERF_SCOPE(std::string("composite.tracer.scope"));
@@ -148,7 +148,7 @@ TEST_F(XTracerTest, BareSubBeforeFirstNamedSub)
 
 TEST_F(XTracerTest, AlternatingSubMultiCycle)
 {
-    au::perf::PerfConfig::get().setTracerLevel(au::perf::PerfConfig::LEVEL_ALL);
+    au::perf::Config::get().setTracerLevel(au::perf::Config::LEVEL_ALL);
 
     {
         au::perf::XTracerScoped s(std::string("alt.root"));
