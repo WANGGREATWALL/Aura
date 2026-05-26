@@ -345,15 +345,11 @@ XTimerScoped::~XTimerScoped() noexcept
         return;
     }
 
-    const auto  now = std::chrono::steady_clock::now();
+    const auto  now = closeOpenSub();
     const float msF = std::chrono::duration<float, std::milli>(now - mBegin).count();
 
     // -- Release / degraded path: one-liner --
     if (mNodeIdx == -2) {
-        if (!mSubName.empty()) {
-            const float subMs = std::chrono::duration<float, std::milli>(now - mSubBegin).count();
-            XLOG_I("[perf] %s: %.3f ms\n", mSubName.c_str(), subMs);
-        }
         XLOG_I("[perf] %s: %.3f ms\n", mName.c_str(), msF);
         if (CtxThread::get().releaseDepth > 0u) {
             --CtxThread::get().releaseDepth;

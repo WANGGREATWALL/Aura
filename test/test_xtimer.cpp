@@ -681,9 +681,10 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
         EXPECT_NE(out.find("after:"), std::string::npos) << out;
     }
 
-    // Exception between sub() calls — sub is orphaned and tree cannot flush,
-    // but process must not crash.
+    // Exception between sub() calls: destructor must close the active sub
+    // before closing the root so the tree can still flush.
     {
+        StdoutCapture cap;
         bool caught = false;
         try {
             au::perf::XTimerScoped root(std::string("mid_sub"));
@@ -693,7 +694,10 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
             caught = true;
         }
         EXPECT_TRUE(caught);
-        SUCCEED();
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("mid_sub"), std::string::npos) << out;
+        EXPECT_NE(out.find("A:"), std::string::npos) << out;
+        EXPECT_EQ(out.find("(open)"), std::string::npos) << out;
     }
 }
 
