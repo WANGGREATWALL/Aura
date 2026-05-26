@@ -1,73 +1,73 @@
-# Skill: C++ ABI-Compatible Public Interface Design
+# Skill: C++ ABI 兼容接口设计
 
-## Purpose
+## 目标
 
-Design public interfaces for C++ component libraries that may be shipped as shared libraries and used by multiple caller shared libraries. The goal is to balance ABI compatibility, C++11 public-header compatibility, ergonomics, and hot-path performance.
+用于设计可长期维护的 C++ 基础组件库公开接口，尤其适用于基础库以 `.so` 形式发布，并被多个调用方 `.so` 同时依赖的场景。
 
-Typical assumptions:
+默认假设：
 
-- Public headers must compile under C++11.
-- Internal implementation may use newer C++ standards.
-- Library and callers usually use the same compiler/STL family.
-- Toolchain versions may differ within a controlled range, such as Android NDK r23-r26.
-- Public C++ APIs may use selected `std` types, but long-term ABI risk must be explicit.
+- 公开头文件必须兼容 C++11。
+- 内部 `.cpp` 可以使用更高版本 C++。
+- 基础库与调用方通常使用同一编译器/STL 家族。
+- Android NDK 版本可能在 r23-r26 等小范围内浮动。
+- 公开 C++ API 可以适度使用 `std`，但必须明确 ABI 风险。
 
-## 1. Compatibility Levels
+## 1. 兼容等级
 
-| Level | Goal | Interface Shape |
+| 等级 | 目标 | 接口形态 |
 |---|---|---|
-| L0 Source-compatible | Callers rebuild from source | C++ headers, templates, `std` APIs |
-| L1 Controlled C++ ABI | Same compiler/STL family binary compatibility | Pimpl, C++ facade, limited `std` parameters |
-| L2 Stable C ABI | Cross compiler/language or long-term binary ABI | C ABI hourglass, plain C types |
-| L3 Hot-path ABI | ABI-stable, stack-based, no per-call allocation | Stack opaque storage + inline C++ RAII wrapper |
+| L0 源码兼容 | 调用方重新编译即可 | C++ header、template、`std` API |
+| L1 受控 C++ ABI | 同编译器/STL 家族内二进制兼容 | Pimpl、C++ facade、有限 `std` 参数 |
+| L2 稳定 C ABI | 跨编译器/跨语言/长期 ABI | C ABI 窄腰、纯 C 类型 |
+| L3 热路径 ABI | ABI 稳定且无每次调用分配 | 栈上 opaque storage + C++11 RAII wrapper |
 
-Default selection:
+默认选择：
 
-- Ordinary stateful module: L1 Pimpl.
-- Long-term SDK boundary: L2 hourglass.
-- Timer/tracer/log scope hot path: L3 stack opaque storage.
-- Simple stateless helper: free function or header-only.
+- 普通有状态模块：L1 Pimpl。
+- 长期 SDK 边界：L2 Hourglass。
+- timer/tracer/log scope 热路径：L3 Stack Opaque。
+- 无状态工具函数：free function 或 header-only。
 
-## 2. Pattern Decision Matrix
+## 2. 模式决策表
 
-| Scenario | Pattern | Public Header |
+| 场景 | 推荐模式 | 公开头 |
 |---|---|---|
-| Stateless computation | Free function | C++11 `.h` / `.hpp` |
-| Stateful object, construction not hot | Pimpl | C++11 `.h` |
-| Shared-library boundary with strongest ABI | Hourglass | C99 `_api.h` + C++11 `.hpp` |
-| Hot-path RAII scope | Stack opaque storage | C99 `_api.h` + C++11 `.hpp` |
-| Multiple backends, controlled toolchain | Abstract interface + factory | C++11 `.h` |
-| Multiple backends, stable ABI | C handle + function table | C99 `_api.h` |
-| Tiny zero-overhead utility | Header-only | C++11 `.hpp` |
+| 无状态纯计算 | Free function | C++11 `.h/.hpp` |
+| 有状态对象，构造不在热路径 | Pimpl | C++11 `.h` |
+| 最强 ABI 稳定边界 | Hourglass | C99 `_api.h` + C++11 `.hpp` |
+| 热路径 RAII scope | Stack opaque storage | C99/C++11 API + inline wrapper |
+| 多后端，同 toolchain | Abstract interface + factory | C++11 `.h` |
+| 多后端，长期 ABI | C handle + function table | C99 `_api.h` |
+| 极小零开销工具 | Header-only | C++11 `.hpp` |
 
-Selection rule: use the simplest pattern that satisfies the required compatibility level. Do not use heap handles or virtual interfaces on tiny hot-path scope objects.
+原则：选择满足兼容等级的最简单模式。小粒度热路径对象不要使用 heap handle 或虚接口。
 
-## 3. Public Header Rules
+## 3. 公开头文件规则
 
-- Public C++ headers must remain C++11-compatible.
-- Avoid heavy platform headers in public headers.
-- Exported functions should be `noexcept` when possible.
-- Do not let C++ exceptions cross shared-library or `extern "C"` boundaries.
-- Do not export public classes with data members whose layout you may need to change.
-- Do not require dynamic allocation in per-call hot paths.
-- Define copy/move semantics explicitly for exported classes.
+- 公开 C++ header 保持 C++11。
+- 不在公开头中包含重型平台头，例如 `<windows.h>`。
+- 可不抛异常的函数声明为 `noexcept`。
+- 不允许异常跨 `.so` 或 `extern "C"` 边界。
+- 不导出未来可能修改布局的实体类。
+- 热路径接口不得要求每次调用动态分配。
+- 导出类必须明确 copy/move 语义。
 
-## 4. Using `std` in Public APIs
+## 4. `std` 类型使用边界
 
-Allowed with controlled risk in L0/L1:
+在 L0/L1 中可以谨慎使用：
 
-- `const std::string&` as input
-- `std::unique_ptr<T>` in same-toolchain C++ APIs
-- `std::vector<T>` in source-compatible or tightly controlled ABI APIs
-- `std::array<T, N>` when layout is intentionally part of the API
+- `const std::string&` 输入参数。
+- 同 toolchain 内的 `std::unique_ptr<T>`。
+- 源码兼容或强受控 ABI 中的 `std::vector<T>`。
+- 布局本身就是接口契约时的 `std::array<T, N>`。
 
-Avoid for stable ABI:
+稳定 ABI 中应避免：
 
-- Public classes with `std::string`, `std::vector`, `std::mutex`, or `std::atomic` data members.
-- Returning STL containers across shared-library boundaries as a long-term ABI contract.
-- Requiring callers to free memory allocated by another shared library.
+- 公开类包含 `std::string`、`std::vector`、`std::mutex`、`std::atomic` 成员。
+- 把返回 STL 容器作为长期二进制 ABI。
+- 让调用方释放基础库分配的 STL/heap 对象。
 
-Prefer this for L1:
+L1 推荐：
 
 ```cpp
 class MYLIB_API Config {
@@ -81,23 +81,23 @@ private:
 };
 ```
 
-Prefer this for L2:
+L2 推荐：
 
 ```c
 MYLIB_API int mylib_config_set_name(const char* data, size_t size);
 MYLIB_API int mylib_config_get_name(char* out, size_t capacity, size_t* written);
 ```
 
-Android NDK guidance:
+Android NDK 建议：
 
-- Prefer a single runtime strategy, usually `libc++_shared.so`.
-- Avoid mixing static and shared libc++ across dependent shared libraries.
-- Avoid cross-DSO STL ownership transfer.
-- If long-term ABI matters, provide C ABI or `char* + size` alternatives.
+- 统一 STL runtime 策略，通常使用 `libc++_shared.so`。
+- 避免多个 `.so` 混用 static/shared libc++。
+- 避免跨 DSO 转移 STL 所有权。
+- 长期 ABI 提供 C ABI 或 `char* + size` 版本。
 
-## 5. Symbol Visibility
+## 5. 符号可见性
 
-Use one visibility macro from a common public header:
+统一定义导出宏：
 
 ```cpp
 #if defined(MYLIB_STATIC)
@@ -117,26 +117,22 @@ Use one visibility macro from a common public header:
 #endif
 ```
 
-Rules:
+规则：
 
-- Annotate every exported function and exported class.
-- Keep internal symbols hidden or in anonymous/detail namespaces.
-- Prefer build defaults such as hidden visibility:
+- 所有导出函数/类都标注导出宏。
+- 内部符号 hidden 或放入匿名/detail namespace。
+- CMake 推荐默认隐藏：
 
 ```cmake
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 ```
 
-## 6. Free Function Pattern
+## 6. Free Function
 
-Use for stateless utilities.
+适合无状态工具：
 
 ```cpp
-#pragma once
-#include "platform.h"
-#include <cstdint>
-
 namespace mylib {
 
 MYLIB_API uint32_t nextPow2(uint32_t n) noexcept;
@@ -150,24 +146,13 @@ inline T clamp(T v, T lo, T hi) noexcept
 } // namespace mylib
 ```
 
-Rules:
+非模板实现放 `.cpp`；模板和极小 inline 函数放 header。
 
-- Put non-template implementations in `.cpp`.
-- Keep template and tiny inline functions in headers.
-- Prefer POD and input-only `const std::string&` for stable-ish C++ APIs.
+## 7. Pimpl
 
-## 7. Pimpl Pattern
-
-Use for L1 stateful objects when construction/destruction are not hot-path operations.
+适合 L1 有状态对象，且构造/析构不在热路径：
 
 ```cpp
-#pragma once
-#include "platform.h"
-#include <memory>
-#include <string>
-
-namespace mylib {
-
 class MYLIB_API XFile {
 public:
     explicit XFile(const std::string& path);
@@ -181,35 +166,25 @@ public:
 
     bool open(bool readOnly = true) noexcept;
     void close() noexcept;
-    bool isOpen() const noexcept;
-    size_t read(void* buf, size_t len) noexcept;
 
 private:
     struct Impl;
     std::unique_ptr<Impl> mImpl;
 };
-
-} // namespace mylib
 ```
 
-Rules:
+规则：
 
-- Define `Impl` only in `.cpp`.
-- Define destructor and move operations in `.cpp`.
-- Do not expose implementation STL containers as data members.
-- Do not use Pimpl for per-scope hot-path objects if it causes heap allocation.
-- Pimpl is not a cross-compiler ABI guarantee; it is a same-toolchain ABI firewall.
+- `Impl` 只在 `.cpp` 定义。
+- 析构和 move 操作在 `.cpp` 定义。
+- public class 不暴露 STL 成员。
+- Pimpl 是同 toolchain ABI firewall，不是跨编译器 ABI 保证。
 
-## 8. Hourglass C ABI Pattern
+## 8. Hourglass C ABI
 
-Use for L2 stable ABI.
+适合 L2 稳定 ABI：
 
 ```c
-#pragma once
-#include "platform.h"
-#include <stddef.h>
-#include <stdint.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -220,7 +195,6 @@ typedef enum mylib_status {
     MYLIB_STATUS_INTERNAL = 2
 } mylib_status;
 
-MYLIB_API int mylib_version_major(void);
 MYLIB_API int mylib_config_set_name(const char* data, size_t size);
 MYLIB_API int mylib_config_get_name(char* out, size_t capacity, size_t* written);
 
@@ -229,173 +203,79 @@ MYLIB_API int mylib_config_get_name(char* out, size_t capacity, size_t* written)
 #endif
 ```
 
-C ABI rules:
+C ABI 规则：
 
-- Use only C types.
-- Use `int` for boolean values.
-- Use `const char* + size_t` for strings.
-- Use caller-provided output buffers for returned strings/data.
-- Catch all exceptions at the ABI boundary and return error codes.
-- Add new functions for evolution; do not change existing signatures.
+- 只使用 C 类型。
+- bool 使用 `int`。
+- 字符串使用 `const char* + size_t`。
+- 返回数据使用调用方提供的 buffer。
+- ABI 边界 catch all，返回错误码。
+- 只新增函数，不修改已发布签名。
 
-C++ wrapper:
+C++11 wrapper 只做薄转发：
 
 ```cpp
-#pragma once
-#include "mylib_api.h"
-#include <string>
-
-namespace mylib {
-
 inline int setName(const std::string& name) noexcept
 {
     return mylib_config_set_name(name.data(), name.size());
 }
-
-} // namespace mylib
 ```
 
-Wrapper rules:
+## 9. Stack Opaque Storage
 
-- Header-only and C++11-compatible.
-- Delegate immediately to the C ABI.
-- Do not duplicate complex implementation logic in the wrapper.
+适合 L3 热路径 RAII，例如 timer/tracer/log scope。
 
-## 9. Stack Opaque Storage Pattern
-
-Use for L3 hot-path RAII objects such as timers, tracers, log scopes, spans, and telemetry scopes.
-
-Avoid heap handles in hot paths:
+避免每个 scope 使用 heap handle：
 
 ```c
-/* Avoid for per-scope hot paths: begin/create likely allocates. */
 typedef struct mylib_timer_scope mylib_timer_scope;
-MYLIB_API mylib_timer_scope* mylib_timer_begin(const char* name);
-MYLIB_API void mylib_timer_end(mylib_timer_scope*);
+MYLIB_API mylib_timer_scope* mylib_timer_begin(const char* name); // 不推荐热路径
 ```
 
-Prefer caller stack storage:
-
-```c
-#pragma once
-#include "platform.h"
-#include <stddef.h>
-#include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-typedef struct mylib_timer_scope {
-    uint64_t opaque[8];
-} mylib_timer_scope;
-
-typedef struct mylib_trace_scope {
-    uint64_t opaque[8];
-} mylib_trace_scope;
-
-MYLIB_API void mylib_timer_begin(mylib_timer_scope* s, const char* name, size_t size);
-MYLIB_API void mylib_timer_sub_begin(mylib_timer_scope* s, const char* name, size_t size);
-MYLIB_API void mylib_timer_sub_end(mylib_timer_scope* s);
-MYLIB_API void mylib_timer_end(mylib_timer_scope* s);
-
-MYLIB_API void mylib_trace_begin(mylib_trace_scope* s, const char* name, size_t size);
-MYLIB_API void mylib_trace_sub_begin(mylib_trace_scope* s, const char* name, size_t size);
-MYLIB_API void mylib_trace_sub_end(mylib_trace_scope* s);
-MYLIB_API void mylib_trace_end(mylib_trace_scope* s);
-
-#ifdef __cplusplus
-}
-#endif
-```
-
-C++11 wrapper:
+推荐调用方栈上 opaque storage：
 
 ```cpp
-#pragma once
-#include "mylib_perf_api.h"
-#include <string>
+struct PerfScope {
+    uint64_t opaque[8];
+};
 
-namespace mylib {
-namespace perf {
+MYLIB_API void timerBegin(PerfScope* s, const std::string& name) noexcept;
+MYLIB_API void timerEnd(PerfScope* s) noexcept;
+```
 
+C++11 RAII wrapper：
+
+```cpp
 class TimerScope {
 public:
     explicit TimerScope(const std::string& name) noexcept
     {
-        mylib_timer_begin(&mScope, name.data(), name.size());
+        timerBegin(&mScope, name);
     }
 
-    ~TimerScope() noexcept { mylib_timer_end(&mScope); }
+    ~TimerScope() noexcept { timerEnd(&mScope); }
 
     TimerScope(const TimerScope&) = delete;
     TimerScope& operator=(const TimerScope&) = delete;
     TimerScope(TimerScope&&) = delete;
     TimerScope& operator=(TimerScope&&) = delete;
 
-    void sub(const std::string& name) noexcept
-    {
-        mylib_timer_sub_begin(&mScope, name.data(), name.size());
-    }
-
-    void sub() noexcept { mylib_timer_sub_end(&mScope); }
-
 private:
-    mylib_timer_scope mScope;
-};
-
-} // namespace perf
-} // namespace mylib
-```
-
-Macro helpers:
-
-```cpp
-#define MYLIB_CONCAT_INNER(a, b) a##b
-#define MYLIB_CONCAT(a, b) MYLIB_CONCAT_INNER(a, b)
-
-#if defined(__COUNTER__)
-#  define MYLIB_UNIQUE_NAME(prefix) MYLIB_CONCAT(prefix, __COUNTER__)
-#else
-#  define MYLIB_UNIQUE_NAME(prefix) MYLIB_CONCAT(prefix, __LINE__)
-#endif
-
-#define MYLIB_TIMER(name) \
-    ::mylib::perf::TimerScope MYLIB_UNIQUE_NAME(_mylib_timer_)(name)
-```
-
-Opaque layout guidance:
-
-- `uint64_t opaque[8]` gives 64 bytes, one typical cache line.
-- Published opaque size must never change.
-- Use separate public types for timer and tracer; internal layouts may be shared.
-- Do not store long names in opaque storage.
-- Copy names into internal TLS arena or consume them immediately.
-- If 64 bytes is insufficient later, add a v2 type/API.
-
-Possible internal interpretation:
-
-```cpp
-struct ScopeState {
-    uint32_t magic;
-    uint16_t abi;
-    uint8_t  kind;
-    uint8_t  flags;
-    int32_t  nodeIdx;
-    int32_t  subNodeIdx;
-    uint32_t depth;
-    uint32_t reserved0;
-    int64_t  beginNs;
-    int64_t  subBeginNs;
-    uint64_t ctxCookie;
-    uint64_t reserved1;
-    uint64_t reserved2;
+    PerfScope mScope;
 };
 ```
+
+Opaque 规则：
+
+- 已发布 `opaque` 大小不可改变。
+- timer/tracer 可以使用同一套 opaque struct。
+- 不把长字符串塞进 opaque。
+- 名字在 begin 时复制到内部 TLS/arena 或立即消费。
+- 64B 不够时新增 v2 type/API。
 
 ## 10. Abstract Interface + Factory
 
-Use only for L1 controlled C++ ABI or internal extension points.
+只适合 L1 或内部扩展点：
 
 ```cpp
 class IComputeBackend {
@@ -403,101 +283,92 @@ public:
     virtual ~IComputeBackend() {}
     virtual bool init() noexcept = 0;
     virtual void submit(const void* src, void* dst, size_t len) noexcept = 0;
-    virtual void sync() noexcept = 0;
 };
 ```
 
-Rules:
+规则：
 
-- Avoid virtual dispatch in tiny hot paths.
-- Do not promise cross-compiler ABI stability with C++ virtual interfaces.
-- If L2 stability is required, expose C handles instead:
+- 不把 C++ virtual interface 承诺为跨编译器 ABI。
+- 小粒度热路径避免虚调用。
+- L2 改用 C handle：
 
 ```c
 typedef struct mylib_compute_backend mylib_compute_backend;
-
 MYLIB_API mylib_compute_backend* mylib_compute_create_opencl(void);
 MYLIB_API void mylib_compute_destroy(mylib_compute_backend*);
-MYLIB_API int mylib_compute_submit(mylib_compute_backend*, const void* src, void* dst, size_t len);
 ```
 
-Heap allocation is acceptable here when the backend object is long-lived and not created per hot call.
+长生命周期 backend 在 create/destroy 中动态分配可以接受；每次 hot call 创建则不可以。
 
-## 11. ABI Evolution Rules
+## 11. ABI 演进规则
 
-| Change | Safe? | Note |
+| 变更 | 是否安全 | 说明 |
 |---|---|---|
-| Add new C function | Yes | Additive |
-| Add non-virtual C++ member without layout change | Usually | Same toolchain only |
-| Add virtual function | No | Changes vtable |
-| Change parameter type/order | No | Breaks callers |
-| Remove or rename exported symbol | No | Breaks link/load |
-| Change public struct size | No | Callers may stack-allocate |
-| Add data member to public class | No | Changes layout |
-| Add member to Pimpl `Impl` | Yes | Hidden from header |
-| Add `_v2` API | Yes | Preferred breaking-change path |
+| 新增 C 函数 | 安全 | additive |
+| 新增非虚 C++ 成员且不改布局 | 通常安全 | 同 toolchain |
+| 新增 virtual 函数 | 不安全 | 改 vtable |
+| 修改参数类型/顺序 | 不安全 | 破坏调用方 |
+| 删除/重命名导出符号 | 不安全 | 破坏链接/加载 |
+| 修改 public struct 大小 | 不安全 | 调用方可能栈分配 |
+| public class 新增成员 | 不安全 | 改布局 |
+| Pimpl Impl 新增成员 | 安全 | header 不可见 |
+| 新增 `_v2` API | 安全 | 推荐破坏性演进方式 |
 
-## 12. Multi-DSO Rules
+## 12. Multi-DSO 规则
 
-When multiple shared libraries call the same base library:
+- 全局可变状态放在基础库 `.so` 内。
+- inline wrapper 不持有 mutable static state。
+- 文档说明配置是 process-wide 还是 context-specific。
+- per-module 隔离使用显式 context handle。
+- 避免跨 DSO 传递 STL/heap 所有权。
+- 必要时提供 producer-owned `destroy/free` API。
 
-- Keep global mutable state inside the base library shared object.
-- Avoid mutable static state in inline wrappers.
-- Document whether config is process-wide or context-specific.
-- Use explicit context handles for per-module isolation.
-- Avoid cross-DSO ownership transfer of STL objects or raw allocated memory.
-- Provide `destroy/free` APIs when memory must be returned by the producer library.
-- Keep Android STL/runtime linkage strategy consistent across all DSOs.
+## 13. 热路径规则
 
-## 13. Hot-Path Rules
+- disabled/filter gate 尽早判断。
+- 避免 heap allocation。
+- 避免无界锁。
+- 避免虚调用和 `std::function`。
+- 使用 TLS、fixed arena、ring buffer。
+- 析构函数 `noexcept`。
+- 正确处理未闭合的 sub/span。
+- 测试嵌套、异常、disabled path、多线程。
 
-- Check disabled/filter gates as early as possible.
-- Avoid heap allocation.
-- Avoid unbounded locks.
-- Avoid virtual dispatch.
-- Avoid `std::function`.
-- Use TLS, fixed arenas, or ring buffers.
-- Make destructors `noexcept`.
-- Handle unbalanced begin/end or open sub-scope cleanup safely.
-- Test nested scopes, exceptions, disabled path, and multi-thread behavior.
+## 14. 测试清单
 
-## 14. Testing Checklist
+- public C++ header 用 `-std=c++11` 编译。
+- C ABI header 可由 C99 编译器包含。
+- 检查导出符号列表。
+- old client + new library smoke test。
+- 多调用方 DSO 同时加载。
+- NDK/toolchain matrix。
+- ASAN/TSAN。
+- disabled hot-path overhead。
+- copy/move 语义。
 
-- Public C++ headers compile with `-std=c++11`.
-- C ABI headers compile as C99.
-- Exported symbol list is inspected with `nm`, `readelf`, or `dumpbin`.
-- No unintended public symbols are exported.
-- Old client + new library smoke test passes.
-- Multiple caller DSOs can load and call the same base library.
-- NDK/toolchain matrix is tested when relevant.
-- ASAN/TSAN pass for stateful or concurrent modules.
-- Hot-path disabled overhead is measured.
-- Move/copy semantics are covered.
+## 15. 反模式
 
-## 15. Anti-Patterns
-
-| Anti-pattern | Problem | Alternative |
+| 反模式 | 问题 | 替代 |
 |---|---|---|
-| Public class exposes STL data members | Layout/STL ABI risk | Pimpl |
-| Per-scope hot path uses heap handle | Allocation in hot path | Stack opaque storage |
-| C ABI uses C++ types | Not a C ABI | Plain C types |
-| Exceptions cross ABI boundary | Undefined or fragile behavior | Catch and return status |
-| Caller deletes producer-owned object | Allocator/runtime risk | Producer-provided destroy API |
-| Virtual interface promised as cross-compiler ABI | Vtable ABI risk | C handle/function table |
-| Macro uniqueness uses only `__LINE__` | Same-line collisions | Prefer `__COUNTER__` |
-| Published struct size changes | Stack-allocation ABI break | Add v2 API/type |
-| Inline wrapper owns mutable static state | State duplication across DSOs | Store state in library `.so` |
+| public class 暴露 STL 成员 | layout/STL ABI 风险 | Pimpl |
+| 热路径 scope 用 heap handle | 分配进入热路径 | Stack opaque |
+| C ABI 使用 C++ 类型 | 不是 C ABI | 纯 C 类型 |
+| 异常跨 ABI 边界 | 脆弱/未定义 | catch 后返回状态 |
+| 调用方 delete 生产方对象 | allocator/runtime 风险 | producer destroy API |
+| virtual interface 承诺跨编译器 ABI | vtable ABI 风险 | C handle/function table |
+| macro 只用 `__LINE__` 唯一化 | 同行冲突 | 优先 `__COUNTER__` |
+| 已发布 struct 改大小 | ABI break | 新增 v2 |
 
-## 16. Practical Recommendation
+## 16. 实用结论
 
-For a base C++ component library shipped as a shared library:
+基础组件库以 `.so` 发布时：
 
-1. Use Pimpl for ordinary stateful modules.
-2. Use C ABI hourglass for long-term stable SDK boundaries.
-3. Use stack opaque storage for hot-path scope objects.
-4. Use C++ virtual interfaces only inside controlled toolchain boundaries.
-5. Allow `std` in public C++ APIs for ergonomics, but do not expose `std`-based object layout or ownership as a long-term ABI contract.
+1. 普通有状态模块用 Pimpl。
+2. 长期稳定边界用 C ABI hourglass。
+3. 热路径 scope 用 stack opaque storage。
+4. 多后端内部扩展可以用虚接口；对外长期 ABI 改 C handle。
+5. 可以用 `std` 提升 C++ API 易用性，但不要把 `std` 成员布局和跨 DSO 所有权变成长期 ABI 承诺。
 
-Core rule:
+核心原则：
 
-> Use C++11 wrappers for ergonomics, C ABI for durable binary contracts, and stack opaque storage for hot paths.
+> C++11 wrapper 负责易用性，C ABI/opaque 负责稳定性，热路径避免每次调用分配。

@@ -1,6 +1,7 @@
 #if ENABLE_TEST_XTIMER
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <stdexcept>
@@ -83,6 +84,9 @@ protected:
 TEST_F(XTimerTest, ConfigAccessors)
 {
     auto& cfg = au::perf::Config::get();
+
+    EXPECT_EQ(sizeof(au::perf::PerfScope), 64u);
+    EXPECT_EQ(alignof(au::perf::PerfScope), alignof(uint64_t));
 
     cfg.setEnabled(false);
     EXPECT_FALSE(cfg.isEnabled());

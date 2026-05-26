@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <ctime>
+#include <cstring>
 #include <mutex>
+#include <new>
 #include <thread>
 #include <vector>
 
@@ -18,6 +21,67 @@ namespace perf {
 // ===========================================================================
 
 namespace {
+
+using Clock     = std::chrono::steady_clock;
+using TimePoint = Clock::time_point;
+
+constexpr uint32_t kScopeMagic = 0x41555046u;  // AUPF
+constexpr uint16_t kScopeAbi   = 1;
+constexpr uint8_t  kKindTimer  = 1;
+
+constexpr uint8_t kFlagActive       = 1u << 0;
+constexpr uint8_t kFlagDebug        = 1u << 1;
+constexpr uint8_t kFlagRoot         = 1u << 2;
+constexpr uint8_t kFlagRelease      = 1u << 3;
+constexpr uint8_t kFlagReleaseDepth = 1u << 4;
+
+struct ScopeState
+{
+    uint32_t magic{kScopeMagic};
+    uint16_t abi{kScopeAbi};
+    uint8_t  kind{kKindTimer};
+    uint8_t  flags{0};
+
+    int32_t  nodeIdx{-1};
+    int32_t  subNodeIdx{-1};
+    int32_t  releaseIdx{-1};
+    uint32_t depth{0};
+
+    TimePoint begin{};
+    TimePoint subBegin{};
+
+    uint64_t reserved0{0};
+    uint64_t reserved1{0};
+};
+
+static_assert(sizeof(ScopeState) <= sizeof(PerfScope), "PerfScope is too small for timer state");
+static_assert(alignof(ScopeState) <= alignof(PerfScope), "PerfScope alignment is too small");
+
+ScopeState& scopeState(PerfScope* scope) noexcept
+{
+    return *reinterpret_cast<ScopeState*>(scope->opaque);
+}
+
+ScopeState& initScopeState(PerfScope* scope) noexcept
+{
+    return *new (scope->opaque) ScopeState();
+}
+
+bool isTimerScope(const PerfScope* scope) noexcept
+{
+    if (scope == nullptr) {
+        return false;
+    }
+    const ScopeState& st = *reinterpret_cast<const ScopeState*>(scope->opaque);
+    return st.magic == kScopeMagic && st.abi == kScopeAbi && st.kind == kKindTimer;
+}
+
+void resetScope(PerfScope* scope) noexcept
+{
+    if (scope != nullptr) {
+        scopeState(scope) = ScopeState{};
+    }
+}
 
 // ---------------------------------------------------------------------------
 //  Data structures
@@ -41,9 +105,20 @@ struct NodePerf
 
 struct CtxThread
 {
+    struct ReleaseSlot
+    {
+        std::string name;
+        std::string subName;
+        TimePoint   begin{};
+        TimePoint   subBegin{};
+        bool        active{false};
+    };
+
     std::vector<NodePerf> pool;
     std::vector<char>     nameArena;
     std::vector<int32_t>  openStack;
+    std::vector<ReleaseSlot> releaseSlots;
+    std::vector<int32_t>     freeReleaseSlots;
 
     uint64_t tid{0};
     bool     inited{false};
@@ -60,6 +135,8 @@ struct CtxThread
             ctx.pool.reserve(128);
             ctx.nameArena.reserve(2048);
             ctx.openStack.reserve(16);
+            ctx.releaseSlots.reserve(16);
+            ctx.freeReleaseSlots.reserve(16);
         }
         return ctx;
     }
@@ -88,9 +165,75 @@ struct TreesSnap
     }
 };
 
+struct ConfigState
+{
+    std::atomic<bool>    enabled{true};
+    std::atomic<bool>    debugMode{false};
+    std::atomic<int32_t> timerLevel{3};
+    std::atomic<int32_t> tracerLevel{LEVEL_ALL};
+    std::atomic<bool>    aggregate{false};
+
+    mutable std::mutex rootNameMutex;
+    std::string        rootName{"perf"};
+};
+
+ConfigState& configState() noexcept
+{
+    static ConfigState state;
+    return state;
+}
+
 // ---------------------------------------------------------------------------
 //  Functions
 // ---------------------------------------------------------------------------
+
+int32_t allocReleaseSlot(CtxThread& ctx, const std::string& name, TimePoint begin) noexcept
+{
+    try {
+        int32_t idx = -1;
+        if (!ctx.freeReleaseSlots.empty()) {
+            idx = ctx.freeReleaseSlots.back();
+            ctx.freeReleaseSlots.pop_back();
+        } else {
+            idx = static_cast<int32_t>(ctx.releaseSlots.size());
+            ctx.releaseSlots.emplace_back();
+        }
+
+        CtxThread::ReleaseSlot& slot = ctx.releaseSlots[static_cast<std::size_t>(idx)];
+        slot.name                    = name;
+        slot.subName.clear();
+        slot.begin    = begin;
+        slot.subBegin = begin;
+        slot.active   = true;
+        return idx;
+    } catch (...) {
+        return -1;
+    }
+}
+
+CtxThread::ReleaseSlot* releaseSlot(CtxThread& ctx, int32_t idx) noexcept
+{
+    if (idx < 0 || idx >= static_cast<int32_t>(ctx.releaseSlots.size())) {
+        return nullptr;
+    }
+    CtxThread::ReleaseSlot& slot = ctx.releaseSlots[static_cast<std::size_t>(idx)];
+    return slot.active ? &slot : nullptr;
+}
+
+void freeReleaseSlot(CtxThread& ctx, int32_t idx) noexcept
+{
+    if (idx < 0 || idx >= static_cast<int32_t>(ctx.releaseSlots.size())) {
+        return;
+    }
+    try {
+        CtxThread::ReleaseSlot& slot = ctx.releaseSlots[static_cast<std::size_t>(idx)];
+        slot.name.clear();
+        slot.subName.clear();
+        slot.active = false;
+        ctx.freeReleaseSlots.push_back(idx);
+    } catch (...) {
+    }
+}
 
 int32_t emplaceNode(CtxThread& ctx, int32_t parent, const std::string& name, uint32_t depth,
                     std::chrono::steady_clock::time_point beginTp) noexcept
@@ -177,42 +320,48 @@ void printTree(const TreeSnapThread& t) noexcept
 }  // anonymous namespace
 
 // ===========================================================================
-//  Config — Meyers singleton
+//  Global configuration free functions
 // ===========================================================================
 
-void Config::setEnabled(bool on) noexcept { mEnabled.store(on, std::memory_order_relaxed); }
+void setEnabled(bool on) noexcept { configState().enabled.store(on, std::memory_order_relaxed); }
 
-bool Config::isEnabled() const noexcept { return mEnabled.load(std::memory_order_relaxed); }
+bool isEnabled() noexcept { return configState().enabled.load(std::memory_order_relaxed); }
 
-void Config::setDebugMode(bool on) noexcept { mDebugMode.store(on, std::memory_order_relaxed); }
+void setDebugMode(bool on) noexcept { configState().debugMode.store(on, std::memory_order_relaxed); }
 
-bool Config::isDebugMode() const noexcept { return mDebugMode.load(std::memory_order_relaxed); }
+bool isDebugMode() noexcept { return configState().debugMode.load(std::memory_order_relaxed); }
 
-void Config::setTimerLevel(int32_t threshold) noexcept { mTimerLevel.store(threshold, std::memory_order_relaxed); }
-
-int32_t Config::getTimerLevel() const noexcept { return mTimerLevel.load(std::memory_order_relaxed); }
-
-void Config::setTracerLevel(int32_t threshold) noexcept { mTracerLevel.store(threshold, std::memory_order_relaxed); }
-
-int32_t Config::getTracerLevel() const noexcept { return mTracerLevel.load(std::memory_order_relaxed); }
-
-void Config::setRootName(const std::string& name) noexcept
+void setTimerLevel(int32_t threshold) noexcept
 {
-    std::lock_guard<std::mutex> lk(mRootNameMutex);
-    mRootName = name;
+    configState().timerLevel.store(threshold, std::memory_order_relaxed);
 }
 
-std::string Config::getRootName() const noexcept
+int32_t getTimerLevel() noexcept { return configState().timerLevel.load(std::memory_order_relaxed); }
+
+void setTracerLevel(int32_t threshold) noexcept
 {
-    std::lock_guard<std::mutex> lk(mRootNameMutex);
-    return mRootName;
+    configState().tracerLevel.store(threshold, std::memory_order_relaxed);
 }
 
-void Config::setAggregateMode(bool on) noexcept { mAggregate.store(on, std::memory_order_relaxed); }
+int32_t getTracerLevel() noexcept { return configState().tracerLevel.load(std::memory_order_relaxed); }
 
-bool Config::isAggregateMode() const noexcept { return mAggregate.load(std::memory_order_relaxed); }
+void setRootName(const std::string& name) noexcept
+{
+    std::lock_guard<std::mutex> lk(configState().rootNameMutex);
+    configState().rootName = name;
+}
 
-void Config::flushAggregated() noexcept
+std::string getRootName() noexcept
+{
+    std::lock_guard<std::mutex> lk(configState().rootNameMutex);
+    return configState().rootName;
+}
+
+void setAggregateMode(bool on) noexcept { configState().aggregate.store(on, std::memory_order_relaxed); }
+
+bool isAggregateMode() noexcept { return configState().aggregate.load(std::memory_order_relaxed); }
+
+void flushAggregated() noexcept
 {
     std::vector<TreeSnapThread> local;
     try {
@@ -235,10 +384,10 @@ void Config::flushAggregated() noexcept
 }
 
 // ===========================================================================
-//  XTimer — bare stopwatch + static helpers
+//  Stopwatch free functions
 // ===========================================================================
 
-void XTimer::sleepFor(int64_t ms) noexcept
+void sleepFor(int64_t ms) noexcept
 {
     if (ms <= 0) {
         return;
@@ -246,7 +395,7 @@ void XTimer::sleepFor(int64_t ms) noexcept
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
 
-std::string XTimer::getTimeFormatted(const std::string& fmt) noexcept
+std::string getTimeFormatted(const std::string& fmt) noexcept
 {
     using namespace std::chrono;
     const auto  now = system_clock::now();
@@ -279,113 +428,234 @@ std::string XTimer::getTimeFormatted(const std::string& fmt) noexcept
     return out;
 }
 
-float XTimer::elapsedMs() const noexcept
+uint64_t timerNowNs() noexcept
 {
-    return std::chrono::duration<float, std::milli>(Clock::now() - mBegin).count();
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     Clock::now().time_since_epoch())
+                                     .count());
+}
+
+float timerElapsedMs(uint64_t beginNs) noexcept
+{
+    const uint64_t nowNs = timerNowNs();
+    return static_cast<float>(static_cast<double>(nowNs - beginNs) / 1000000.0);
 }
 
 // ===========================================================================
-//  XTimerScoped
+//  Timer scope free functions
 // ===========================================================================
 
-XTimerScoped::XTimerScoped(const std::string& name) noexcept
-    : mNodeIdx(-1),
-      mSubNodeIdx(-1),
-      mDepth(0),
-      mIsRoot(false),
-      mBegin(std::chrono::steady_clock::now()),
-      mSubBegin(mBegin),
-      mName(name)
+TimePoint closeOpenSub(ScopeState& st) noexcept
 {
-    if (!Config::get().isEnabled())
-        return;
+    const auto now = Clock::now();
 
-    if (CtxThread::get().inFlush)
-        return;
+    if ((st.flags & kFlagRelease) != 0u) {
+        CtxThread::ReleaseSlot* slot = releaseSlot(CtxThread::get(), st.releaseIdx);
+        if (slot != nullptr && !slot->subName.empty()) {
+            const float ms = std::chrono::duration<float, std::milli>(now - slot->subBegin).count();
+            XLOG_I("[perf] %s: %.3f ms\n", slot->subName.c_str(), ms);
+            slot->subName.clear();
+        }
+        return now;
+    }
 
-    const bool     debugMode = Config::get().isDebugMode();
-    const uint32_t depth =
-        debugMode ? static_cast<uint32_t>(CtxThread::get().openStack.size()) : CtxThread::get().releaseDepth;
-    const int32_t threshold = Config::get().getTimerLevel();
+    if (st.subNodeIdx < 0 || CtxThread::get().inFlush) {
+        return now;
+    }
 
-    if (depth >= Config::HARD_MAX_DEPTH || threshold == Config::LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
+    if (st.subNodeIdx < static_cast<int32_t>(CtxThread::get().pool.size())) {
+        NodePerf& prev = CtxThread::get().pool[static_cast<std::size_t>(st.subNodeIdx)];
+        if (prev.durationMs < 0.0f) {
+            prev.durationMs = std::chrono::duration<float, std::milli>(now - prev.begin).count();
+        }
+    }
+    if (!CtxThread::get().openStack.empty() && CtxThread::get().openStack.back() == st.subNodeIdx) {
+        CtxThread::get().openStack.pop_back();
+    }
+    st.subNodeIdx = -1;
+    return now;
+}
+
+void timerBegin(PerfScope* scope, const std::string& name) noexcept
+{
+    if (scope == nullptr) {
         return;
     }
 
-    // All active paths need depth; assign once after all guards pass.
-    mDepth = depth;
+    ScopeState& st = initScopeState(scope);
+    st.begin       = Clock::now();
+    st.subBegin    = st.begin;
+
+    if (!isEnabled() || CtxThread::get().inFlush) {
+        return;
+    }
+
+    const bool     debugMode = isDebugMode();
+    const uint32_t depth =
+        debugMode ? static_cast<uint32_t>(CtxThread::get().openStack.size()) : CtxThread::get().releaseDepth;
+    const int32_t threshold = getTimerLevel();
+
+    if (depth >= HARD_MAX_DEPTH || threshold == LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
+        return;
+    }
+
+    st.flags = kFlagActive;
+    st.depth = depth;
 
     if (!debugMode) {
-        mNodeIdx = -2;
+        st.releaseIdx = allocReleaseSlot(CtxThread::get(), name, st.begin);
+        if (st.releaseIdx < 0) {
+            st.flags = 0;
+            return;
+        }
+        st.flags |= kFlagRelease | kFlagReleaseDepth;
         ++CtxThread::get().releaseDepth;
         return;
     }
 
-    // -- Debug path --
     const int32_t parent = CtxThread::get().openStack.empty() ? -1 : CtxThread::get().openStack.back();
-    const int32_t idx    = emplaceNode(CtxThread::get(), parent, mName, depth, mBegin);
+    const int32_t idx    = emplaceNode(CtxThread::get(), parent, name, depth, st.begin);
     if (idx < 0) {
-        mNodeIdx = -2;
+        st.releaseIdx = allocReleaseSlot(CtxThread::get(), name, st.begin);
+        st.flags      = (st.releaseIdx >= 0) ? static_cast<uint8_t>(kFlagActive | kFlagRelease) : 0;
         return;
     }
 
     try {
         CtxThread::get().openStack.push_back(idx);
     } catch (...) {
-        mNodeIdx = -2;
+        st.releaseIdx = allocReleaseSlot(CtxThread::get(), name, st.begin);
+        st.flags      = (st.releaseIdx >= 0) ? static_cast<uint8_t>(kFlagActive | kFlagRelease) : 0;
         return;
     }
-    mNodeIdx = idx;
-    mIsRoot  = (depth == 0);
+
+    st.nodeIdx = idx;
+    st.flags |= kFlagDebug;
+    if (depth == 0u) {
+        st.flags |= kFlagRoot;
+    }
 }
 
-XTimerScoped::~XTimerScoped() noexcept
+void timerSubBegin(PerfScope* scope, const std::string& name) noexcept
 {
-    if (mNodeIdx == -1) {
+    if (!isTimerScope(scope)) {
         return;
     }
 
-    const auto  now = closeOpenSub();
-    const float msF = std::chrono::duration<float, std::milli>(now - mBegin).count();
+    ScopeState& st = scopeState(scope);
+    if ((st.flags & kFlagActive) == 0u) {
+        return;
+    }
 
-    // -- Release / degraded path: one-liner --
-    if (mNodeIdx == -2) {
-        XLOG_I("[perf] %s: %.3f ms\n", mName.c_str(), msF);
-        if (CtxThread::get().releaseDepth > 0u) {
-            --CtxThread::get().releaseDepth;
+    const auto now = closeOpenSub(st);
+
+    if ((st.flags & kFlagRelease) != 0u) {
+        CtxThread::ReleaseSlot* slot = releaseSlot(CtxThread::get(), st.releaseIdx);
+        if (slot == nullptr) {
+            return;
+        }
+        try {
+            slot->subName  = name;
+            slot->subBegin = now;
+        } catch (...) {
+            slot->subName.clear();
         }
         return;
     }
 
-    // -- Debug path --
     if (CtxThread::get().inFlush) {
         return;
     }
 
-    if (mNodeIdx >= 0 && mNodeIdx < static_cast<int32_t>(CtxThread::get().pool.size())) {
-        CtxThread::get().pool[static_cast<std::size_t>(mNodeIdx)].durationMs = msF;
+    const uint32_t depth = st.depth + 1u;
+    if (depth >= HARD_MAX_DEPTH) {
+        return;
     }
-    if (!CtxThread::get().openStack.empty() && CtxThread::get().openStack.back() == mNodeIdx) {
-        CtxThread::get().openStack.pop_back();
-    }
-
-    if (!mIsRoot || !CtxThread::get().openStack.empty()) {
+    const int32_t threshold = getTimerLevel();
+    if (threshold == LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
         return;
     }
 
-    // -- Outermost scope: flush this thread's tree --
+    const int32_t idx = emplaceNode(CtxThread::get(), st.nodeIdx, name, depth, now);
+    if (idx < 0) {
+        return;
+    }
+    try {
+        CtxThread::get().openStack.push_back(idx);
+    } catch (...) {
+        return;
+    }
+    st.subNodeIdx = idx;
+}
+
+void timerSubEnd(PerfScope* scope) noexcept
+{
+    if (!isTimerScope(scope)) {
+        return;
+    }
+    ScopeState& st = scopeState(scope);
+    if ((st.flags & kFlagActive) == 0u) {
+        return;
+    }
+    (void)closeOpenSub(st);
+}
+
+void timerEnd(PerfScope* scope) noexcept
+{
+    if (!isTimerScope(scope)) {
+        return;
+    }
+
+    ScopeState& st = scopeState(scope);
+    if ((st.flags & kFlagActive) == 0u) {
+        resetScope(scope);
+        return;
+    }
+
+    const auto  now = closeOpenSub(st);
+    const float msF = std::chrono::duration<float, std::milli>(now - st.begin).count();
+
+    if ((st.flags & kFlagRelease) != 0u) {
+        CtxThread::ReleaseSlot* slot = releaseSlot(CtxThread::get(), st.releaseIdx);
+        if (slot != nullptr) {
+            XLOG_I("[perf] %s: %.3f ms\n", slot->name.c_str(), msF);
+            freeReleaseSlot(CtxThread::get(), st.releaseIdx);
+        }
+        if ((st.flags & kFlagReleaseDepth) != 0u && CtxThread::get().releaseDepth > 0u) {
+            --CtxThread::get().releaseDepth;
+        }
+        resetScope(scope);
+        return;
+    }
+
+    if (CtxThread::get().inFlush) {
+        resetScope(scope);
+        return;
+    }
+
+    if (st.nodeIdx >= 0 && st.nodeIdx < static_cast<int32_t>(CtxThread::get().pool.size())) {
+        CtxThread::get().pool[static_cast<std::size_t>(st.nodeIdx)].durationMs = msF;
+    }
+    if (!CtxThread::get().openStack.empty() && CtxThread::get().openStack.back() == st.nodeIdx) {
+        CtxThread::get().openStack.pop_back();
+    }
+
+    if ((st.flags & kFlagRoot) == 0u || !CtxThread::get().openStack.empty()) {
+        resetScope(scope);
+        return;
+    }
+
     CtxThread::get().inFlush = true;
 
     try {
-        // Build a snapshot by moving TLS data — O(1), no copies.
         TreeSnapThread snap;
         snap.pool      = std::move(CtxThread::get().pool);
         snap.nameArena = std::move(CtxThread::get().nameArena);
         snap.roots     = collectRoots(snap.pool);
         snap.tid       = CtxThread::get().tid;
-        snap.rootName  = Config::get().getRootName();
+        snap.rootName  = getRootName();
 
-        if (Config::get().isAggregateMode()) {
+        if (isAggregateMode()) {
             TreesSnap&                  agg = TreesSnap::get();
             std::lock_guard<std::mutex> lk(agg.mMutex);
             agg.mTrees.emplace_back(std::move(snap));
@@ -399,92 +669,7 @@ XTimerScoped::~XTimerScoped() noexcept
     CtxThread::get().nameArena.clear();
     CtxThread::get().openStack.clear();
     CtxThread::get().inFlush = false;
-}
-
-std::chrono::steady_clock::time_point XTimerScoped::closeOpenSub() noexcept
-{
-    const auto now = std::chrono::steady_clock::now();
-
-    // ── Release path ──
-    if (mNodeIdx == -2) {
-        if (!mSubName.empty()) {
-            const float ms = std::chrono::duration<float, std::milli>(now - mSubBegin).count();
-            XLOG_I("[perf] %s: %.3f ms\n", mSubName.c_str(), ms);
-            mSubName.clear();
-        }
-        return now;
-    }
-
-    // ── Debug path ──
-    if (mSubNodeIdx < 0) {
-        return now;
-    }
-    if (CtxThread::get().inFlush) {
-        return now;
-    }
-
-    if (mSubNodeIdx < static_cast<int32_t>(CtxThread::get().pool.size())) {
-        NodePerf& prev = CtxThread::get().pool[static_cast<std::size_t>(mSubNodeIdx)];
-        // Guard against double-close: only write if still open.
-        if (prev.durationMs < 0.0f) {
-            prev.durationMs = std::chrono::duration<float, std::milli>(now - prev.begin).count();
-        }
-    }
-    if (!CtxThread::get().openStack.empty() && CtxThread::get().openStack.back() == mSubNodeIdx) {
-        CtxThread::get().openStack.pop_back();
-    }
-    mSubNodeIdx = -1;
-    return now;
-}
-
-void XTimerScoped::sub(const std::string& name) noexcept
-{
-    if (mNodeIdx == -1) {
-        return;
-    }
-
-    const auto now = closeOpenSub();
-
-    // ── Release path: arm the new sub-segment ──
-    if (mNodeIdx == -2) {
-        mSubName  = name;
-        mSubBegin = now;
-        return;
-    }
-
-    // ── Debug path: open a new sub-node under the outer scope ──
-    if (CtxThread::get().inFlush) {
-        return;
-    }
-
-    const uint32_t depth = mDepth + 1;
-    if (depth >= Config::HARD_MAX_DEPTH) {
-        return;
-    }
-    const int32_t threshold = Config::get().getTimerLevel();
-    if (threshold == Config::LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
-        return;
-    }
-
-    const int32_t idx = emplaceNode(CtxThread::get(), mNodeIdx, name, depth, now);
-    if (idx < 0) {
-        return;
-    }
-    try {
-        CtxThread::get().openStack.push_back(idx);
-    } catch (...) {
-        return;
-    }
-    mSubNodeIdx = idx;
-}
-
-void XTimerScoped::sub() noexcept
-{
-    if (mNodeIdx == -1) {
-        return;
-    }
-
-    (void)closeOpenSub();
+    resetScope(scope);
 }
 
 }  // namespace perf

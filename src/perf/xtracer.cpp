@@ -1,6 +1,7 @@
 #include "perf/xtracer.h"
 
 #include <cstdio>
+#include <new>
 
 #include "perf/xtimer.h"
 #include "sys/xplatform.h"
@@ -18,6 +19,53 @@ namespace perf {
 // ===========================================================================
 
 namespace {
+
+constexpr uint32_t kScopeMagic = 0x41555046u;  // AUPF
+constexpr uint16_t kScopeAbi   = 1;
+constexpr uint8_t  kKindTrace  = 2;
+
+constexpr uint8_t kFlagActive = 1u << 0;
+constexpr uint8_t kFlagSub    = 1u << 1;
+
+struct ScopeState
+{
+    uint32_t magic{kScopeMagic};
+    uint16_t abi{kScopeAbi};
+    uint8_t  kind{kKindTrace};
+    uint8_t  flags{0};
+    uint32_t depth{0};
+    uint32_t reserved0{0};
+    uint64_t reserved1[6]{};
+};
+
+static_assert(sizeof(ScopeState) <= sizeof(PerfScope), "PerfScope is too small for tracer state");
+static_assert(alignof(ScopeState) <= alignof(PerfScope), "PerfScope alignment is too small");
+
+ScopeState& scopeState(PerfScope* scope) noexcept
+{
+    return *reinterpret_cast<ScopeState*>(scope->opaque);
+}
+
+ScopeState& initScopeState(PerfScope* scope) noexcept
+{
+    return *new (scope->opaque) ScopeState();
+}
+
+bool isTraceScope(const PerfScope* scope) noexcept
+{
+    if (scope == nullptr) {
+        return false;
+    }
+    const ScopeState& st = *reinterpret_cast<const ScopeState*>(scope->opaque);
+    return st.magic == kScopeMagic && st.abi == kScopeAbi && st.kind == kKindTrace;
+}
+
+void resetScope(PerfScope* scope) noexcept
+{
+    if (scope != nullptr) {
+        scopeState(scope) = ScopeState{};
+    }
+}
 
 #if AU_OS_ANDROID
 
@@ -75,59 +123,62 @@ thread_local uint32_t gTracerDepth = 0;
 }  // anonymous namespace
 
 // ===========================================================================
-//  XTracerScoped
+//  Tracer scope free functions
 // ===========================================================================
 
-XTracerScoped::XTracerScoped(const std::string& name) noexcept : mActive(false), mSubOpen(false)
+void traceBegin(PerfScope* scope, const std::string& name) noexcept
 {
-    if (!Config::get().isEnabled()) {
+    if (scope == nullptr) {
         return;
     }
 
-    if (gTracerDepth >= Config::HARD_MAX_DEPTH) {
-        return;
-    }
-    const int32_t threshold = Config::get().getTracerLevel();
-    if (threshold == Config::LEVEL_OFF || static_cast<int32_t>(gTracerDepth) > threshold) {
+    ScopeState& st = initScopeState(scope);
+
+    if (!isEnabled()) {
         return;
     }
 
-    mName   = name;
-    mActive = true;
+    if (gTracerDepth >= HARD_MAX_DEPTH) {
+        return;
+    }
+    const int32_t threshold = getTracerLevel();
+    if (threshold == LEVEL_OFF || static_cast<int32_t>(gTracerDepth) > threshold) {
+        return;
+    }
+
+    st.flags = kFlagActive;
+    st.depth = gTracerDepth;
     ++gTracerDepth;
 
 #if AU_OS_ANDROID
-    writeTraceMarker('B', mName.c_str(), mName.size());
+    writeTraceMarker('B', name.c_str(), name.size());
+#else
+    (void)name;
 #endif
 }
 
-XTracerScoped::~XTracerScoped() noexcept
+void traceSubBegin(PerfScope* scope, const std::string& name) noexcept
 {
-    if (!mActive) {
+    if (!isTraceScope(scope)) {
         return;
     }
 
-    if (mSubOpen) {
-        sub();
-    }
-
-#if AU_OS_ANDROID
-    writeTraceMarker('E', nullptr, 0);
-#endif
-
-    if (gTracerDepth > 0u) {
-        --gTracerDepth;
-    }
-}
-
-void XTracerScoped::sub(const std::string& name) noexcept
-{
-    if (!mActive) {
+    ScopeState& st = scopeState(scope);
+    if ((st.flags & kFlagActive) == 0u) {
         return;
     }
 
-    if (mSubOpen) {
-        sub();
+    if ((st.flags & kFlagSub) != 0u) {
+        traceSubEnd(scope);
+    }
+
+    const uint32_t depth = st.depth + 1u;
+    if (depth >= HARD_MAX_DEPTH) {
+        return;
+    }
+    const int32_t threshold = getTracerLevel();
+    if (threshold == LEVEL_OFF || static_cast<int32_t>(depth) > threshold) {
+        return;
     }
 
     ++gTracerDepth;
@@ -136,12 +187,17 @@ void XTracerScoped::sub(const std::string& name) noexcept
 #else
     (void)name;
 #endif
-    mSubOpen = true;
+    st.flags |= kFlagSub;
 }
 
-void XTracerScoped::sub() noexcept
+void traceSubEnd(PerfScope* scope) noexcept
 {
-    if (!mActive || !mSubOpen) {
+    if (!isTraceScope(scope)) {
+        return;
+    }
+
+    ScopeState& st = scopeState(scope);
+    if ((st.flags & kFlagActive) == 0u || (st.flags & kFlagSub) == 0u) {
         return;
     }
 
@@ -151,7 +207,33 @@ void XTracerScoped::sub() noexcept
     if (gTracerDepth > 0u) {
         --gTracerDepth;
     }
-    mSubOpen = false;
+    st.flags &= static_cast<uint8_t>(~kFlagSub);
+}
+
+void traceEnd(PerfScope* scope) noexcept
+{
+    if (!isTraceScope(scope)) {
+        return;
+    }
+
+    ScopeState& st = scopeState(scope);
+    if ((st.flags & kFlagActive) == 0u) {
+        resetScope(scope);
+        return;
+    }
+
+    if ((st.flags & kFlagSub) != 0u) {
+        traceSubEnd(scope);
+    }
+
+#if AU_OS_ANDROID
+    writeTraceMarker('E', nullptr, 0);
+#endif
+
+    if (gTracerDepth > 0u) {
+        --gTracerDepth;
+    }
+    resetScope(scope);
 }
 
 }  // namespace perf
