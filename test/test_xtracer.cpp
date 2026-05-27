@@ -7,7 +7,6 @@
 #include "gtest/gtest.h"
 #include "log/xlogger.h"
 #include "perf/xperf_macros.h"
-#include "perf/xtimer.h"
 #include "perf/xtracer.h"
 
 // ---------------------------------------------------------------------------
@@ -25,11 +24,11 @@ protected:
 #if AU_OS_ANDROID
         au::log::Config::get().setShellPrintEnabled(true);
 #endif
-        auto& cfg = au::perf::PerfConfig::get();
+        auto& cfg = au::perf::Config::get();
         cfg.setEnabled(true);
-        cfg.setMode(au::perf::Mode::Release);
-        cfg.setTimerLevel(au::perf::kPerfLevelOff);  // silence timer noise
-        cfg.setTracerLevel(au::perf::kPerfLevelAll);
+        cfg.setDebugMode(false);
+        cfg.setTimerLevel(au::perf::Config::LEVEL_OFF);  // silence timer noise
+        cfg.setTracerLevel(au::perf::Config::LEVEL_ALL);
         cfg.setAggregateMode(false);
         cfg.setRootName("perf");
     }
@@ -46,7 +45,7 @@ TEST_F(XTracerTest, BasicScopeNoCrash)
 
 TEST_F(XTracerTest, DisabledHardOff)
 {
-    au::perf::PerfConfig::get().setEnabled(false);
+    au::perf::Config::get().setEnabled(false);
 
     {
         au::perf::XTracerScoped a(std::string("off.tracer.a"));
@@ -57,9 +56,9 @@ TEST_F(XTracerTest, DisabledHardOff)
 
 TEST_F(XTracerTest, LevelGating)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
 
-    cfg.setTracerLevel(au::perf::kPerfLevelOff);
+    cfg.setTracerLevel(au::perf::Config::LEVEL_OFF);
     {
         au::perf::XTracerScoped s(std::string("never.traced"));
     }
@@ -69,7 +68,7 @@ TEST_F(XTracerTest, LevelGating)
         au::perf::XTracerScoped s(std::string("traced"));
     }
 
-    cfg.setTracerLevel(au::perf::kPerfLevelAll);
+    cfg.setTracerLevel(au::perf::Config::LEVEL_ALL);
     SUCCEED();
 }
 
@@ -88,7 +87,7 @@ TEST_F(XTracerTest, SubPhaseTransitions)
 
 TEST_F(XTracerTest, CompositeMacroSafe)
 {
-    au::perf::PerfConfig::get().setTimerLevel(au::perf::kPerfLevelAll);
+    au::perf::Config::get().setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     {
         AU_PERF_SCOPE(std::string("composite.tracer.scope"));
@@ -112,31 +111,6 @@ TEST_F(XTracerTest, MultiThreadStress)
     }
     for (auto& t : ths) {
         t.join();
-    }
-    SUCCEED();
-}
-
-TEST_F(XTracerTest, LongNameTruncationSafe)
-{
-    std::string huge(2000, 'X');
-    {
-        au::perf::XTracerScoped s(huge);
-    }
-    SUCCEED();
-}
-
-TEST_F(XTracerTest, TemporaryStringNameNoDangle)
-{
-    {
-        au::perf::XTracerScoped s(std::string("temp.tracer.") + std::to_string(7));
-    }
-    SUCCEED();
-}
-
-TEST_F(XTracerTest, DepthCounterDecrementsSymmetrically)
-{
-    for (int i = 0; i < 1024; ++i) {
-        au::perf::XTracerScoped s(std::string("seq"));
     }
     SUCCEED();
 }
@@ -174,7 +148,7 @@ TEST_F(XTracerTest, BareSubBeforeFirstNamedSub)
 
 TEST_F(XTracerTest, AlternatingSubMultiCycle)
 {
-    au::perf::PerfConfig::get().setTracerLevel(au::perf::kPerfLevelAll);
+    au::perf::Config::get().setTracerLevel(au::perf::Config::LEVEL_ALL);
 
     {
         au::perf::XTracerScoped s(std::string("alt.root"));

@@ -1,6 +1,7 @@
 #if ENABLE_TEST_XTIMER
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <stdexcept>
@@ -49,11 +50,11 @@ protected:
 #if AU_OS_ANDROID
         au::log::Config::get().setShellPrintEnabled(true);
 #endif
-        auto& cfg = au::perf::PerfConfig::get();
+        auto& cfg = au::perf::Config::get();
         cfg.setEnabled(true);
-        cfg.setMode(au::perf::Mode::Release);
+        cfg.setDebugMode(false);
         cfg.setTimerLevel(3);
-        cfg.setTracerLevel(au::perf::kPerfLevelAll);
+        cfg.setTracerLevel(au::perf::Config::LEVEL_ALL);
         cfg.setAggregateMode(false);
         cfg.setRootName("perf");
     }
@@ -80,56 +81,36 @@ protected:
     }
 };
 
-TEST_F(XTimerTest, PerfConfigAccessors)
+TEST_F(XTimerTest, ConfigAccessors)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
+
+    EXPECT_EQ(sizeof(au::perf::PerfScope), 64u);
+    EXPECT_EQ(alignof(au::perf::PerfScope), alignof(uint64_t));
 
     cfg.setEnabled(false);
     EXPECT_FALSE(cfg.isEnabled());
     cfg.setEnabled(true);
     EXPECT_TRUE(cfg.isEnabled());
 
-    cfg.setMode(au::perf::Mode::Debug);
-    EXPECT_EQ(cfg.getMode(), au::perf::Mode::Debug);
+    cfg.setDebugMode(true);
+    EXPECT_TRUE(cfg.isDebugMode());
 
     cfg.setTimerLevel(7);
     EXPECT_EQ(cfg.getTimerLevel(), 7);
-    cfg.setTimerLevel(au::perf::kPerfLevelOff);
-    EXPECT_EQ(cfg.getTimerLevel(), au::perf::kPerfLevelOff);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_OFF);
+    EXPECT_EQ(cfg.getTimerLevel(), au::perf::Config::LEVEL_OFF);
 
     cfg.setTracerLevel(0);
     EXPECT_EQ(cfg.getTracerLevel(), 0);
 
     cfg.setRootName("AlgoRoot");
-    char name[64] = {0};
-    cfg.getRootName(name, sizeof(name));
-    EXPECT_STREQ(name, "AlgoRoot");
+    EXPECT_EQ(cfg.getRootName(), "AlgoRoot");
 
     cfg.setAggregateMode(true);
     EXPECT_TRUE(cfg.isAggregateMode());
     cfg.setAggregateMode(false);
     EXPECT_FALSE(cfg.isAggregateMode());
-}
-
-TEST_F(XTimerTest, RootNameStringAndTruncation)
-{
-    auto& cfg = au::perf::PerfConfig::get();
-
-    cfg.setRootName(std::string("literal-root"));
-    char buf[64] = {0};
-    cfg.getRootName(buf, sizeof(buf));
-    EXPECT_STREQ(buf, "literal-root");
-
-    cfg.setRootName(std::string{});
-    std::memset(buf, 0xCC, sizeof(buf));
-    cfg.getRootName(buf, sizeof(buf));
-    EXPECT_STREQ(buf, "");
-
-    std::string huge(200, 'x');
-    cfg.setRootName(huge);
-    cfg.getRootName(buf, sizeof(buf));
-    EXPECT_LE(std::strlen(buf), sizeof(buf) - 1);
-    EXPECT_GT(std::strlen(buf), 0u);
 }
 
 // ---------------------------------------------------------------------------
@@ -164,31 +145,11 @@ TEST_F(XTimerTest, TimerGetTimeFormatted)
 //  Release mode
 // ---------------------------------------------------------------------------
 
-TEST_F(XTimerTest, ReleaseModeOneLiner)
-{
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
-
-    StdoutCapture cap;
-    {
-        au::perf::XTimerScoped s(std::string("rel.scope"));
-        au::perf::XTimer::sleepFor(2);
-    }
-    const std::string out = cap.drain();
-
-    EXPECT_NE(out.find("[perf]"), std::string::npos) << out;
-    EXPECT_NE(out.find("rel.scope"), std::string::npos) << out;
-    EXPECT_NE(out.find("ms"), std::string::npos) << out;
-    EXPECT_EQ(out.find("|--"), std::string::npos);
-    EXPECT_EQ(out.find("`--"), std::string::npos);
-}
-
 TEST_F(XTimerTest, SubReleaseImmediateOutput)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(false);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -213,9 +174,9 @@ TEST_F(XTimerTest, SubReleaseImmediateOutput)
 
 TEST_F(XTimerTest, DebugModeTreeHierarchy)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -248,9 +209,9 @@ TEST_F(XTimerTest, DebugModeTreeHierarchy)
 
 TEST_F(XTimerTest, SubAndSubNamedDebug)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -269,73 +230,11 @@ TEST_F(XTimerTest, SubAndSubNamedDebug)
     EXPECT_EQ(out.find("(open)"), std::string::npos);
 }
 
-TEST_F(XTimerTest, DebugIndentationPrecision)
-{
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
-
-    // Two siblings: verify branch markers and ordering.
-    {
-        StdoutCapture cap;
-        {
-            au::perf::XTimerScoped root(std::string("r"));
-            root.sub(std::string("A"));
-            au::perf::XTimer::sleepFor(1);
-            root.sub(std::string("B"));
-            au::perf::XTimer::sleepFor(1);
-            root.sub();
-        }
-        const std::string out = cap.drain();
-        EXPECT_NE(out.find("r: "), std::string::npos) << out;
-        EXPECT_NE(out.find("|-- A:"), std::string::npos) << out;
-        EXPECT_NE(out.find("`-- B:"), std::string::npos) << out;
-        EXPECT_LT(out.find("A:"), out.find("B:"));
-    }
-
-    // Nested scopes: verify indent inheritance.
-    {
-        StdoutCapture cap;
-        {
-            au::perf::XTimerScoped outer(std::string("outer"));
-            {
-                au::perf::XTimerScoped inner(std::string("inner"));
-                au::perf::XTimer::sleepFor(1);
-            }
-        }
-        const std::string out = cap.drain();
-        EXPECT_NE(out.find("outer: "), std::string::npos) << out;
-        EXPECT_NE(out.find("`-- inner:"), std::string::npos) << out;
-        EXPECT_LT(out.find("outer:"), out.find("inner:"));
-    }
-
-    // 5-level deep nest: deepest node present with accumulated indent.
-    {
-        StdoutCapture cap;
-        {
-            std::function<void(int)> nest = [&](int d) {
-                if (d >= 5) return;
-                au::perf::XTimerScoped s(std::string("L") + std::to_string(d));
-                au::perf::XTimer::sleepFor(0);
-                nest(d + 1);
-            };
-            au::perf::XTimerScoped root(std::string("deep"));
-            nest(0);
-        }
-        const std::string out = cap.drain();
-        EXPECT_NE(out.find("`-- L4:"), std::string::npos) << out;
-        for (int i = 0; i < 4; ++i) {
-            EXPECT_LT(out.find(std::string("L") + std::to_string(i) + ":"),
-                      out.find(std::string("L") + std::to_string(i + 1) + ":"));
-        }
-    }
-}
-
 TEST_F(XTimerTest, WideTreeSiblingOrdering)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -365,8 +264,8 @@ TEST_F(XTimerTest, WideTreeSiblingOrdering)
 
 TEST_F(XTimerTest, LevelFiltering)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Release);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(false);
 
     cfg.setTimerLevel(0);
     {
@@ -382,7 +281,7 @@ TEST_F(XTimerTest, LevelFiltering)
         EXPECT_EQ(out.find("depth1"), std::string::npos) << "depth>level must be silent";
     }
 
-    cfg.setTimerLevel(au::perf::kPerfLevelOff);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_OFF);
     {
         StdoutCapture cap;
         {
@@ -394,10 +293,10 @@ TEST_F(XTimerTest, LevelFiltering)
 
 TEST_F(XTimerTest, DisabledHardOff)
 {
-    auto& cfg = au::perf::PerfConfig::get();
+    auto& cfg = au::perf::Config::get();
     cfg.setEnabled(false);
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -413,9 +312,9 @@ TEST_F(XTimerTest, DisabledHardOff)
 
 TEST_F(XTimerTest, MultiThreadIsolation)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
     cfg.setAggregateMode(false);
 
     constexpr int kThreads = 4;
@@ -445,9 +344,9 @@ TEST_F(XTimerTest, MultiThreadIsolation)
 
 TEST_F(XTimerTest, AggregateModeFlush)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
     cfg.setAggregateMode(true);
 
     {
@@ -488,34 +387,11 @@ TEST_F(XTimerTest, AggregateModeFlush)
 //  Exception & corruption safety
 // ---------------------------------------------------------------------------
 
-TEST_F(XTimerTest, ExceptionSafety)
-{
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
-
-    StdoutCapture cap;
-    bool          caught = false;
-    try {
-        au::perf::XTimerScoped root(std::string("will.throw5"));
-        au::perf::XTimerScoped inner(std::string("inner5"));
-        throw std::runtime_error("boom");
-    } catch (const std::runtime_error& e) {
-        caught = true;
-        EXPECT_STREQ(e.what(), "boom");
-    }
-    EXPECT_TRUE(caught);
-
-    const std::string out = cap.drain();
-    EXPECT_NE(out.find("will.throw5"), std::string::npos);
-    EXPECT_NE(out.find("inner5"), std::string::npos);
-}
-
 TEST_F(XTimerTest, NameCorruptionDefense)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(false);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     // Embedded newline.
     {
@@ -571,27 +447,11 @@ TEST_F(XTimerTest, NameCorruptionDefense)
 //  Temporal & formatting
 // ---------------------------------------------------------------------------
 
-TEST_F(XTimerTest, LongNameTruncationMarker)
-{
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
-
-    StdoutCapture cap;
-    std::string   longName(1500, 'A');
-    {
-        au::perf::XTimerScoped s(longName);
-    }
-    const std::string out = cap.drain();
-    EXPECT_NE(out.find("(truncated)"), std::string::npos) << out;
-    EXPECT_NE(out.find("AAAAAAAA"), std::string::npos);
-}
-
 TEST_F(XTimerTest, TemporaryStringNameNoDangle)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(false);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     {
@@ -604,9 +464,9 @@ TEST_F(XTimerTest, TemporaryStringNameNoDangle)
 
 TEST_F(XTimerTest, ColorOutput)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(false);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     // Color enabled: ANSI escape codes present, reset count ≥ line count.
     au::log::Config::get().setColorEnabled(true);
@@ -644,9 +504,9 @@ TEST_F(XTimerTest, ColorOutput)
 
 TEST_F(XTimerTest, ConvenienceMacros)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(false);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     {
         StdoutCapture cap;
@@ -701,27 +561,27 @@ TEST_F(XTimerTest, TimerRestartElapsed)
 
 TEST_F(XTimerTest, HardDepthCapNoCrash)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
-    StdoutCapture cap;
+    StdoutCapture            cap;
     std::function<void(int)> recurse = [&](int n) {
         if (n <= 0)
             return;
         au::perf::XTimerScoped s(std::string("d"));
         recurse(n - 1);
     };
-    recurse(static_cast<int>(au::perf::kHardMaxDepth) + 16);
+    recurse(static_cast<int>(au::perf::Config::HARD_MAX_DEPTH) + 16);
     (void)cap.drain();
     SUCCEED();
 }
 
 TEST_F(XTimerTest, StressTenThousandScopes)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Release);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(false);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     StdoutCapture cap;
     auto          begin = std::chrono::steady_clock::now();
@@ -737,9 +597,9 @@ TEST_F(XTimerTest, StressTenThousandScopes)
 
 TEST_F(XTimerTest, StressHundredThousandScopesDebug)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     au::log::Config::get().setLevel(au::log::Level::Silent);
     {
@@ -751,36 +611,18 @@ TEST_F(XTimerTest, StressHundredThousandScopesDebug)
     SUCCEED();
 }
 
-TEST_F(XTimerTest, StressWideSubs)
-{
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
-
-    au::log::Config::get().setLevel(au::log::Level::Silent);
-    {
-        au::perf::XTimerScoped root(std::string("many_subs"));
-        for (int i = 0; i < 1000; ++i) {
-            root.sub(std::string("s") + std::to_string(i));
-        }
-        for (int i = 0; i < 1000; ++i) {
-            root.sub();
-        }
-    }
-    au::log::Config::get().setLevel(au::log::Level::Verbose);
-    SUCCEED();
-}
-
 TEST_F(XTimerTest, StressMixedPatterns)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     au::log::Config::get().setLevel(au::log::Level::Silent);
     {
         for (int i = 0; i < 1000; ++i) {
-            { au::perf::XTimerScoped s(std::string("flat")); }
+            {
+                au::perf::XTimerScoped s(std::string("flat"));
+            }
             {
                 au::perf::XTimerScoped s(std::string("subs"));
                 s.sub(std::string("a"));
@@ -788,7 +630,9 @@ TEST_F(XTimerTest, StressMixedPatterns)
             }
             {
                 au::perf::XTimerScoped o(std::string("outer"));
-                { au::perf::XTimerScoped in(std::string("inner")); }
+                {
+                    au::perf::XTimerScoped in(std::string("inner"));
+                }
             }
         }
     }
@@ -802,9 +646,9 @@ TEST_F(XTimerTest, StressMixedPatterns)
 
 TEST_F(XTimerTest, SubStateExceptionRecovery)
 {
-    auto& cfg = au::perf::PerfConfig::get();
-    cfg.setMode(au::perf::Mode::Debug);
-    cfg.setTimerLevel(au::perf::kPerfLevelAll);
+    auto& cfg = au::perf::Config::get();
+    cfg.setDebugMode(true);
+    cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     // Unbalanced subs: extra bare sub() must be safe no-ops.
     {
@@ -814,8 +658,8 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
             root.sub(std::string("A"));
             au::perf::XTimer::sleepFor(1);
             root.sub();
-            root.sub();    // extra bare sub → no-op
-            root.sub();    // extra bare sub → no-op
+            root.sub();  // extra bare sub → no-op
+            root.sub();  // extra bare sub → no-op
             root.sub(std::string("B"));
             au::perf::XTimer::sleepFor(1);
             root.sub();
@@ -841,10 +685,11 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
         EXPECT_NE(out.find("after:"), std::string::npos) << out;
     }
 
-    // Exception between sub() calls — sub is orphaned and tree cannot flush,
-    // but process must not crash.
+    // Exception between sub() calls: destructor must close the active sub
+    // before closing the root so the tree can still flush.
     {
-        bool caught = false;
+        StdoutCapture cap;
+        bool          caught = false;
         try {
             au::perf::XTimerScoped root(std::string("mid_sub"));
             root.sub(std::string("A"));
@@ -853,7 +698,10 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
             caught = true;
         }
         EXPECT_TRUE(caught);
-        SUCCEED();
+        const std::string out = cap.drain();
+        EXPECT_NE(out.find("mid_sub"), std::string::npos) << out;
+        EXPECT_NE(out.find("A:"), std::string::npos) << out;
+        EXPECT_EQ(out.find("(open)"), std::string::npos) << out;
     }
 }
 

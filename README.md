@@ -46,10 +46,10 @@ Aura is a curated collection of high-performance C++17 components designed to st
 | `au::log` | `xerror` | Error code definitions (X-Macro), isError predicate, and code-to-string conversion. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | | `xlogger` | Multithreaded hierarchical logging with color output, level filtering, and Android logcat support. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | `au::math` | `xmath` | Constants (π, e), min/max/clamp, power-of-two alignment, and trig helpers. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
+| `au::perf` | `xtimer` | Public C++11 timer API with shared opaque scope storage, Release/Debug dual-mode, and aggregate flush. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
+| | `xtracer` | Public C++11 Android Perfetto / ftrace tracer API sharing `PerfScope` with timer and `AU_PERF_SCOPE`. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | `au::re` | `xregex` | std::regex convenience wrappers: match, extract groups, replace, and split. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | `au::memory` | `xbuffer` | Shared-memory buffer with zero-copy reference counting and move semantics. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
-| `au::perf` | `xtimer` | Hierarchical scoped timer with Release/Debug dual-mode, aggregate buffer, and PerfConfig singleton. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
-| | `xtracer` | Android Perfetto / ftrace tracer, decoupled from timer, with AU_PERF_SCOPE composite macro. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
 | `au::util` | `xargs` | Lightweight CLI argument parser with short/long options and quoted values. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
 | `au::sys` | `xplatform` | Hardware topology (CPU cores, memory), environment variables, and OS detection. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | | `xdlib` | Unified cross-platform dynamic library loading (dlopen / LoadLibrary). | ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) |
