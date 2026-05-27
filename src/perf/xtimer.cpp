@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <ctime>
 #include <cstring>
+#include <ctime>
 #include <mutex>
 #include <new>
 #include <thread>
@@ -57,15 +57,9 @@ struct ScopeState
 static_assert(sizeof(ScopeState) <= sizeof(PerfScope), "PerfScope is too small for timer state");
 static_assert(alignof(ScopeState) <= alignof(PerfScope), "PerfScope alignment is too small");
 
-ScopeState& scopeState(PerfScope* scope) noexcept
-{
-    return *reinterpret_cast<ScopeState*>(scope->opaque);
-}
+ScopeState& scopeState(PerfScope* scope) noexcept { return *reinterpret_cast<ScopeState*>(scope->opaque); }
 
-ScopeState& initScopeState(PerfScope* scope) noexcept
-{
-    return *new (scope->opaque) ScopeState();
-}
+ScopeState& initScopeState(PerfScope* scope) noexcept { return *new (scope->opaque) ScopeState(); }
 
 bool isTimerScope(const PerfScope* scope) noexcept
 {
@@ -114,9 +108,9 @@ struct CtxThread
         bool        active{false};
     };
 
-    std::vector<NodePerf> pool;
-    std::vector<char>     nameArena;
-    std::vector<int32_t>  openStack;
+    std::vector<NodePerf>    pool;
+    std::vector<char>        nameArena;
+    std::vector<int32_t>     openStack;
     std::vector<ReleaseSlot> releaseSlots;
     std::vector<int32_t>     freeReleaseSlots;
 
@@ -331,10 +325,7 @@ void setDebugMode(bool on) noexcept { configState().debugMode.store(on, std::mem
 
 bool isDebugMode() noexcept { return configState().debugMode.load(std::memory_order_relaxed); }
 
-void setTimerLevel(int32_t threshold) noexcept
-{
-    configState().timerLevel.store(threshold, std::memory_order_relaxed);
-}
+void setTimerLevel(int32_t threshold) noexcept { configState().timerLevel.store(threshold, std::memory_order_relaxed); }
 
 int32_t getTimerLevel() noexcept { return configState().timerLevel.load(std::memory_order_relaxed); }
 
@@ -430,9 +421,8 @@ std::string getTimeFormatted(const std::string& fmt) noexcept
 
 uint64_t timerNowNs() noexcept
 {
-    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                     Clock::now().time_since_epoch())
-                                     .count());
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count());
 }
 
 float timerElapsedMs(uint64_t beginNs) noexcept

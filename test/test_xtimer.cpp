@@ -689,7 +689,7 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
     // before closing the root so the tree can still flush.
     {
         StdoutCapture cap;
-        bool caught = false;
+        bool          caught = false;
         try {
             au::perf::XTimerScoped root(std::string("mid_sub"));
             root.sub(std::string("A"));

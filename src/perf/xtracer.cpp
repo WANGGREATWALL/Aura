@@ -41,15 +41,9 @@ struct ScopeState
 static_assert(sizeof(ScopeState) <= sizeof(PerfScope), "PerfScope is too small for tracer state");
 static_assert(alignof(ScopeState) <= alignof(PerfScope), "PerfScope alignment is too small");
 
-ScopeState& scopeState(PerfScope* scope) noexcept
-{
-    return *reinterpret_cast<ScopeState*>(scope->opaque);
-}
+ScopeState& scopeState(PerfScope* scope) noexcept { return *reinterpret_cast<ScopeState*>(scope->opaque); }
 
-ScopeState& initScopeState(PerfScope* scope) noexcept
-{
-    return *new (scope->opaque) ScopeState();
-}
+ScopeState& initScopeState(PerfScope* scope) noexcept { return *new (scope->opaque) ScopeState(); }
 
 bool isTraceScope(const PerfScope* scope) noexcept
 {

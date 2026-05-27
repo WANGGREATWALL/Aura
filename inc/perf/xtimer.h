@@ -72,8 +72,8 @@ public:
     void flushAggregated() noexcept { au::perf::flushAggregated(); }
 
 private:
-    Config()                      = default;
-    Config(const Config&)         = delete;
+    Config()                         = default;
+    Config(const Config&)            = delete;
     Config& operator=(const Config&) = delete;
 };
 
