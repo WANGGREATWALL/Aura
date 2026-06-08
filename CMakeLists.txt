@@ -43,6 +43,7 @@ set(AURA_SOURCES
     src/cv/ximage.cpp
     src/perf/xtimer.cpp
     src/perf/xtracer.cpp
+    src/mm/xmemory.cpp
     src/util/xargs.cpp
     third_party/cJSON/cJSON.c
 )
@@ -71,6 +72,7 @@ option(ENABLE_TEST_XARGS     "Enable xargs unit test"     ON)
 option(ENABLE_TEST_XPATH     "Enable xpath unit test"     ON)
 option(ENABLE_TEST_XTIMER   "Enable xtimer unit test"   ON)
 option(ENABLE_TEST_XTRACER  "Enable xtracer unit test"  ON)
+option(ENABLE_TEST_XMEMORY  "Enable xmemory unit test"  ON)
 option(ENABLE_TEST_XPLATFORM "Enable xplatform unit test" ON)
 option(ENABLE_TEST_XERROR    "Enable xerror unit test"    ON)
 option(ENABLE_TEST_XFILE     "Enable xfile unit test"     ON)
@@ -112,6 +114,7 @@ aura_add_test(xargs)
 aura_add_test(xpath)
 aura_add_test(xtimer)
 aura_add_test(xtracer)
+aura_add_test(xmemory)
 aura_add_test(xplatform)
 aura_add_test(xerror)
 aura_add_test(xfile)
@@ -133,6 +136,9 @@ target_include_directories(aura_test PRIVATE
 target_link_libraries(aura_test PRIVATE aura)
 
 # Platform-specific link libraries
+if(ANDROID)
+    target_link_libraries(aura PRIVATE android)
+endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(aura PRIVATE dl pthread)
     target_link_libraries(aura_test PRIVATE pthread)

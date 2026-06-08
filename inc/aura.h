@@ -11,6 +11,7 @@
 #include "log/xerror.h"
 #include "log/xlogger.h"
 #include "math/xmath.h"
+#include "mm/xmemory.h"
 #include "perf/xperf_macros.h"
 #include "perf/xtimer.h"
 #include "perf/xtracer.h"
