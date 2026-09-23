@@ -1,0 +1,656 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" modified="2026-09-24T00:00:00.000Z" agent="Codex drawio-skill" version="31.4.5" type="device">
+  <diagram name="01 总体架构" id="01">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="header" value="01 总体架构" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=25;fontColor=#FFFFFF;fillColor=#19334B;strokeColor=#19334B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1720" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="从可复用任务块到 CPU / OpenCL 异构执行；实线为数据与控制流，虚线为现有 Aura 组件适配。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="96" width="1700" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="source" value="依据：Aura/src/flow、src/gpu_helper/cl_wrapper、inc/mm/xmemory；彩色为拟新增，灰色虚框为现有代码。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="1030" width="1700" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="l1" value="调用与建图 · C++11 公共 API" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#EAF2FF;swimlaneFillColor=#FFFFFF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="170" width="360" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="l2" value="图与准入 · C++17 内部" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#E9F6F0;swimlaneFillColor=#FFFFFF;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="430" y="170" width="420" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="l3" value="调度运行时 · C++17 热路径" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#FFF3DD;swimlaneFillColor=#FFFFFF;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="880" y="170" width="500" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="l4" value="执行后端 / 资源" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#F0EAFB;swimlaneFillColor=#FFFFFF;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="1410" y="170" width="350" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="a_ops" value="au::cv / au::nn 算子与 pipeline&#xa;CPU 函数 · OpenCL kernel" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="l1">
+          <mxGeometry x="20" y="60" width="320" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="a_build" value="BlockBuilder&#xa;addCpu / addOpenCl / precede" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="l1">
+          <mxGeometry x="20" y="220" width="320" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="a_handles" value="Scheduler facade&#xa;enqueue → BlockHandle / TaskHandle&#xa;wait / waitAll / cancel" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="l1">
+          <mxGeometry x="20" y="390" width="320" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="a_legacy" value="现有 XFlow / XThreadpool&#xa;tile + pipeline 兼容适配" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;dashed=1;dashPattern=6 4;" vertex="1" parent="l1">
+          <mxGeometry x="20" y="600" width="320" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="a_seal" value="GraphValidator + SealedBlock&#xa;DAG / 资源声明 / stable IDs" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="l2">
+          <mxGeometry x="25" y="75" width="370" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="a_admit" value="Admission / epoch / quotas&#xa;跨 block 依赖注册 · 背压" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="l2">
+          <mxGeometry x="25" y="295" width="370" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="a_diag" value="Snapshot + DOT / trace&#xa;状态、耗时、错误码" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="l2">
+          <mxGeometry x="25" y="535" width="370" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="a_deps" value="DependencyEngine&#xa;pending count · 完成传播 · 失败策略" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="l3">
+          <mxGeometry x="25" y="75" width="450" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="a_ready" value="ReadyQueues / CpuPool&#xa;有界队列 · work stealing" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="l3">
+          <mxGeometry x="25" y="295" width="450" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="a_complete" value="CompletionHub + WaitRegistry&#xa;GPU event → 完成提交 → 唤醒" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="l3">
+          <mxGeometry x="25" y="535" width="450" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="a_cpu" value="CPU task adapter&#xa;TaskContext / 执行结果" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="l4">
+          <mxGeometry x="20" y="75" width="310" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="a_cl" value="OpenCL adapter + submit lane&#xa;命令入队 / event / wait list" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="l4">
+          <mxGeometry x="20" y="295" width="310" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="a_mem" value="BufferLease / InteropProvider&#xa;XMemory + cl_mem + fd 生命周期" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F5F8;strokeColor=#408CA0;strokeWidth=1.5;" vertex="1" parent="l4">
+          <mxGeometry x="20" y="535" width="310" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_ops" target="a_build">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_build" target="a_seal">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_handles" target="a_admit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_seal" target="a_admit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_admit" target="a_deps">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_deps" target="a_ready">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_ready" target="a_cpu">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_ready" target="a_cl">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_cl" target="a_mem">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_mem" target="a_complete">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_e11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="a_complete" target="a_diag">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_rules" value="约束：公共头文件 C++11 + opaque handle；内部 C++17；不在 CPU worker 上等待 GPU；只在任务真正完成后释放后继。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="970" width="1690" height="50" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="02 建图与接口契约" id="02">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="header" value="02 建图与接口契约" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=25;fontColor=#FFFFFF;fillColor=#19334B;strokeColor=#19334B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1720" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="模块可随时创建独立 block，再 enqueue；任务边只在 seal 前可变，运行期通过新 block / 前驱 handle 扩展。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="96" width="1700" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="source" value="拟新增 API 草案，尚未在 Aura 实现。公开类型需以 C++11 编译，ABI 暴露 opaque/Pimpl 与 au::err 错误码。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="1030" width="1700" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="b_api" value="拟新增公共接口 · inc/flow" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#EAF2FF;swimlaneFillColor=#FFFFFF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="170" width="500" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="b_graph" value="block 内 DAG · 示例" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#E9F6F0;swimlaneFillColor=#FFFFFF;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="570" y="170" width="680" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="b_rules" value="合法性与生命周期" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#FFF3DD;swimlaneFillColor=#FFFFFF;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="170" width="480" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="b_builder" value="BlockBuilder&#xa;addCpu(fn, resources)&#xa;addOpenCl(kernel, args, resources)&#xa;precede(a,b) · seal(out)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="b_api">
+          <mxGeometry x="20" y="60" width="460" height="155" as="geometry" />
+        </mxCell>
+        <mxCell id="b_sched" value="Scheduler&#xa;enqueue(block, predecessors, options)&#xa;→ BlockHandle · waitAll() / waitThrough(epoch)&#xa;shutdown(mode)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="b_api">
+          <mxGeometry x="20" y="270" width="460" height="165" as="geometry" />
+        </mxCell>
+        <mxCell id="b_handle" value="TaskHandle / BlockHandle&#xa;id + generation + owner ref&#xa;wait(timeout) · poll · cancel · status" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="b_api">
+          <mxGeometry x="20" y="505" width="460" height="145" as="geometry" />
+        </mxCell>
+        <mxCell id="b_input" value="跨 block 已存在的前驱 handle" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="b_graph">
+          <mxGeometry x="170" y="65" width="340" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="b_a" value="A · CPU 预处理&#xa;写 image 0" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="b_graph">
+          <mxGeometry x="215" y="185" width="250" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b_b" value="B · CPU 算子&#xa;读 image 0" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="b_graph">
+          <mxGeometry x="45" y="335" width="250" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b_c" value="C · OpenCL kernel&#xa;读 image 0" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="b_graph">
+          <mxGeometry x="385" y="335" width="250" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b_d" value="D · CPU 汇合&#xa;等 B 和 C 完成" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="b_graph">
+          <mxGeometry x="215" y="510" width="250" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b_output" value="BlockHandle 完成 = 全部终态 + 清理" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="b_graph">
+          <mxGeometry x="145" y="660" width="390" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b_input" target="b_a">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b_a" target="b_b">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b_a" target="b_c">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b_b" target="b_d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b_c" target="b_d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b_d" target="b_output">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="b_validate" value="seal 校验&#xa;ID 唯一 / 无环 / 边合法&#xa;资源读写冲突需要显式依赖" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="b_rules">
+          <mxGeometry x="20" y="60" width="440" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="b_cross" value="跨 block 注册&#xa;仅引用已创建的前驱；原子注册&#xa;先登记依赖，再允许新节点就绪" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="b_rules">
+          <mxGeometry x="20" y="270" width="440" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="b_dynamic" value="运行时动态提交&#xa;新 block 或子任务容器&#xa;不得改动已提交 block 的边" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="b_rules">
+          <mxGeometry x="20" y="480" width="440" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="b_note" value="资源描述：读/写域、设备、Image/Buffer、格式/步长/plane；提交时固定快照。任务载荷和跨线程拥有关系须明确。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="970" width="1690" height="48" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="03 调度与同步状态机" id="03">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="header" value="03 调度与同步状态机" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=25;fontColor=#FFFFFF;fillColor=#19334B;strokeColor=#19334B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1720" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="完成信号是统一调度语义：CPU 函数返回或 OpenCL event 到终态后，才递减后继的待完成前驱数。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="96" width="1700" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="source" value="设计约定：release/acquire 发布结果；waitAll 使用提交 epoch 快照；取消不抢占运行中 CPU / GPU 命令。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="1030" width="1700" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="c_life" value="单 task 状态迁移" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#E9F6F0;swimlaneFillColor=#FFFFFF;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="170" width="1720" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="c_new" value="BUILT&#xa;可编辑" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="c_life">
+          <mxGeometry x="35" y="85" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_seal" value="SEALED&#xa;只读" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="c_life">
+          <mxGeometry x="275" y="85" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_wait" value="WAITING&#xa;pending &gt; 0" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="c_life">
+          <mxGeometry x="515" y="85" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_ready" value="READY&#xa;pending = 0" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="c_life">
+          <mxGeometry x="755" y="85" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_run" value="RUNNING&#xa;CPU 执行 / GPU 入队" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="c_life">
+          <mxGeometry x="995" y="85" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_flight" value="GPU_IN_FLIGHT&#xa;持有 event + lease" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="c_life">
+          <mxGeometry x="1235" y="85" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_done" value="TERMINAL&#xa;Done / Failed / Cancelled" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="c_life">
+          <mxGeometry x="1475" y="85" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="c_s0" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="c_new" target="c_seal">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_s1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="c_seal" target="c_wait">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_s2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="c_wait" target="c_ready">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_s3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="c_ready" target="c_run">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_s4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="c_run" target="c_flight">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_s5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="c_flight" target="c_done">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_cpu_skip" value="CPU 返回可直接进入 TERMINAL；GPU 命令入队成功只进入 GPU_IN_FLIGHT，不代表完成。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=15;fontColor=#19334B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="390" width="1610" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="c_rules" value="并发协议 / 等待 / 错误" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#FFF3DD;swimlaneFillColor=#FFFFFF;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="510" width="1720" height="450" as="geometry" />
+        </mxCell>
+        <mxCell id="c_dep" value="DependencyEngine&#xa;每节点 atomic pending；前驱 terminal release&#xa;fetch_sub(acq_rel)==1 → ready 发布" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="c_rules">
+          <mxGeometry x="25" y="65" width="395" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="c_waits" value="WaitRegistry&#xa;TaskHandle.wait：该节点 terminal&#xa;BlockHandle.wait：块内全 terminal + cleanup" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="c_rules">
+          <mxGeometry x="445" y="65" width="395" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="c_all" value="waitAll() = waitThrough(snapshotEpoch())&#xa;入队时分配递增 epoch；等待 &lt;= E&#xa;之后提交的 block 不纳入本次等待" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="c_rules">
+          <mxGeometry x="865" y="65" width="395" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="c_fail" value="错误与取消&#xa;首错或错误集合保存在 block；默认阻断后继&#xa;仅取消未启动节点；在途 GPU drain" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FDEBEA;strokeColor=#BC635B;strokeWidth=1.5;" vertex="1" parent="c_rules">
+          <mxGeometry x="1285" y="65" width="395" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="c_worker" value="worker 内 wait 防死锁&#xa;优先协作执行就绪任务；不可协作时返回错误&#xa;禁止同步等待自身或依赖环" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="c_rules">
+          <mxGeometry x="25" y="255" width="510" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="c_race" value="跨 block 接入顺序&#xa;前驱可能并发完成：先注册后检查终态&#xa;使用锁/代际握手避免丢失通知" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="c_rules">
+          <mxGeometry x="595" y="255" width="510" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="c_stop" value="shutdown 与背压&#xa;停止准入 → 取消待运行 / drain 在途 → 释放 lease&#xa;有界 task/event 队列及超限错误码" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="c_rules">
+          <mxGeometry x="1165" y="255" width="510" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="c_note" value="不变量：每个节点只完成一次；每条依赖只消费一次；最后一个前驱释放就绪；所有 waiter 最终由终态广播唤醒。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="970" width="1690" height="48" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="04 CPU / OpenCL 异构执行" id="04">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="header" value="04 CPU / OpenCL 异构执行" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=25;fontColor=#FFFFFF;fillColor=#19334B;strokeColor=#19334B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1720" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="同一图统一表达依赖；CPU worker 只负责 CPU 函数，GPU 提交与完成回收由独立通道处理。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="96" width="1700" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="source" value="现有 CLWrapper::enqueue 返回 cl::Event，但当前无 wait list 入参且 mOffset/mGlobal/mLocal 为共享可变状态；适配层需新增命令描述。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="1030" width="1700" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="d_cpu" value="Scheduler / CPU worker" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#FFF3DD;swimlaneFillColor=#FFFFFF;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="170" width="420" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="d_submit" value="GPU submit lane · 每设备/队列" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#F0EAFB;swimlaneFillColor=#FFFFFF;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="490" y="170" width="500" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="d_device" value="OpenCL device / completion" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#E9F5F8;swimlaneFillColor=#FFFFFF;strokeColor=#408CA0;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="170" width="740" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="d_ready" value="依赖满足的 task&#xa;CPU 或 OpenCL kind" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="d_cpu">
+          <mxGeometry x="30" y="70" width="360" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="d_cpu_run" value="CPU task 执行&#xa;同步返回 Status" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="d_cpu">
+          <mxGeometry x="30" y="295" width="360" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="d_release" value="统一 complete(task,status)&#xa;传播后继 + 唤醒等待" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="d_cpu">
+          <mxGeometry x="30" y="570" width="360" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="d_command" value="OpenClCommand 描述&#xa;queue / kernel / NDRange / 参数&#xa;wait events / BufferLease" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="d_submit">
+          <mxGeometry x="30" y="70" width="440" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="d_enqueue" value="clEnqueue* 非阻塞提交&#xa;返回 cl_event；提交失败立即 complete" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="d_submit">
+          <mxGeometry x="30" y="320" width="440" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="d_inflight" value="InFlightTable&#xa;(task id, cl_event, leases, deadline)&#xa;有界容量 + ownership" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="d_submit">
+          <mxGeometry x="30" y="580" width="440" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="d_gpu" value="设备执行 kernel&#xa;event 从 QUEUED → COMPLETE / error" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="d_device">
+          <mxGeometry x="30" y="70" width="310" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="d_callback" value="CL event callback / poller&#xa;仅投递完成 token；不运行用户代码" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F5F8;strokeColor=#408CA0;strokeWidth=1.5;" vertex="1" parent="d_device">
+          <mxGeometry x="380" y="70" width="310" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="d_hub" value="CompletionHub&#xa;读取 event status / profiling&#xa;回收事件和 leases" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F5F8;strokeColor=#408CA0;strokeWidth=1.5;" vertex="1" parent="d_device">
+          <mxGeometry x="380" y="320" width="310" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="d_waitlist" value="GPU → GPU 可选优化&#xa;同 context/queue 的前驱 event 作为 wait list&#xa;逻辑完成仍以本节点 event 为准" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="d_device">
+          <mxGeometry x="30" y="580" width="650" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_ready" target="d_cpu_run">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_cpu_run" target="d_release">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_ready" target="d_command">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_command" target="d_enqueue">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_enqueue" target="d_gpu">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_gpu" target="d_callback">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_callback" target="d_hub">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_hub" target="d_inflight">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="d_inflight" target="d_release">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_note" value="CPU→GPU：等 CPU terminal 才提交；GPU→CPU：等 event terminal 才就绪；GPU→GPU：基线等完成，可在安全条件下用 event wait list 提前提交。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="970" width="1690" height="48" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="05 OpenCL 内存与生命周期" id="05">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="header" value="05 OpenCL 内存与生命周期" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=25;fontColor=#FFFFFF;fillColor=#19334B;strokeColor=#19334B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1720" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="BufferLease 将 XMemory、导入的 cl_mem、fd 和在途 cl_event 绑定到 task 完成；显式区分缓存同步与执行完成。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="96" width="1700" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="source" value="现有 mm::XMemory 管理 MemBlock(ptr,size,fd) 和 DMA_BUF_IOCTL_SYNC；CLWrapper 默认 CL_MEM_USE_HOST_PTR，不等于 dma-buf 零拷贝导入。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="1030" width="1700" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="e_owner" value="分配 / 元数据" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#E9F5F8;swimlaneFillColor=#FFFFFF;strokeColor=#408CA0;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="170" width="410" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="e_import" value="互操作能力与路径" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#F0EAFB;swimlaneFillColor=#FFFFFF;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="480" y="170" width="510" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="e_run" value="GPU 在途与完成" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#FFF3DD;swimlaneFillColor=#FFFFFF;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="170" width="420" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cpu" value="CPU 访问与清理" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#EAF2FF;swimlaneFillColor=#FFFFFF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="170" width="290" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="e_xmem" value="XMemory / MemBlock&#xa;ptr + size + fd + backend&#xa;move-only RAII" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;dashed=1;dashPattern=6 4;" vertex="1" parent="e_owner">
+          <mxGeometry x="25" y="60" width="360" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_meta" value="Image/Buffer 描述&#xa;plane fd / offset / stride / format&#xa;size / modifier / access flags" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F5F8;strokeColor=#408CA0;strokeWidth=1.5;" vertex="1" parent="e_owner">
+          <mxGeometry x="25" y="295" width="360" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="e_lease" value="BufferLease&#xa;持有 XMemory/导入对象和依赖 event&#xa;最后一个异步使用完成后释放" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F5F8;strokeColor=#408CA0;strokeWidth=1.5;" vertex="1" parent="e_owner">
+          <mxGeometry x="25" y="570" width="360" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_probe" value="InteropProvider::probe&#xa;设备扩展 / format / modifier / fence&#xa;只在支持时选择零拷贝" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="e_import">
+          <mxGeometry x="25" y="60" width="450" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_dmabuf" value="dma-buf 导入路径&#xa;平台 API 及 acquire/release 由 au::sys 隔离&#xa;验证 fd 所有权和共享域" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="e_import">
+          <mxGeometry x="25" y="290" width="450" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="e_copy" value="便携回退路径&#xa;普通 cl_mem + 显式拷贝/映射&#xa;macOS 或不支持导入的设备" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="e_import">
+          <mxGeometry x="25" y="570" width="450" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_submit" value="submit(kernel, leases, waitEvents)&#xa;入队成功产生 cl_event&#xa;标记资源 GPU_IN_FLIGHT" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#F0EAFB;strokeColor=#8062AB;strokeWidth=1.5;" vertex="1" parent="e_run">
+          <mxGeometry x="25" y="60" width="370" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_event" value="event terminal / fence 完成&#xa;处理负状态；必要时 acquire/release&#xa;通知所有依赖消费者" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FFF3DD;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="e_run">
+          <mxGeometry x="25" y="300" width="370" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_release" value="完成回收&#xa;引用归零后释放 cl_mem / event / fd&#xa;先解除 GPU 引用，再释放分配" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#E9F5F8;strokeColor=#408CA0;strokeWidth=1.5;" vertex="1" parent="e_run">
+          <mxGeometry x="25" y="570" width="370" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cpu_write" value="CPU 写→GPU 读&#xa;结束 CPU 写域 / flush cache&#xa;再 enqueue + event wait" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="e_cpu">
+          <mxGeometry x="20" y="60" width="250" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_cpu_read" value="GPU 写→CPU 读&#xa;先等 event/fence terminal&#xa;再 invalidate cache / map" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#EAF2FF;strokeColor=#4672B8;strokeWidth=1.5;" vertex="1" parent="e_cpu">
+          <mxGeometry x="20" y="300" width="250" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_sync" value="DMA_BUF_IOCTL_SYNC&#xa;仅处理 CPU cache 可见性&#xa;不能替代 cl_event 完成" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fillColor=#FDEBEA;strokeColor=#BC635B;strokeWidth=1.5;" vertex="1" parent="e_cpu">
+          <mxGeometry x="20" y="570" width="250" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="e_e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="e_xmem" target="e_meta">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="e_meta" target="e_lease">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="e_meta" target="e_probe">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="e_probe" target="e_dmabuf">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="e_dmabuf" target="e_submit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="e_submit" target="e_event">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_e7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="e_event" target="e_release">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="e_event" target="e_cpu_read">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_note" value="资源键至少包含：device/context + allocation id + plane + format；复用池须记录最后 GPU writer/reader event，禁止在途覆盖和提前 close(fd)。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="970" width="1690" height="48" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="06 Taskflow v3.11 对照与迭代" id="06">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="header" value="06 Taskflow v3.11 对照与迭代" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=25;fontColor=#FFFFFF;fillColor=#19334B;strokeColor=#19334B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1720" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="以 Taskflow 的调度内核为学习样本；复用设计思想，按 Aura 的 C++11 API、Android/OpenCL 与内存约束重建接口。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="96" width="1700" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="source" value="Taskflow 路径均位于 taskflow/core，版本 v3.11.0；Aura 右列是拟新增组件，不代表已经实现。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="1030" width="1700" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="f_src" value="Taskflow v3.11 源码切入点" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#F1F3F5;swimlaneFillColor=#FFFFFF;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="170" width="650" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="f_dst" value="au::flow 对应设计 / 学习重点" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#E9F6F0;swimlaneFillColor=#FFFFFF;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="720" y="170" width="1040" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="f_1s" value="graph.hpp · task.hpp · flow_builder.hpp" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="f_src">
+          <mxGeometry x="25" y="50" width="600" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_1d" value="TaskNode / SealedBlock / BlockBuilder：节点存储、前驱边与 seal 校验" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="f_dst">
+          <mxGeometry x="25" y="50" width="990" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_1e" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#7D91A3;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="f_1s" target="f_1d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_2s" value="taskflow.hpp · topology.hpp" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="f_src">
+          <mxGeometry x="25" y="138" width="600" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_2d" value="BlockInstance / run epoch：静态图与每次执行状态分离" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="f_dst">
+          <mxGeometry x="25" y="138" width="990" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_2e" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#7D91A3;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="f_2s" target="f_2d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_3s" value="executor.hpp · worker.hpp · tsq.hpp" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="f_src">
+          <mxGeometry x="25" y="226" width="600" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_3d" value="SchedulerCore / CpuPool：就绪传播、工作窃取、空闲通知" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="f_dst">
+          <mxGeometry x="25" y="226" width="990" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_3e" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#7D91A3;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="f_3s" target="f_3d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_4s" value="async.hpp · async_task.hpp" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="f_src">
+          <mxGeometry x="25" y="314" width="600" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_4d" value="运行时 enqueue：已存在前驱的动态任务与生命周期" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="f_dst">
+          <mxGeometry x="25" y="314" width="990" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_4e" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#7D91A3;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="f_4s" target="f_4d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_5s" value="runtime.hpp · nonblocking_notifier.hpp" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="f_src">
+          <mxGeometry x="25" y="402" width="600" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_5d" value="TaskContext / WaitRegistry：协作等待及低开销唤醒" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="f_dst">
+          <mxGeometry x="25" y="402" width="990" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_5e" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#7D91A3;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="f_5s" target="f_5d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_6s" value="taskflow.hpp::dump · observer.hpp" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="f_src">
+          <mxGeometry x="25" y="490" width="600" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_6d" value="DotExporter / Trace：稳定 ID、节点/边快照、耗时观测" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="f_dst">
+          <mxGeometry x="25" y="490" width="990" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_6e" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#7D91A3;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="f_6s" target="f_6d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_7s" value="cuda/cudaflow.hpp · cuda_graph.hpp" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="f_src">
+          <mxGeometry x="25" y="578" width="600" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_7d" value="仅研究 host/device 边界与 event 生命周期；OpenCL 适配独立实现" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="f_dst">
+          <mxGeometry x="25" y="578" width="990" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="f_7e" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#7D91A3;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="f_7s" target="f_7d">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_road" value="实施顺序与验收门槛" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#FFF3DD;swimlaneFillColor=#FFFFFF;strokeColor=#BA8738;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="875" width="1720" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="f_road_text" value="P0：修 mm 构建、DAG + CPU + task/block/waitThrough + DOT    →    P1：动态 block、取消/错误    →    P2：OpenCL event/lease/回退    →    P3：dma-buf 导入与多队列优化" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fontStyle=1;" vertex="1" parent="f_road">
+          <mxGeometry x="25" y="42" width="1670" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="f_note" value="验收：拓扑/并发 race、无丢唤醒、取消 drain、CPU/GPU 数据正确性、fd/event 零泄漏、背压、Android 与 macOS 回退、性能基线。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fontStyle=1;" vertex="1" parent="f_road">
+          <mxGeometry x="25" y="89" width="1670" height="38" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="07 现有组件改造清单" id="07">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="header" value="07 现有组件改造清单" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=25;fontColor=#FFFFFF;fillColor=#19334B;strokeColor=#19334B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="1720" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="把现有代码可复用的部分接入新调度器，并将接口、并发、内存与构建问题列为明确的迁移项。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="96" width="1700" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="source" value="事实依据：Aura/src/flow/xthread*.h、src/gpu_helper/cl_wrapper.h、inc/mm/xmemory.h、src/mm/xmemory.cpp；右列是设计建议。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#506477;" vertex="1" parent="1">
+          <mxGeometry x="50" y="1030" width="1700" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="g_now" value="现有实现 · 保留 / 适配" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#F1F3F5;swimlaneFillColor=#FFFFFF;strokeColor=#7A858F;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="40" y="170" width="510" height="770" as="geometry" />
+        </mxCell>
+        <mxCell id="g_gap" value="当前缺口 / 风险" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#FDEBEA;swimlaneFillColor=#FFFFFF;strokeColor=#BC635B;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="580" y="170" width="510" height="770" as="geometry" />
+        </mxCell>
+        <mxCell id="g_change" value="拟修改方案 · 可验收" style="swimlane;startSize=34;horizontal=1;rounded=1;arcSize=10;container=1;collapsible=0;pointerEvents=0;html=1;fontFamily=Noto Sans CJK SC;fontSize=16;fontStyle=1;fontColor=#19334B;fillColor=#E9F6F0;swimlaneFillColor=#FFFFFF;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="170" width="640" height="770" as="geometry" />
+        </mxCell>
+        <mxCell id="g_n0" value="XFlow / XThreadpool&#xa;两个 pool；std::function + 单队列 + mutex&#xa;packaged_task/future；无 DAG" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;dashed=1;dashPattern=6 4;" vertex="1" parent="g_now">
+          <mxGeometry x="20" y="50" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_r0" value="任务提交热路径分配并争用全局锁；&#xa;停止后 enqueue 抛异常；无法表达&#xa;依赖或单 task / block 完成" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#FDEBEA;strokeColor=#BC635B;strokeWidth=1.5;" vertex="1" parent="g_gap">
+          <mxGeometry x="20" y="50" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_c0" value="保留 XFlow 兼容入口；新增 SchedulerCore&#xa;与 task/block handle；旧 API 映射到单节点 block；&#xa;内部有界队列/批量提交，ABI 返回错误码" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="g_change">
+          <mxGeometry x="20" y="50" width="600" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e0a" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_n0" target="g_r0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e0b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_r0" target="g_c0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_n1" value="CLWrapper::setNDRange + enqueue&#xa;共享 mOffset/mGlobal/mLocal / mEvents；&#xa;命令 wait list 传 nullptr" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;dashed=1;dashPattern=6 4;" vertex="1" parent="g_now">
+          <mxGeometry x="20" y="190" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_r1" value="并发配置可能串扰；GPU 前驱 event&#xa;不能直接传递；内部事件表增长和&#xa;生命周期与调度器脱节" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#FDEBEA;strokeColor=#BC635B;strokeWidth=1.5;" vertex="1" parent="g_gap">
+          <mxGeometry x="20" y="190" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_c1" value="新增不可变 OpenClCommand 参数；显式 waitEvents；&#xa;每设备 submit lane；event 交 InFlightTable 管理；&#xa;CLWrapper 保留构建/内核缓存服务" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="g_change">
+          <mxGeometry x="20" y="190" width="600" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e1a" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_n1" target="g_r1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e1b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_r1" target="g_c1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_n2" value="XMemory / MemBlock&#xa;move-only；ptr/size/fd/backend；&#xa;DMA_BUF_IOCTL_SYNC 缓存操作" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;dashed=1;dashPattern=6 4;" vertex="1" parent="g_now">
+          <mxGeometry x="20" y="330" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_r2" value="无 image plane/stride/format/modifier 描述；&#xa;无异步 in-flight 引用；fd 与 cl_mem&#xa;可能早于 kernel 完成而释放" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#FDEBEA;strokeColor=#BC635B;strokeWidth=1.5;" vertex="1" parent="g_gap">
+          <mxGeometry x="20" y="330" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_c2" value="XMemory 继续拥有分配；增 ImageLayout 与 BufferLease；&#xa;CL 导入能力探测及拷贝回退；event terminal&#xa;后统一释放，CPU cache sync 与执行 fence 分离" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="g_change">
+          <mxGeometry x="20" y="330" width="600" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e2a" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_n2" target="g_r2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e2b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_r2" target="g_c2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_n3" value="src/mm/xmemory.cpp&#xa;CMake 已编入；源码第 105/125/157/192 行&#xa;含字面 Markdown ``` 标记" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;dashed=1;dashPattern=6 4;" vertex="1" parent="g_now">
+          <mxGeometry x="20" y="470" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_r3" value="这些标记不是合法 C++；会阻断该文件编译。&#xa;该问题独立于调度架构，需先确认&#xa;是否为误提交的代码围栏" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#FDEBEA;strokeColor=#BC635B;strokeWidth=1.5;" vertex="1" parent="g_gap">
+          <mxGeometry x="20" y="470" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_c3" value="P0 构建修复：删除字面围栏并完整编译&#xa;Aura 的 mm target；先验证 allocator / fd /&#xa;cache sync，再接入 OpenCL interop" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="g_change">
+          <mxGeometry x="20" y="470" width="600" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e3a" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_n3" target="g_r3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e3b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_r3" target="g_c3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_n4" value="CLWrapper::build / SVM&#xa;默认 -cl-std=CL2.0；SVM 功能&#xa;与设备能力未在接口层隔离" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#F1F3F5;strokeColor=#7A858F;strokeWidth=1.5;dashed=1;dashPattern=6 4;" vertex="1" parent="g_now">
+          <mxGeometry x="20" y="610" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_r4" value="固定编译标准在低版本设备可能失败；&#xa;SVM / image 格式不能只按编译期开关&#xa;判断，影响 Android 与 macOS 回退" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#FDEBEA;strokeColor=#BC635B;strokeWidth=1.5;" vertex="1" parent="g_gap">
+          <mxGeometry x="20" y="610" width="470" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_c4" value="运行时查询设备 OpenCL 版本/扩展/格式；&#xa;按能力选择 kernel 编译选项与内存路径；&#xa;不支持的特性返回错误码或走拷贝回退" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;verticalAlign=middle;align=center;spacing=10;fontFamily=Noto Sans CJK SC;fontSize=13;fontColor=#19334B;fillColor=#E9F6F0;strokeColor=#318569;strokeWidth=1.5;" vertex="1" parent="g_change">
+          <mxGeometry x="20" y="610" width="600" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e4a" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_n4" target="g_r4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_e4b" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeColor=#718396;strokeWidth=2;fontFamily=Noto Sans CJK SC;fontSize=12;fontColor=#43576A;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="g_r4" target="g_c4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="g_note" value="迁移原则：先修构建与语义正确性，再优化 work stealing / 零拷贝；适配层保持老调用可用，最终以调度器统一管理完成、错误和资源。" style="text;html=1;whiteSpace=wrap;verticalAlign=middle;align=left;fontFamily=Noto Sans CJK SC;fontSize=14;fontColor=#19334B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="965" width="1690" height="50" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
