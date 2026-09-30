@@ -1,204 +1,170 @@
-#include <fcntl.h>
-#include <linux/dma-buf.h>
-#include <linux/dma-heap.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
+#include "mm/xmemory.h"
 
-#include <cerrno>
-#include <cstdlib>
-#include <cstring>
-#include <mutex>
+#include <cstdio>
+#include <utility>
 
 #include "log/xerror.h"
 #include "log/xlogger.h"
-#include "memory/native_backend.h"
+#include "mm/backend.h"
+#include "mm/registry.h"
 
 namespace au {
 namespace mm {
 
-namespace {
+// ---------------------------------------------------------------------------
+//  Free functions
+// ---------------------------------------------------------------------------
 
-// posix_memalign covers the small/medium range cheaply; mmap pays off only for
-// page-multiple sizes where contiguous virtual memory is desired.
-constexpr size_t kSmallThreshold = 1u * 1024u * 1024u;
-constexpr size_t kAlignment      = 64u;  // ARMv8 cacheline / NEON-friendly
-
-constexpr const char* kHeapCached   = "/dev/dma_heap/system";
-constexpr const char* kHeapUncached = "/dev/dma_heap/system-uncached";
-
-int errnoToCode(int ecode) noexcept
+int alloc(size_t size, MemType type, MemBlock& out) noexcept
 {
-    switch (ecode) {
-        case ENOMEM: return au::err::kErrorNoMemory;
-        case EACCES:
-        case EPERM: return au::err::kErrorPermissionDenied;
-        case ENOENT: return au::err::kErrorNotSupported;
-        default: return au::err::kErrorPlatformAPI;
+    if (size == 0)
+        return au::err::kErrorInvalidSize;
+
+    IBackend& backend = resolve();
+    int retAlloc = backend.alloc(size, type, out);
+    if (retAlloc != au::err::kSuccess) {
+        return retAlloc;
     }
-}
-
-int openHeapOnce(const char* path) noexcept
-{
-    // Returns a cached fd (>=0) or a sticky negative error code so repeated
-    // calls don't keep stat()-ing the device on platforms that lack the heap.
-    int fd = ::open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) {
-        XLOG_W("au::mm::native: open(%s) failed: %s\n", path, ::strerror(errno));
-        return -errno;
-    }
-    return fd;
-}
-
-int heapFdCached() noexcept
-{
-    static int sFd = openHeapOnce(kHeapCached);
-    return sFd;
-}
-
-int heapFdUncached() noexcept
-{
-    static int sFd = openHeapOnce(kHeapUncached);
-    return sFd;
-}
-
-int allocPss(size_t size, MemBlock& out) noexcept
-{
-    if (size <= kSmallThreshold) {
-        void* p        = nullptr;
-        int   retAlign = ::posix_memalign(&p, kAlignment, size);
-        if (retAlign != 0 || p == nullptr) {
-            return errnoToCode(retAlign != 0 ? retAlign : ENOMEM);
-        }
-        out = MemBlock{p, size, -1, MemType::Pss, BackendId::Native};
-        return au::err::kSuccess;
-    }
-    void* p = ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (p == MAP_FAILED) {
-        return errnoToCode(errno);
-    }
-    out = MemBlock{p, size, -1, MemType::Pss, BackendId::Native};
-    return au::err::kSuccess;
-}
-
-int releasePss(const MemBlock& block) noexcept
-{
-    // Release path mirrors the alloc-time decision tree; the registry preserves
-    // block.size, so we reapply the same threshold to choose free vs munmap.
-    if (block.size <= kSmallThreshold) {
-        ::free(block.ptr);
-        return au::err::kSuccess;
-    }
-    if (::munmap(block.ptr, block.size) != 0) {
-        return errnoToCode(errno);
+    int retRegis = Registry::instance().insert(out);
+    if (retRegis != au::err::kSuccess) {
+        // Rolling back the allocation is mandatory: keeping it would leak the
+        // dma-buf fd and mmap mapping with no way for the caller to recover.
+        backend.release(out);
+        out = MemBlock{};
+        return retRegis;
     }
     return au::err::kSuccess;
 }
 
-int allocDmaBuf(int heapFd, size_t size, MemType type, MemBlock& out) noexcept
+int free(void* ptr) noexcept
 {
-    if (heapFd < 0) {
-        return au::err::kErrorNotSupported;
-    }
+    if (ptr == nullptr)
+        return au::err::kErrorNullPointer;
 
-    ``` dma_heap_allocation_data data{};
-    data.len        = size;
-    data.fd         = 0;
-    data.fd_flags   = O_RDWR | O_CLOEXEC;
-    data.heap_flags = 0;
+    MemBlock block;
+    int retTake = Registry::instance().take(ptr, block);
+    if (retTake != au::err::kSuccess)
+        return retTake;
 
-    if (::ioctl(heapFd, DMA_HEAP_IOCTL_ALLOC, &data) < 0) {
-        XLOG_E("au::mm::native: DMA_HEAP_IOCTL_ALLOC failed: %s\n", ::strerror(errno));
-        return errnoToCode(errno);
-    }
-
-    void* p = ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, static_cast<int>(data.fd), 0);
-    if (p == MAP_FAILED) {
-        int e = errno;
-        ::close(static_cast<int>(data.fd));
-        return errnoToCode(e);
-    }
-
-    out = MemBlock{p, size, static_cast<int>(data.fd), type, BackendId::Native};
-    return au::err::kSuccess;
-    ```
+    return forBackend(block.backend).release(block);
 }
 
-int releaseDmaBuf(const MemBlock& block) noexcept
+int syncCpuToDevice(void* ptr) noexcept
 {
-    int retRelease = au::err::kSuccess;
-    if (block.ptr != nullptr && ::munmap(block.ptr, block.size) != 0) {
-        retRelease = errnoToCode(errno);
-    }
-    if (block.fd >= 0) {
-        ::close(block.fd);
-    }
-    return retRelease;
+    MemBlock block;
+    int retFind = Registry::instance().find(ptr, block);
+    if (retFind != au::err::kSuccess)
+        return retFind;
+    return forBackend(block.backend).syncCpuToDevice(block);
 }
 
-int dmaBufSync(int fd, uint64_t flags) noexcept
+int syncDeviceToCpu(void* ptr) noexcept
 {
-    dma_buf_sync sync{};
-    sync.flags = flags;
-    if (::ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync) < 0) {
-        return errnoToCode(errno);
-    }
-    return au::err::kSuccess;
+    MemBlock block;
+    int retFind = Registry::instance().find(ptr, block);
+    if (retFind != au::err::kSuccess)
+        return retFind;
+    return forBackend(block.backend).syncDeviceToCpu(block);
 }
 
-class NativeBackend final : public IBackend
+int query(void* ptr, MemBlock& out) noexcept
 {
-public:
-    BackendId   id() const noexcept override { return BackendId::Native; }
-    const char* name() const noexcept override { return "native"; }
-    bool        available() const noexcept override { return true; }
+    return Registry::instance().find(ptr, out);
+}
 
-    ``` int alloc(size_t size, MemType type, MemBlock& out) noexcept override
-    {
-        switch (type) {
-            case MemType::Pss: return allocPss(size, out);
-            case MemType::DmaCached: return allocDmaBuf(heapFdCached(), size, type, out);
-            case MemType::DmaUncached: return allocDmaBuf(heapFdUncached(), size, type, out);
-        }
+bool isManaged(void* ptr) noexcept
+{
+    MemBlock dummy;
+    return Registry::instance().find(ptr, dummy) == au::err::kSuccess;
+}
+
+// ---------------------------------------------------------------------------
+//  Backend selection
+// ---------------------------------------------------------------------------
+
+int setBackend(BackendId id) noexcept
+{
+    if (id != BackendId::Auto && id != BackendId::Pool && id != BackendId::Native) {
         return au::err::kErrorInvalidParam;
     }
+    setSelection(id);
+    return au::err::kSuccess;
+}
 
-    int release(const MemBlock& block) noexcept override
-    {
-        switch (block.type) {
-            case MemType::Pss: return releasePss(block);
-            case MemType::DmaCached:
-            case MemType::DmaUncached: return releaseDmaBuf(block);
-        }
-        return au::err::kErrorInvalidParam;
-    }
-
-    int syncCpuToDevice(const MemBlock& block) noexcept override
-    {
-        // PSS and uncached dma-buf both bypass the cache from the device's POV,
-        // so the ioctl would be a wasted syscall; treat as success.
-        if (block.type != MemType::DmaCached)
-            return au::err::kSuccess;
-        return dmaBufSync(block.fd, DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW);
-    }
-
-    int syncDeviceToCpu(const MemBlock& block) noexcept override
-    {
-        if (block.type != MemType::DmaCached)
-            return au::err::kSuccess;
-        return dmaBufSync(block.fd, DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW);
-    }
-    ```
-};
-
-}  // namespace
-
-IBackend& nativeBackend() noexcept
+BackendId currentBackend() noexcept
 {
-    // Intentionally never destroyed for consistency with poolBackend().
-    static NativeBackend* sInstance = new NativeBackend();
-    return *sInstance;
+    return effectiveSelection();
+}
+
+const char* backendName(BackendId id) noexcept
+{
+    switch (id) {
+        case BackendId::Auto: return "auto";
+        case BackendId::Pool: return "pool";
+        case BackendId::Native: return "native";
+    }
+    return "unknown";
+}
+
+// ---------------------------------------------------------------------------
+//  XMemory
+// ---------------------------------------------------------------------------
+
+XMemory::XMemory(size_t size, MemType type)
+{
+    int retAlloc = alloc(size, type, mBlock);
+    if (retAlloc != au::err::kSuccess) {
+        mBlock = MemBlock{};
+    }
+}
+
+XMemory::~XMemory()
+{
+    if (mBlock.ptr != nullptr) {
+        int retFree = free(mBlock.ptr);
+        if (retFree != au::err::kSuccess) {
+            XLOG_E("au::mm::XMemory::~XMemory free failed ret=%d ptr=%p\n", retFree, mBlock.ptr);
+        }
+    }
+}
+
+XMemory::XMemory(XMemory&& other) noexcept : mBlock(other.mBlock)
+{
+    other.mBlock = MemBlock{};
+}
+
+XMemory& XMemory::operator=(XMemory&& other) noexcept
+{
+    if (this != &other) {
+        if (mBlock.ptr != nullptr) {
+            free(mBlock.ptr);
+        }
+        mBlock = other.mBlock;
+        other.mBlock = MemBlock{};
+    }
+    return *this;
+}
+
+int XMemory::syncCpuToDevice() noexcept
+{
+    if (!valid())
+        return au::err::kErrorNotInitialized;
+    return mm::syncCpuToDevice(mBlock.ptr);
+}
+
+int XMemory::syncDeviceToCpu() noexcept
+{
+    if (!valid())
+        return au::err::kErrorNotInitialized;
+    return mm::syncDeviceToCpu(mBlock.ptr);
+}
+
+std::string XMemory::info() const
+{
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "XMemory[ptr=%p, size=%zu, fd=%d, type=%d, backend=%s]", mBlock.ptr, mBlock.size,
+                  mBlock.fd, static_cast<int>(mBlock.type), backendName(mBlock.backend));
+    return std::string(buf);
 }
 
 }  // namespace mm
