@@ -3,15 +3,14 @@
 
 /**
  * @file memory/xmemory.h
- * @brief Unified memory allocation API for Aura, with two interchangeable backends.
+ * @brief Unified memory allocation API for Aura.
  *
- * Two backends share the same public API and may coexist in a single process:
- *   - Pool   : wraps libvivo.mempool.so (CombineMemPool); preserves vendor-tuned paths.
- *   - Native : zero third-party deps; posix_memalign / mmap / dma-heap UAPI.
+ *   - Pool   : reserved for a future libvivo.mempool.so integration; unavailable now.
+ *   - Native : Linux/Android posix_memalign / mmap / dma-heap UAPI.
  *
  * Backend resolution priority (highest to lowest):
  *   1. au::mm::setBackend(BackendId)            : explicit runtime override.
- *   2. default                                  : Pool (falls back to Native if vendor SO unavailable).
+ *   2. default                                  : Auto selects Native while Pool is unavailable.
  *
  * setBackend() only affects future allocations. Each MemBlock carries the BackendId it was allocated from,
  * so free / sync / query always dispatch to the originating backend even after a switch.
@@ -38,7 +37,7 @@ enum class MemType : int
 enum class BackendId : int
 {
     Auto   = 0,  ///< Pool if available, otherwise Native.
-    Pool   = 1,  ///< libvivo.mempool.so backend.
+    Pool   = 1,  ///< Reserved; currently returns kErrorNotSupported.
     Native = 2,  ///< NDK + Linux UAPI backend.
 };
 
@@ -81,6 +80,7 @@ AU_API bool isManaged(void* ptr) noexcept;
 
 /// Override the backend used for *future* allocations. BackendId::Auto reverts to the default resolution.
 /// Already-allocated blocks keep their original backend; switching mid-stream is therefore safe.
+/// Selecting Pool currently returns kErrorNotSupported, logs a hint and leaves the selection unchanged.
 AU_API int setBackend(BackendId id) noexcept;
 
 /// Backend that the next alloc() call will use.

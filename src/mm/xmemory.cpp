@@ -6,6 +6,7 @@
 #include "log/xerror.h"
 #include "log/xlogger.h"
 #include "mm/backend.h"
+#include "mm/pool_backend.h"
 #include "mm/registry.h"
 
 namespace au {
@@ -86,6 +87,10 @@ int setBackend(BackendId id) noexcept
 {
     if (id != BackendId::Auto && id != BackendId::Pool && id != BackendId::Native) {
         return au::err::kErrorInvalidParam;
+    }
+    if (id == BackendId::Pool && !poolBackend().available()) {
+        XLOG_E("au::mm::Pool backend is not implemented; use BackendId::Native or Auto\n");
+        return au::err::kErrorNotSupported;
     }
     setSelection(id);
     return au::err::kSuccess;

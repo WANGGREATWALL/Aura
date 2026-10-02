@@ -45,6 +45,9 @@ set(AURA_SOURCES
     src/perf/xtimer.cpp
     src/perf/xtracer.cpp
     src/mm/xmemory.cpp
+    src/mm/backend.cpp
+    src/mm/registry.cpp
+    src/mm/pool_backend.cpp
     src/util/xargs.cpp
     third_party/cJSON/cJSON.c
 )
@@ -54,6 +57,11 @@ set(AURA_SOURCES
 # ============================================================================
 add_library(aura STATIC ${AURA_SOURCES})
 target_compile_definitions(aura PUBLIC AURA_STATIC)
+if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(aura PRIVATE src/mm/native_backend.cpp)
+else()
+    target_sources(aura PRIVATE src/mm/native_backend_unsupported.cpp)
+endif()
 target_include_directories(aura PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/inc
     ${CMAKE_CURRENT_BINARY_DIR}/inc

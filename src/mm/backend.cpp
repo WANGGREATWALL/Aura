@@ -18,7 +18,7 @@ std::atomic<BackendId> gSelected{BackendId::Auto};
 
 IBackend& resolveAuto() noexcept
 {
-    // Auto mode: prefer Pool if vendor SO is loadable, otherwise fall back to Native.
+    // Pool is currently a stub with available()==false, so Auto selects Native.
     if (poolBackend().available()) {
         return poolBackend();
     }
