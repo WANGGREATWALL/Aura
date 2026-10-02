@@ -25,7 +25,7 @@
  *  specific and must be handled by the caller. Recommended pattern:
  *
  *    // In your module's init (e.g. MyModule.cpp):
- *    #include "sys/xplatform.h"
+ *    #include "sys/xsystem.h"
  *    const bool shellOn =
  *        sys::getSystemPropertyValue("vendor.algo_module.enable_log_shell", 0) != 0;
  *    log::Config::get().setShellPrintEnabled(shellOn);

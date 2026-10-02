@@ -34,7 +34,8 @@ configure_file(
 # ============================================================================
 set(AURA_SOURCES
     src/sys/xdlib.cpp
-    src/sys/xplatform.cpp
+    src/sys/xsystem.cpp
+    src/sys/xsystem_vivo.cpp
     src/file/xpath.cpp
     src/file/xfile.cpp
     src/regex/xregex.cpp
@@ -52,6 +53,7 @@ set(AURA_SOURCES
 # Library
 # ============================================================================
 add_library(aura STATIC ${AURA_SOURCES})
+target_compile_definitions(aura PUBLIC AURA_STATIC)
 target_include_directories(aura PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/inc
     ${CMAKE_CURRENT_BINARY_DIR}/inc
@@ -73,7 +75,7 @@ option(ENABLE_TEST_XPATH     "Enable xpath unit test"     ON)
 option(ENABLE_TEST_XTIMER   "Enable xtimer unit test"   ON)
 option(ENABLE_TEST_XTRACER  "Enable xtracer unit test"  ON)
 option(ENABLE_TEST_XMEMORY  "Enable xmemory unit test"  ON)
-option(ENABLE_TEST_XPLATFORM "Enable xplatform unit test" ON)
+option(ENABLE_TEST_XSYSTEM  "Enable xsystem unit test"  ON)
 option(ENABLE_TEST_XERROR    "Enable xerror unit test"    ON)
 option(ENABLE_TEST_XFILE     "Enable xfile unit test"     ON)
 option(ENABLE_TEST_XIMAGE    "Enable ximage unit test"    OFF)
@@ -115,7 +117,7 @@ aura_add_test(xpath)
 aura_add_test(xtimer)
 aura_add_test(xtracer)
 aura_add_test(xmemory)
-aura_add_test(xplatform)
+aura_add_test(xsystem)
 aura_add_test(xerror)
 aura_add_test(xfile)
 aura_add_test(ximage)

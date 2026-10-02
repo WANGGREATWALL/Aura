@@ -16,7 +16,8 @@
 #include "perf/xtimer.h"
 #include "perf/xtracer.h"
 #include "regex/xregex.h"
-#include "sys/xplatform.h"
+#include "sys/xsystem.h"
+#include "sys/xsystem_vivo.h"
 #include "version.h"
 
 #endif  // AURA_H_

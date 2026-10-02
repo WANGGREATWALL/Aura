@@ -4,7 +4,7 @@
 #include <new>
 
 #include "perf/xtimer.h"
-#include "sys/xplatform.h"
+#include "sys/xsystem.h"
 
 #if AU_OS_ANDROID
 #include <fcntl.h>
