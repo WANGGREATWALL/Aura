@@ -1,5 +1,5 @@
-#ifndef XLOGGER_H
-#define XLOGGER_H
+#ifndef AURA_XLOGGER_H_
+#define AURA_XLOGGER_H_
 
 /**
  * @file xlogger.h
@@ -37,10 +37,9 @@
  *   XLOG_E("open failed: %s\n", path);
  */
 
-#include <atomic>
 #include <cstdlib>
 
-#include "sys/xplatform.h"
+#include "sys/xsystem.h"
 
 namespace au {
 namespace log {
@@ -56,15 +55,17 @@ enum class Level : int
     Silent  = 6,
 };
 
-/// Singleton holding logger configuration.
-class Config
+/**
+ * @brief Singleton holding logger configuration.
+ *
+ * Implementation details (atomics, mutex, tag buffer) are hidden behind a
+ * Pimpl pointer so that this header remains free of <atomic> and other
+ * heavy standard-library includes.
+ */
+class AU_API Config
 {
 public:
-    static Config& get() noexcept
-    {
-        static Config instance;
-        return instance;
-    }
+    static Config& get() noexcept;
 
     void        setTag(const char* tag) noexcept;
     const char* getTag() const noexcept;
@@ -72,28 +73,24 @@ public:
     /// Returns true exactly once if setTag() was never called.
     bool tryConsumeTagWarning() noexcept;
 
-    void  setLevel(Level level) noexcept { mLevel.store(level, std::memory_order_relaxed); }
-    Level getLevel() const noexcept { return mLevel.load(std::memory_order_relaxed); }
+    void  setLevel(Level level) noexcept;
+    Level getLevel() const noexcept;
 
-    void setColorEnabled(bool on) noexcept { mColorEnabled.store(on, std::memory_order_relaxed); }
-    bool isColorEnabled() const noexcept { return mColorEnabled.load(std::memory_order_relaxed); }
+    void setColorEnabled(bool on) noexcept;
+    bool isColorEnabled() const noexcept;
 
-#if AU_OS_ANDROID
-    void setShellPrintEnabled(bool on) noexcept { mShellPrint.store(on, std::memory_order_relaxed); }
-
-    bool isShellPrintEnabled() const noexcept { return mShellPrint.load(std::memory_order_relaxed); }
-#endif
+    void setShellPrintEnabled(bool on) noexcept;
+    bool isShellPrintEnabled() const noexcept;
 
 private:
-    Config()                         = default;
-    Config(const Config&)            = delete;
+    Config() noexcept;
+    Config(const Config&) = delete;
     Config& operator=(const Config&) = delete;
 
-    std::atomic<Level> mLevel{Level::Info};
-    std::atomic<bool>  mColorEnabled{true};
-#if AU_OS_ANDROID
-    std::atomic<bool> mShellPrint{false};
-#endif
+    // Opaque implementation — defined in xlogger.cpp.
+    // Points to a static Impl instance; lifetime equals the process lifetime.
+    struct Impl;
+    Impl* mImpl;
 };
 
 namespace detail {
@@ -179,4 +176,4 @@ void logPrintFLoc(Level level, const char* file, int line, const char* fmt, ...)
         }                                                                                                             \
     } while (0)
 
-#endif  // XLOGGER_H
+#endif  // AURA_XLOGGER_H_
