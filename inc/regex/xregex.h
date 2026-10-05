@@ -1,90 +1,107 @@
-#ifndef AURA_REGEX_XREGEX_H_
-#define AURA_REGEX_XREGEX_H_
+#ifndef AURA_XREGEX_H_
+#define AURA_XREGEX_H_
 
-/**
- * @file xregex.h
- * @brief Regex utilities: match, search, extract, replace, split.
- *
- * @example
- *   using namespace au::regex;
- *
- *   // Check if pattern exists in text
- *   bool ok = match("Hello World", "Hello");
- *
- *   // Extract capture groups
- *   auto groups = extractGroups("2026-04-30", R"((\d{4})-(\d{2})-(\d{2}))");
- *   // groups = {"2026", "04", "30"}
- *
- *   // Split by pattern
- *   auto parts = split("a,b,,c", ",");
- *   // parts = {"a", "b", "", "c"}
- */
-
-#include <regex>
+#include <cstddef>
 #include <string>
 #include <vector>
 
+#include "sys/xsystem.h"  // for AU_API
+
 namespace au {
-namespace regex {
+namespace re {
 
 /**
- * @brief Check if pattern matches anywhere in the string.
- * @example match("hello@world.com", R"(\w+@\w+\.\w+)") => true
+ * @brief Test whether a regex pattern matches anywhere in the string.
+ *
+ * @param content  The string to search in.
+ * @param regex    ECMAScript regex pattern.
+ * @return true if at least one match is found.
+ *
+ * @code
+ *   au::re::matchRegexInString("hello123", "\\d+");        // true
+ *   au::re::matchRegexInString("hello",    "\\d+");        // false
+ *   au::re::matchRegexInString("IMG_001.png", "\\.png$"); // true
+ * @endcode
  */
-bool match(const std::string& content, const std::string& pattern);
+AU_API bool matchRegexInString(const std::string& content, const std::string& regex);
 
 /**
- * @brief Check if the entire string matches the pattern.
- * @example fullMatch("12345", R"(\d+)") => true
- *          fullMatch("123ab", R"(\d+)") => false
+ * @brief Return the first substring that matches the regex pattern.
+ *
+ * @param content  The string to search in.
+ * @param regex    ECMAScript regex pattern.
+ * @return The first matched substring, or empty string if no match.
+ *
+ * @code
+ *   au::re::getFirstMatchInString("w=128,h=256", "\\d+"); // "128"
+ *   au::re::getFirstMatchInString("no digits",  "\\d+"); // ""
+ * @endcode
  */
-bool fullMatch(const std::string& content, const std::string& pattern);
+AU_API std::string getFirstMatchInString(const std::string& content, const std::string& regex);
 
 /**
- * @brief Get the first match in the string.
- * @return Matched substring, or empty string if no match.
+ * @brief Return the last substring that matches the regex pattern.
+ *
+ * @param content  The string to search in.
+ * @param regex    ECMAScript regex pattern.
+ * @return The last matched substring, or empty string if no match.
+ *
+ * @code
+ *   au::re::getLastMatchInString("w=128,h=256", "\\d+"); // "256"
+ * @endcode
  */
-std::string getFirstMatch(const std::string& content, const std::string& pattern);
+AU_API std::string getLastMatchInString(const std::string& content, const std::string& regex);
 
 /**
- * @brief Get the last match in the string.
- * @return Matched substring, or empty string if no match.
+ * @brief Collect all non-overlapping substrings that match the regex pattern.
+ *
+ * @param content  The string to search in.
+ * @param regex    ECMAScript regex pattern.
+ * @return Vector of matched substrings (empty if no match).
+ *
+ * @code
+ *   au::re::getAllMatchesInString("a1b22c333", "\\d+");
+ *   // returns {"1", "22", "333"}
+ * @endcode
  */
-std::string getLastMatch(const std::string& content, const std::string& pattern);
+AU_API std::vector<std::string> getAllMatchesInString(const std::string& content, const std::string& regex);
 
 /**
- * @brief Get all non-overlapping matches.
- * @example getAllMatches("aaa bbb aaa", "aaa") => {"aaa", "aaa"}
+ * @brief Replace all occurrences that match the regex pattern.
+ *
+ * @param content      The original string.
+ * @param regex        ECMAScript regex pattern.
+ * @param replacement  The replacement string (supports $1, $2 back-references).
+ * @return The resulting string after all replacements, or original if no match.
+ *
+ * @code
+ *   au::re::replaceAllMatchesInString("a1b2c3", "\\d", "X");
+ *   // returns "aXbXcX"
+ *
+ *   au::re::replaceAllMatchesInString("2024-01-15", "(\\d{4})-(\\d{2})", "$2/$1");
+ *   // returns "01/2024-15"
+ * @endcode
  */
-std::vector<std::string> getAllMatches(const std::string& content, const std::string& pattern);
+AU_API std::string replaceAllMatchesInString(const std::string& content, const std::string& regex, const std::string& replacement);
 
 /**
- * @brief Extract capture groups from the first match.
- * @return Vector of captured group strings (excluding group 0 = full match).
- * @example extractGroups("2026-04-30", R"((\d{4})-(\d{2})-(\d{2}))") => {"2026","04","30"}
+ * @brief Replace only the n-th occurrence (0-based) that matches the regex pattern.
+ *
+ * @param content      The original string.
+ * @param regex        ECMAScript regex pattern.
+ * @param replacement  The replacement string.
+ * @param idx          Zero-based index of the match to replace.
+ * @return The resulting string with the specified match replaced,
+ *         or original if no match at that index.
+ *
+ * @code
+ *   au::re::replaceSpecificMatchInString("a1b2c3", "\\d", "X", 0); // "aXb2c3"
+ *   au::re::replaceSpecificMatchInString("a1b2c3", "\\d", "X", 2); // "a1b2cX"
+ * @endcode
  */
-std::vector<std::string> extractGroups(const std::string& content, const std::string& pattern);
+AU_API std::string replaceSpecificMatchInString(const std::string& content, const std::string& regex, const std::string& replacement, std::size_t idx);
 
-/**
- * @brief Replace all matches with the replacement string.
- * @example replaceAll("hello hello", "hello", "hi") => "hi hi"
- */
-std::string replaceAll(const std::string& content, const std::string& pattern, const std::string& replacement);
+} // namespace re
+} // namespace au
 
-/**
- * @brief Replace the Nth match (0-indexed).
- * @example replaceNth("aa bb aa", "aa", "cc", 1) => "aa bb cc"
- */
-std::string replaceNth(const std::string& content, const std::string& pattern, const std::string& replacement,
-                       int index);
-
-/**
- * @brief Split string by regex pattern.
- * @example split("a,b,,c", ",") => {"a", "b", "", "c"}
- */
-std::vector<std::string> split(const std::string& content, const std::string& pattern);
-
-}  // namespace regex
-}  // namespace au
-
-#endif  // AURA_REGEX_XREGEX_H_
+#endif // AURA_XREGEX_H_
