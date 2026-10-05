@@ -31,6 +31,9 @@
 #include "sys/xsystem.h"
 
 #if AU_OS_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 #else
 #include <dlfcn.h>
@@ -52,6 +55,12 @@ public:
     static constexpr int kErrorOpenFailed = -1;
     static constexpr int kErrorInvalidHandle = -2;
 
+#if AU_OS_WINDOWS
+    static constexpr int kDefaultLoadFlags = 0;
+#else
+    static constexpr int kDefaultLoadFlags = RTLD_NOW | RTLD_LOCAL;
+#endif
+
     XDLib() = default;
     ~XDLib();
 
@@ -70,7 +79,7 @@ public:
      *              for vendor libraries that spawn background threads).
      * @return kSuccess on success, kErrorOpenFailed on failure.
      */
-    int load(const std::string& path, int flags = RTLD_NOW | RTLD_LOCAL);
+    int load(const std::string& path, int flags = kDefaultLoadFlags);
 
     /**
      * @brief Try loading from multiple candidate paths, stop on first success.
@@ -81,7 +90,7 @@ public:
      * @example
      *   lib.load({"/vendor/lib64/libOpenCL.so", "/system/lib64/libOpenCL.so"});
      */
-    int load(const std::vector<std::string>& paths, int flags = RTLD_NOW | RTLD_LOCAL);
+    int load(const std::vector<std::string>& paths, int flags = kDefaultLoadFlags);
 
     /**
      * @brief Convenience overload: accept a brace-enclosed list of candidate paths.
@@ -96,7 +105,7 @@ public:
      * @example
      *   lib.load({"/vendor/lib64/libOpenCL.so", "/system/lib64/libOpenCL.so"});
      */
-    int load(std::initializer_list<std::string> paths, int flags = RTLD_NOW | RTLD_LOCAL)
+    int load(std::initializer_list<std::string> paths, int flags = kDefaultLoadFlags)
     {
         return load(std::vector<std::string>(paths), flags);
     }

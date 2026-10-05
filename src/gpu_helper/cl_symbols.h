@@ -1,15 +1,14 @@
 #ifndef CL_SYMBOLS_H_
 #define CL_SYMBOLS_H_
 
-#include <string>
-#include <vector>
+#include "sys/xsystem.h"
 
-#include "log/xlogger.h"
-#include "sys/xdlib.h"
-
-using au::sys::XDLib;
-
-#ifdef __APPLE__
+// Include this header before other OpenCL headers in each translation unit.
+// Apple uses OpenCL 1.2; other platforms default to 2.0 with a 1.2 minimum.
+#if AU_OS_APPLE
+#if defined(CL_HPP_) && CL_HPP_TARGET_OPENCL_VERSION != 120
+#error "Include cl_symbols.h before OpenCL C++ headers on Apple platforms"
+#endif
 #undef CL_TARGET_OPENCL_VERSION
 #define CL_TARGET_OPENCL_VERSION 120
 #undef CL_HPP_TARGET_OPENCL_VERSION
@@ -18,70 +17,80 @@ using au::sys::XDLib;
 #define CL_HPP_MINIMUM_OPENCL_VERSION 120
 #else
 #ifndef CL_TARGET_OPENCL_VERSION
+#ifdef CL_HPP_TARGET_OPENCL_VERSION
+#define CL_TARGET_OPENCL_VERSION CL_HPP_TARGET_OPENCL_VERSION
+#else
 #define CL_TARGET_OPENCL_VERSION 200
 #endif
+#endif
 #ifndef CL_HPP_TARGET_OPENCL_VERSION
-#define CL_HPP_TARGET_OPENCL_VERSION 200
+#define CL_HPP_TARGET_OPENCL_VERSION CL_TARGET_OPENCL_VERSION
 #endif
 #ifndef CL_HPP_MINIMUM_OPENCL_VERSION
 #define CL_HPP_MINIMUM_OPENCL_VERSION 120
 #endif
 #endif
+
+#if CL_TARGET_OPENCL_VERSION < CL_HPP_TARGET_OPENCL_VERSION
+#error "CL_TARGET_OPENCL_VERSION must cover CL_HPP_TARGET_OPENCL_VERSION"
+#endif
+
 #include "CL/opencl.hpp"
+#include "sys/xdlib.h"
 
-
+namespace au {
 namespace gpu {
 
 /**
- * @brief Singleton that holds the dynamically loaded OpenCL library.
+ * @brief Process-wide OpenCL loader, initialized once on first use.
  *
- * Usage in trampoline functions (cl_symbols.cpp):
- *   return XDLIB_GET(gpu::CLSymbols::lib(), clSomeFunc)(args...);
+ * The library is immutable after construction and owned until static teardown.
+ * OpenCL objects must be destroyed before that teardown. No reload/unload API
+ * is exposed, so cached pointers remain valid throughout normal operation.
+ * Each C trampoline caches its own typed pointer, including a missing symbol.
+ * These entry points must not be called recursively while the loader initializes.
  */
-class CLSymbols
+class CLSymbols final
 {
 public:
-    static au::sys::XDLib& lib()
+    static bool isLoaded() noexcept;
+
+    // Cold path only: wrappers call this once per symbol. XDLib contains the
+    // synchronized name cache; allocation/lookup failures cannot cross the C ABI.
+    template <typename Func>
+    static Func* get(const char* name) noexcept
     {
-        static CLSymbols instance;
-        return instance.mLib;
+        if (name == nullptr || *name == '\0') {
+            return nullptr;
+        }
+        try {
+            CLSymbols& loader = instance();
+            return loader.mLoaded ? loader.mLib.get<Func>(name) : nullptr;
+        } catch (...) {
+            return nullptr;
+        }
     }
 
-    ~CLSymbols() = default;
+    CLSymbols(const CLSymbols&) = delete;
+    CLSymbols& operator=(const CLSymbols&) = delete;
+    CLSymbols(CLSymbols&&) = delete;
+    CLSymbols& operator=(CLSymbols&&) = delete;
 
 private:
-    CLSymbols()
-    {
-        int ret = mLib.load(mLibPaths);
-        XCHECK(ret == err::kSuccess);
-    }
+    CLSymbols();
+    ~CLSymbols() = default;
+    static CLSymbols& instance();
 
-    au::sys::XDLib mLib;
-
-    std::vector<std::string> mLibPaths = {"/vendor/lib64/libOpenCL.so",
-
-                                          // __aarch64__
-                                          "/system/vendor/lib64/libOpenCL.so", "/system/lib64/libOpenCL.so",
-
-                                          // __aarch32__
-                                          "/system/vendor/lib/libOpenCL.so", "/system/lib/libOpenCL.so",
-
-                                          // windows default
-                                          "C:/Windows/System32/opencl.dll",
-
-                                          // NVIDIA CUDA
-                                          "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.6/bin/OpenCL.dll",
-                                          "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.4/bin/OpenCL.dll",
-
-                                          // AMD APP SDK
-                                          "C:/Program Files (x86)/AMD APP/bin/x86_64/OpenCL.dll",
-                                          "C:/Program Files (x86)/AMD APP/bin/x86/OpenCL.dll",
-
-                                          // Intel SDK
-                                          "C:/Program Files (x86)/Intel/OpenCL SDK/6.3/bin/x64/OpenCL.dll",
-                                          "C:/Program Files (x86)/Intel/OpenCL SDK/6.3/bin/x86/OpenCL.dll"};
+    sys::XDLib mLib;
+    bool mLoaded = false;
 };
 
-}  // namespace gpu
+} // namespace gpu
+} // namespace au
 
-#endif  // CL_SYMBOLS_H_
+// Compatibility with the existing gpu_helper namespace. New code uses au::gpu.
+namespace gpu {
+using CLSymbols = ::au::gpu::CLSymbols;
+}
+
+#endif // CL_SYMBOLS_H_
