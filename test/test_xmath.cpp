@@ -3,148 +3,108 @@
 #include "gtest/gtest.h"
 #include "math/xmath.h"
 
-using namespace au::math;
+TEST(XMath, ConstantsAndAngles)
+{
+    EXPECT_NEAR(au::math::PI, 3.14159265358979323846, 1e-15);
+    EXPECT_DOUBLE_EQ(au::math::TWO_PI, 2.0 * au::math::PI);
+    EXPECT_DOUBLE_EQ(au::math::HALF_PI, au::math::PI / 2.0);
+    EXPECT_NEAR(au::math::E, 2.71828182845904523536, 1e-15);
+    EXPECT_NEAR(au::math::SQRT2, 1.41421356237309504880, 1e-15);
+    EXPECT_FLOAT_EQ(au::math::EPSILON, 1e-6f);
+    EXPECT_DOUBLE_EQ(au::math::EPSILOND, 1e-10);
 
-TEST(XMath, Constants) {
-    EXPECT_NEAR(kPi, 3.14159265358979323846, 1e-15);
-    EXPECT_NEAR(kE,  2.71828182845904523536, 1e-15);
-    EXPECT_FLOAT_EQ(kEpsilonF, 1e-6f);
+    EXPECT_NEAR(au::math::deg2rad(180.0), au::math::PI, au::math::EPSILOND);
+    EXPECT_NEAR(au::math::rad2deg(au::math::PI), 180.0, au::math::EPSILOND);
+    EXPECT_DOUBLE_EQ(au::math::deg2rad(0.0), 0.0);
+    EXPECT_NEAR(au::math::deg2rad(-180.0), -au::math::PI, au::math::EPSILOND);
+    EXPECT_NEAR(au::math::rad2deg(-au::math::PI), -180.0, au::math::EPSILOND);
 }
 
-TEST(XMath, MinMax) {
-    EXPECT_EQ(minOf(3, 5), 3);
-    EXPECT_EQ(maxOf(3, 5), 5);
-    EXPECT_EQ(minOf(3, 1, 5), 1);
-    EXPECT_EQ(maxOf(3, 1, 5), 5);
+TEST(XMath, MinMaxAndClamp)
+{
+    EXPECT_EQ(au::math::minOf(3, 5), 3);
+    EXPECT_EQ(au::math::maxOf(3, 5), 5);
+    EXPECT_EQ(au::math::minOf(3, 1, 5), 1);
+    EXPECT_EQ(au::math::maxOf(3, 1, 5), 5);
+
+    EXPECT_EQ(au::math::clampToRange(5, 0, 10), 5);
+    EXPECT_EQ(au::math::clampToRange(-1, 0, 10), 0);
+    EXPECT_EQ(au::math::clampToRange(15, 0, 10), 10);
+    EXPECT_EQ(au::math::clampToUint8(300), 255);
+    EXPECT_EQ(au::math::clampToUint8(-5), 0);
+    EXPECT_EQ(au::math::clampToUint8(255), 255);
+    EXPECT_EQ(au::math::clampToUint16(70000), 65535);
+    EXPECT_EQ(au::math::clampToUint16(-1), 0);
+    EXPECT_EQ(au::math::clampToUint16(65535), 65535);
 }
 
-TEST(XMath, Clamp) {
-    EXPECT_EQ(clamp(5, 0, 10), 5);
-    EXPECT_EQ(clamp(-1, 0, 10), 0);
-    EXPECT_EQ(clamp(15, 0, 10), 10);
-    EXPECT_EQ(clampToU8(300), 255);
-    EXPECT_EQ(clampToU8(-5), 0);
-    EXPECT_EQ(clampToU16(70000), 65535);
+TEST(XMath, Arithmetic)
+{
+    EXPECT_EQ(au::math::abs(-7), 7);
+    EXPECT_FLOAT_EQ(au::math::abs(-1.5f), 1.5f);
+    EXPECT_DOUBLE_EQ(au::math::abs(-3.14), 3.14);
+    EXPECT_EQ(au::math::sqr(4), 16);
+    EXPECT_EQ(au::math::cube(-3), -27);
+    EXPECT_DOUBLE_EQ(au::math::lerp(0.0, 10.0, 0.25), 2.5);
+    EXPECT_EQ(au::math::lerp(0, 10, 0.25), 2);
+
+    EXPECT_FLOAT_EQ(au::math::powf(2.0f, 3.0f), 8.0f);
+    EXPECT_DOUBLE_EQ(au::math::powd(2.0, 10.0), 1024.0);
+    EXPECT_FLOAT_EQ(au::math::sqrtf(16.0f), 4.0f);
+    EXPECT_NEAR(au::math::sqrtd(2.0), au::math::SQRT2, au::math::EPSILOND);
+
+    EXPECT_TRUE(au::math::approxEqual(1.0f, 1.0f + au::math::EPSILON / 2.0f));
+    EXPECT_FALSE(au::math::approxEqual(1.0f, 1.0f + 10.0f * au::math::EPSILON));
+    EXPECT_TRUE(au::math::approxEqual(1.0, 1.0 + au::math::EPSILOND / 2.0));
+    EXPECT_FALSE(au::math::approxEqual(1.0, 1.0 + 10.0 * au::math::EPSILOND));
 }
 
-TEST(XMath, Alignment) {
-    EXPECT_TRUE(isAlignedTo2(4));
-    EXPECT_FALSE(isAlignedTo2(3));
-    EXPECT_TRUE(isAlignedTo8(16));
-    EXPECT_TRUE(isAlignedToN(64, 16));
-    EXPECT_FALSE(isAlignedToN(65, 16));
-
-    EXPECT_EQ(ceilTo2(3), 4);
-    EXPECT_EQ(ceilTo4(5), 8);
-    EXPECT_EQ(ceilTo8(9), 16);
-    EXPECT_EQ(ceilTo16(17), 32);
-    EXPECT_EQ(ceilToN(13, 8), 16);
-
-    EXPECT_EQ(floorTo2(3), 2);
-    EXPECT_EQ(floorTo4(7), 4);
-    EXPECT_EQ(floorToN(15, 8), 8);
-
-    EXPECT_TRUE(isPowerOf2(1));
-    EXPECT_TRUE(isPowerOf2(256));
-    EXPECT_FALSE(isPowerOf2(3));
-    EXPECT_FALSE(isPowerOf2(0));
+TEST(XMath, RangeChecks)
+{
+    EXPECT_TRUE(au::math::isInRangeCC(0, 0, 10));
+    EXPECT_TRUE(au::math::isInRangeCC(10, 0, 10));
+    EXPECT_FALSE(au::math::isInRangeOO(0, 0, 10));
+    EXPECT_TRUE(au::math::isInRangeOO(5, 0, 10));
+    EXPECT_TRUE(au::math::isInRangeOC(10, 0, 10));
+    EXPECT_FALSE(au::math::isInRangeOC(0, 0, 10));
+    EXPECT_TRUE(au::math::isInRangeCO(0, 0, 10));
+    EXPECT_FALSE(au::math::isInRangeCO(10, 0, 10));
 }
 
-TEST(XMath, RangeChecks) {
-    EXPECT_TRUE(inRangeCC(5, 0, 10));
-    EXPECT_TRUE(inRangeCC(0, 0, 10));
-    EXPECT_FALSE(inRangeOO(0, 0, 10));
-    EXPECT_TRUE(inRangeOC(10, 0, 10));
-    EXPECT_FALSE(inRangeCO(10, 0, 10));
+TEST(XMath, Alignment)
+{
+    EXPECT_TRUE(au::math::isAlignedTo(64, 16));
+    EXPECT_FALSE(au::math::isAlignedTo(65, 16));
+    EXPECT_EQ(au::math::ceilTo(13, 8), 16);
+    EXPECT_EQ(au::math::floorTo(15, 8), 8);
+
+    EXPECT_TRUE(au::math::isAlignedToOdd(3));
+    EXPECT_FALSE(au::math::isAlignedToOdd(4));
+    EXPECT_EQ(au::math::ceilToOdd(4), 5);
+    EXPECT_EQ(au::math::floorToOdd(4), 3);
+
+    EXPECT_TRUE(au::math::isAlignedTo2(4));
+    EXPECT_FALSE(au::math::isAlignedTo2(3));
+    EXPECT_TRUE(au::math::isAlignedTo4(8));
+    EXPECT_TRUE(au::math::isAlignedTo8(16));
+    EXPECT_EQ(au::math::ceilTo2(3), 4);
+    EXPECT_EQ(au::math::ceilTo4(5), 8);
+    EXPECT_EQ(au::math::ceilTo8(9), 16);
+    EXPECT_EQ(au::math::floorTo2(3), 2);
+    EXPECT_EQ(au::math::floorTo4(7), 4);
+    EXPECT_EQ(au::math::floorTo8(15), 8);
+
+    EXPECT_TRUE(au::math::isPowerOf2(1));
+    EXPECT_TRUE(au::math::isPowerOf2(256));
+    EXPECT_FALSE(au::math::isPowerOf2(3));
+    EXPECT_FALSE(au::math::isPowerOf2(0));
 }
 
-TEST(XMath, Trig) {
-    EXPECT_NEAR(sinF(0.0f), 0.0f, kEpsilonF);
-    EXPECT_NEAR(cosD(0.0), 1.0, kEpsilonD);
-    EXPECT_NEAR(deg2rad(180.0), kPi, kEpsilonD);
-    EXPECT_NEAR(rad2deg(kPi), 180.0, kEpsilonD);
-}
-
-// ============================================================================
-// Additional constants
-// ============================================================================
-
-TEST(XMath, MoreConstants) {
-    EXPECT_DOUBLE_EQ(kTwoPi, 2.0 * kPi);
-    EXPECT_DOUBLE_EQ(kHalfPi, kPi / 2.0);
-    EXPECT_DOUBLE_EQ(kEpsilonD, 1e-12);
-}
-
-// ============================================================================
-// abs
-// ============================================================================
-
-TEST(XMath, Abs) {
-    EXPECT_EQ(abs(5), 5);
-    EXPECT_EQ(abs(0), 0);
-    EXPECT_EQ(abs(-7), 7);
-    EXPECT_EQ(abs(-1.5f), 1.5f);
-    EXPECT_EQ(abs(-3.14), 3.14);
-}
-
-// ============================================================================
-// clamp edge cases
-// ============================================================================
-
-TEST(XMath, ClampEdgeCases) {
-    EXPECT_EQ(clampToU8(0), 0);
-    EXPECT_EQ(clampToU8(255), 255);
-    EXPECT_EQ(clampToU16(0), 0);
-    EXPECT_EQ(clampToU16(65535), 65535);
-    EXPECT_EQ(clampToU16(-1), 0);
-}
-
-// ============================================================================
-// power / sqrt
-// ============================================================================
-
-TEST(XMath, Power) {
-    EXPECT_FLOAT_EQ(powF(2.0f, 3.0f), 8.0f);
-    EXPECT_DOUBLE_EQ(powD(2.0, 10.0), 1024.0);
-    EXPECT_DOUBLE_EQ(powD(3.0, 0.0), 1.0);
-}
-
-TEST(XMath, Sqrt) {
-    EXPECT_FLOAT_EQ(sqrtF(16.0f), 4.0f);
-    EXPECT_DOUBLE_EQ(sqrtD(2.0), 1.4142135623730951);
-    EXPECT_DOUBLE_EQ(sqrtD(0.0), 0.0);
-}
-
-// ============================================================================
-// Full trig coverage
-// ============================================================================
-
-TEST(XMath, TrigFullCoverage) {
-    EXPECT_NEAR(sinD(0.0), 0.0, kEpsilonD);
-    EXPECT_NEAR(cosF(0.0f), 1.0f, kEpsilonF);
-    EXPECT_NEAR(tanF(0.0f), 0.0f, kEpsilonF);
-    EXPECT_DOUBLE_EQ(tanD(0.0), 0.0);
-
-    EXPECT_NEAR(asinF(0.0f), 0.0f, kEpsilonF);
-    EXPECT_DOUBLE_EQ(asinD(0.0), 0.0);
-    EXPECT_NEAR(acosF(1.0f), 0.0f, kEpsilonF);
-    EXPECT_DOUBLE_EQ(acosD(1.0), 0.0);
-    EXPECT_NEAR(atanF(0.0f), 0.0f, kEpsilonF);
-    EXPECT_DOUBLE_EQ(atanD(0.0), 0.0);
-
-    EXPECT_NEAR(atan2F(0.0f, 1.0f), 0.0f, kEpsilonF);
-    EXPECT_DOUBLE_EQ(atan2D(0.0, 1.0), 0.0);
-}
-
-// ============================================================================
-// angle conversion edge cases
-// ============================================================================
-
-TEST(XMath, AngleConversionEdgeCases) {
-    EXPECT_DOUBLE_EQ(deg2rad(0.0), 0.0);
-    EXPECT_DOUBLE_EQ(deg2rad(-180.0), -kPi);
-    EXPECT_DOUBLE_EQ(rad2deg(0.0), 0.0);
-    EXPECT_DOUBLE_EQ(rad2deg(-kPi), -180.0);
+TEST(XMath, Trigonometry)
+{
+    EXPECT_NEAR(au::math::sinf(0.0f), 0.0f, au::math::EPSILON);
+    EXPECT_NEAR(au::math::cosf(0.0f), 1.0f, au::math::EPSILON);
+    EXPECT_NEAR(au::math::tanf(0.0f), 0.0f, au::math::EPSILON);
 }
 
 #endif  // ENABLE_TEST_XMATH

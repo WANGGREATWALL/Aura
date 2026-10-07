@@ -1,238 +1,106 @@
 #if ENABLE_TEST_XPATH
 
-#include <filesystem>
-#include <fstream>
+#include <string>
 
 #include "gtest/gtest.h"
 #include "file/xpath.h"
 
-using au::file::XPath;
+namespace {
 
-TEST(XPath, Construction) {
-    XPath p("/tmp/test/file.txt");
-    EXPECT_EQ(p.filename(), "file.txt");
-    EXPECT_EQ(p.stem(), "file");
-    EXPECT_EQ(p.extension(), ".txt");
-    EXPECT_EQ(p.parent().str(), "/tmp/test");
+#ifdef _WIN32
+const char kSeparator = '\\';
+const char* const kRoot = "C:\\";
+#else
+const char kSeparator = '/';
+const char* const kRoot = "/";
+#endif
+
+const std::string kSep(1, kSeparator);
+
+}  // namespace
+
+TEST(XPath, ConstructionAndDecomposition) {
+    const au::file::XPath path("dir//sub///file.tar.gz");
+    EXPECT_EQ(path.string(), "dir" + kSep + "sub" + kSep + "file.tar.gz");
+    EXPECT_STREQ(path.c_str(), path.string().c_str());
+    EXPECT_EQ(static_cast<std::string>(path), path.string());
+    EXPECT_EQ(path.filename().string(), "file.tar.gz");
+    EXPECT_EQ(path.stem().string(), "file.tar");
+    EXPECT_EQ(path.extension().string(), ".gz");
+    EXPECT_EQ(path.parent().string(), "dir" + kSep + "sub" + kSep);
+
+    EXPECT_EQ(au::file::XPath("file").parent().string(), "." + kSep);
+    EXPECT_EQ(au::file::XPath("dir/sub/").parent().string(), "dir" + kSep + "sub" + kSep);
+    EXPECT_EQ(au::file::XPath("dir/sub/").filename().string(), "sub");
+    EXPECT_TRUE(au::file::XPath(".hidden").extension().isEmpty());
+    EXPECT_EQ(au::file::XPath(".hidden").stem().string(), ".hidden");
+    EXPECT_TRUE(au::file::XPath(nullptr).isEmpty());
 }
 
-TEST(XPath, Concatenation) {
-    XPath p("/home/user");
-    XPath full = p / "data" / "file.txt";
-    EXPECT_EQ(full.str(), "/home/user/data/file.txt");
+TEST(XPath, PredicatesAndTransformations) {
+    EXPECT_TRUE(au::file::XPath().isEmpty());
+    EXPECT_FALSE(au::file::XPath("folder").isDirectory());
+    EXPECT_TRUE(au::file::XPath("folder/").isDirectory());
+    EXPECT_FALSE(au::file::XPath("folder").isAbsolute());
+    EXPECT_TRUE(au::file::XPath(kRoot).isAbsolute());
+    EXPECT_TRUE(au::file::XPath(kRoot).isRoot());
+    EXPECT_FALSE(au::file::XPath("folder/").isRoot());
+
+    const au::file::XPath folder("folder");
+    EXPECT_EQ(folder.withTrailingSeparator().string(), "folder" + kSep);
+    EXPECT_EQ(au::file::XPath("folder/").withoutTrailingSeparator().string(), "folder");
+    EXPECT_EQ(folder.string(), "folder");
+
+    const au::file::XPath file("archive.tar.GZ");
+    EXPECT_EQ(file.withoutExtension("gz").string(), "archive.tar");
+    EXPECT_EQ(file.withoutExtension(".GZ").string(), "archive.tar");
+    EXPECT_EQ(file.withoutExtension("zip").string(), "archive.tar.GZ");
+    EXPECT_EQ(file.replaceExtension("zip").string(), "archive.tar.zip");
+    EXPECT_EQ(au::file::XPath("file").replaceExtension(".txt").string(), "file.txt");
+    EXPECT_EQ(file.string(), "archive.tar.GZ");
 }
 
-TEST(XPath, Queries) {
-    XPath p("/tmp");
-    EXPECT_TRUE(p.exists());
-    EXPECT_TRUE(p.isDirectory());
-    EXPECT_FALSE(p.isFile());
+TEST(XPath, JoinAndMakeFilename) {
+    const au::file::XPath base("base");
+    const au::file::XPath path = base / "sub" / "file.txt";
+    EXPECT_EQ(path.string(), "base" + kSep + "sub" + kSep + "file.txt");
+    EXPECT_EQ(base.string(), "base");
+    EXPECT_EQ(au::file::XPath::join(base, au::file::XPath("leaf")).string(), "base" + kSep + "leaf");
+    EXPECT_EQ((base / std::string("leaf")).string(), "base" + kSep + "leaf");
+    EXPECT_EQ(au::file::XPath::join(au::file::XPath(), au::file::XPath("leaf")).string(), "leaf");
+    EXPECT_TRUE(path == au::file::XPath(path.string()));
+    EXPECT_TRUE(path != base);
+
+    EXPECT_EQ(au::file::XPath::makeFilename(au::file::XPath("out"), au::file::XPath("image"), 0, "png").string(),
+              "out" + kSep + "image.png");
+    EXPECT_EQ(au::file::XPath::makeFilename(au::file::XPath("out"), au::file::XPath("image"), 3, "png").string(),
+              "out" + kSep + "image_3.png");
+    EXPECT_EQ(au::file::XPath::makeFilename("out", "image", "png").string(),
+              "out" + kSep + "image.png");
 }
 
-TEST(XPath, StringConversion) {
-    XPath p("/tmp/test");
-    std::string s = p.str();
-    EXPECT_EQ(s, "/tmp/test");
+TEST(XPath, RegexAndImageSize) {
+    const au::file::XPath path("dir/img_128x256_640x480.jpg");
+    EXPECT_EQ(path.firstMatch(R"([0-9]+x[0-9]+)"), "128x256");
+    EXPECT_EQ(path.lastMatch(R"([0-9]+x[0-9]+)"), "640x480");
+    EXPECT_EQ(path.firstMatch("missing"), "");
+    EXPECT_EQ(path.lastMatch("missing"), "");
 
-    XPath p2(s);
-    EXPECT_EQ(p, p2);
-}
+    const au::file::XPath::ImageSize first = path.firstImageSize();
+    const au::file::XPath::ImageSize last = path.lastImageSize();
+    EXPECT_EQ(first.width, 128u);
+    EXPECT_EQ(first.height, 256u);
+    EXPECT_EQ(last.width, 640u);
+    EXPECT_EQ(last.height, 480u);
+    EXPECT_EQ(path.stemBeforeFirstSize(), "img");
+    EXPECT_EQ(path.stemBeforeLastSize(), "img_128x256");
 
-TEST(XPath, EmptyPath) {
-    XPath p;
-    EXPECT_TRUE(p.isEmpty());
-}
-
-// ============================================================================
-// String conversion
-// ============================================================================
-
-TEST(XPath, CStr) {
-    XPath p("/tmp/test");
-    EXPECT_STREQ(p.c_str(), "/tmp/test");
-}
-
-TEST(XPath, OperatorString) {
-    XPath p("/a/b");
-    std::string s = p;
-    EXPECT_EQ(s, "/a/b");
-}
-
-// ============================================================================
-// Operator /=
-// ============================================================================
-
-TEST(XPath, OperatorSlashEquals) {
-    XPath p("/tmp");
-    p /= "sub";
-    EXPECT_EQ(p.str(), "/tmp/sub");
-    p /= "deep";
-    EXPECT_EQ(p.str(), "/tmp/sub/deep");
-}
-
-// ============================================================================
-// fileSize
-// ============================================================================
-
-TEST(XPath, FileSize) {
-    // /etc/hosts should exist and have a positive size
-    XPath p("/etc/hosts");
-    if (p.exists()) {
-        EXPECT_GT(p.fileSize(), 0u);
-    }
-}
-
-// ============================================================================
-// createDirs
-// ============================================================================
-
-TEST(XPath, CreateDirsSuccess) {
-    XPath p("/tmp/aura_xpath_test/sub/deep");
-    EXPECT_TRUE(p.createDirs());
-    EXPECT_TRUE(p.exists());
-    // cleanup
-    std::filesystem::remove_all("/tmp/aura_xpath_test");
-}
-
-TEST(XPath, CreateDirsAlreadyExists) {
-    XPath p("/tmp");
-    // Already-existing directory returns false (no directories created)
-    EXPECT_FALSE(p.createDirs());
-}
-
-// ============================================================================
-// listFiles / listDirs / listAll
-// ============================================================================
-
-TEST(XPath, ListOperations) {
-    XPath dir("/tmp/aura_xpath_list");
-    dir.createDirs();
-    // Create a file and a subdirectory
-    std::ofstream((dir / "test.txt").str()) << "data";
-    (dir / "subdir").createDirs();
-
-    auto files = dir.listFiles();
-    auto dirs  = dir.listDirs();
-    auto all   = dir.listAll();
-
-    EXPECT_GE(files.size(), 1u);
-    EXPECT_GE(dirs.size(), 1u);
-    EXPECT_GE(all.size(), 2u);
-
-    // cleanup
-    std::filesystem::remove_all(dir.str());
-}
-
-// ============================================================================
-// glob
-// ============================================================================
-
-TEST(XPath, GlobWithMatchingPattern) {
-    XPath dir("/tmp/aura_xpath_glob");
-    dir.createDirs();
-    std::ofstream((dir / "a.txt").str()) << "a";
-    std::ofstream((dir / "b.txt").str()) << "b";
-    std::ofstream((dir / "c.log").str()) << "c";
-
-    auto matches = dir.glob(R"(.*\.txt)");
-    EXPECT_EQ(matches.size(), 2u);
-
-    std::filesystem::remove_all(dir.str());
-}
-
-TEST(XPath, GlobNoMatch) {
-    XPath dir("/tmp/aura_xpath_glob2");
-    dir.createDirs();
-    auto matches = dir.glob(R"(no_such_pattern)");
-    EXPECT_TRUE(matches.empty());
-    std::filesystem::remove_all(dir.str());
-}
-
-// ============================================================================
-// remove / rename / copy
-// ============================================================================
-
-TEST(XPath, RemoveFile) {
-    XPath p("/tmp/aura_xpath_remove_test.txt");
-    std::ofstream(p.str()) << "data";
-    EXPECT_TRUE(p.exists());
-    EXPECT_TRUE(p.remove());
-    EXPECT_FALSE(p.exists());
-}
-
-TEST(XPath, RemoveNonExistent) {
-    XPath p("/tmp/aura_xpath_no_such_file_xyz");
-    EXPECT_FALSE(p.remove());
-}
-
-TEST(XPath, Rename) {
-    XPath src("/tmp/aura_xpath_rename_src.txt");
-    XPath dst("/tmp/aura_xpath_rename_dst.txt");
-    std::ofstream(src.str()) << "data";
-    EXPECT_TRUE(src.rename(dst));
-    EXPECT_FALSE(src.exists());
-    EXPECT_TRUE(dst.exists());
-    dst.remove();
-}
-
-TEST(XPath, Copy) {
-    XPath src("/tmp/aura_xpath_copy_src.txt");
-    XPath dst("/tmp/aura_xpath_copy_dst.txt");
-    std::ofstream(src.str()) << "copy_data";
-    EXPECT_TRUE(src.copy(dst));
-    EXPECT_TRUE(src.exists());
-    EXPECT_TRUE(dst.exists());
-    // verify content
-    std::ifstream ifs(dst.str());
-    std::string content;
-    std::getline(ifs, content);
-    EXPECT_EQ(content, "copy_data");
-    src.remove();
-    dst.remove();
-}
-
-// ============================================================================
-// absolute / relative
-// ============================================================================
-
-TEST(XPath, Absolute) {
-    XPath p(".");
-    XPath abs = p.absolute();
-    EXPECT_FALSE(abs.str().empty());
-    EXPECT_NE(abs.str().find("/"), std::string::npos);
-}
-
-TEST(XPath, Relative) {
-    XPath a("/tmp/a/b");
-    XPath base("/tmp");
-    XPath rel = a.relative(base);
-    EXPECT_EQ(rel.str(), "a/b");
-}
-
-// ============================================================================
-// Comparison operators
-// ============================================================================
-
-TEST(XPath, OperatorNotEqual) {
-    XPath a("/a"), b("/b");
-    EXPECT_TRUE(a != b);
-    EXPECT_FALSE(a != a);
-}
-
-TEST(XPath, OperatorLess) {
-    XPath a("/a"), b("/b");
-    // Lexicographic ordering
-    EXPECT_TRUE(a < b || b < a);  // at least one is true (strict weak ordering)
-}
-
-// ============================================================================
-// native
-// ============================================================================
-
-TEST(XPath, Native) {
-    XPath p("/tmp/test");
-    const auto& native = p.native();
-    EXPECT_EQ(native.string(), "/tmp/test");
+    const au::file::XPath noSize("dir_999x111/plain.jpg");
+    EXPECT_EQ(noSize.firstMatch(R"([0-9]+x[0-9]+)"), "999x111");
+    EXPECT_EQ(noSize.firstImageSize().width, 0u);
+    EXPECT_EQ(noSize.lastImageSize().height, 0u);
+    EXPECT_EQ(noSize.stemBeforeFirstSize(), "plain");
+    EXPECT_EQ(noSize.stemBeforeLastSize(), "plain");
 }
 
 #endif  // ENABLE_TEST_XPATH

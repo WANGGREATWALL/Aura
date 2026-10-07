@@ -254,7 +254,7 @@ std::vector<XPath> listEntries(
                 continue;
             }
             const std::string name = it->path().filename().u8string();
-            if (!regex.empty() && !au::regex::match(name, regex)) {
+            if (!regex.empty() && !au::re::matchRegexInString(name, regex)) {
                 continue;
             }
             result.emplace_back(absolute ? XPath(dir) / name : XPath(name));

@@ -90,24 +90,21 @@
         "xtree": "cpp"
     },
     "[cpp]": {
-        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+        "editor.defaultFormatter": "ms-vscode.cpptools",
         "editor.formatOnSave": true
     },
     "[c]": {
-        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+        "editor.defaultFormatter": "ms-vscode.cpptools",
         "editor.formatOnSave": true
     },
-    // --- clangd 配置 ---
-    "clangd.arguments": [
-        "--compile-commands-dir=build", // 告诉 clangd 编译命令在 build 目录
-        "--background-index", // 后台索引提高速度
-        "--clang-tidy", // 开启静态检查
-        "--completion-style=detailed"
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/inc",
+        "${workspaceFolder}/build/inc",
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/third_party/cJSON"
     ],
-    "clangd.fallbackFlags": [
-        "-std=c++17" // 如果找不到编译数据库时的默认标准
-    ],
-    // --- 禁用旧插件的相关配置（可选，防止冲突） ---
-    "C_Cpp.intelliSenseEngine": "disabled",
-    "C_Cpp.formatting": "disabled"
+    "C_Cpp.default.cppStandard": "c++17",
+    "C_Cpp.intelliSenseEngine": "default",
+    "C_Cpp.formatting": "clangFormat"
 }

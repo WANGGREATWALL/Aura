@@ -3,106 +3,54 @@
 #include "gtest/gtest.h"
 #include "regex/xregex.h"
 
-using namespace au::regex;
+TEST(XRegex, MatchSearch) {
+    const std::string text = "Hello, my name is Vincent. Email: vincent@example.com";
+    EXPECT_TRUE(au::re::matchRegexInString(text, "Vincent"));
+    EXPECT_TRUE(au::re::matchRegexInString(text, R"(\w+@\w+\.\w+)"));
+    EXPECT_FALSE(au::re::matchRegexInString(text, "Wang"));
 
-TEST(XRegex, Match) {
-    std::string text = "Hello, my name is Vincent. Email: vincent@example.com";
-    EXPECT_TRUE(match(text, "Vincent"));
-    EXPECT_FALSE(match(text, "Wang"));
-    EXPECT_TRUE(match(text, R"(\w+@\w+\.\w+)"));
-}
-
-TEST(XRegex, FullMatch) {
-    EXPECT_TRUE(fullMatch("12345", R"(\d+)"));
-    EXPECT_FALSE(fullMatch("123ab", R"(\d+)"));
-    EXPECT_TRUE(fullMatch("hello", R"([a-z]+)"));
+    // The API searches for a substring; it does not require a full-string match.
+    EXPECT_TRUE(au::re::matchRegexInString("123ab", R"(\d+)"));
+    EXPECT_TRUE(au::re::matchRegexInString("", ".*"));
+    EXPECT_FALSE(au::re::matchRegexInString("abc", R"([)"));
 }
 
 TEST(XRegex, GetMatches) {
-    std::string text = "cat bat hat";
-    auto all = getAllMatches(text, R"(\w+at)");
-    EXPECT_EQ(all.size(), 3u);
-    EXPECT_EQ(getFirstMatch(text, R"(\w+at)"), "cat");
-    EXPECT_EQ(getLastMatch(text, R"(\w+at)"), "hat");
-}
+    const std::string text = "cat bat hat";
+    const auto all = au::re::getAllMatchesInString(text, R"(\w+at)");
+    ASSERT_EQ(all.size(), 3u);
+    EXPECT_EQ(all[0], "cat");
+    EXPECT_EQ(all[1], "bat");
+    EXPECT_EQ(all[2], "hat");
+    EXPECT_EQ(au::re::getFirstMatchInString(text, R"(\w+at)"), "cat");
+    EXPECT_EQ(au::re::getLastMatchInString(text, R"(\w+at)"), "hat");
 
-TEST(XRegex, ExtractGroups) {
-    auto groups = extractGroups("2026-04-30", R"((\d{4})-(\d{2})-(\d{2}))");
-    ASSERT_EQ(groups.size(), 3u);
-    EXPECT_EQ(groups[0], "2026");
-    EXPECT_EQ(groups[1], "04");
-    EXPECT_EQ(groups[2], "30");
+    EXPECT_EQ(au::re::getFirstMatchInString("abc", R"(\d+)"), "");
+    EXPECT_EQ(au::re::getLastMatchInString("abc", R"(\d+)"), "");
+    EXPECT_TRUE(au::re::getAllMatchesInString("abc", R"(\d+)").empty());
+    EXPECT_TRUE(au::re::getAllMatchesInString("", R"(\w+)").empty());
+    EXPECT_EQ(au::re::getFirstMatchInString("abc", R"([)"), "");
+    EXPECT_EQ(au::re::getLastMatchInString("abc", R"([)"), "");
+    EXPECT_TRUE(au::re::getAllMatchesInString("abc", R"([)").empty());
 }
 
 TEST(XRegex, ReplaceAll) {
-    EXPECT_EQ(replaceAll("hello hello", "hello", "hi"), "hi hi");
+    EXPECT_EQ(au::re::replaceAllMatchesInString("hello hello", "hello", "hi"), "hi hi");
+    EXPECT_EQ(au::re::replaceAllMatchesInString("2024-01-15", R"((\d{4})-(\d{2}))", "$2/$1"), "01/2024-15");
+    EXPECT_EQ(au::re::replaceAllMatchesInString("hello world", "xyz", "hi"), "hello world");
+    EXPECT_EQ(au::re::replaceAllMatchesInString("abc", R"([)", "X"), "abc");
 }
 
-TEST(XRegex, ReplaceNth) {
-    EXPECT_EQ(replaceNth("aa bb aa", "aa", "cc", 0), "cc bb aa");
-    EXPECT_EQ(replaceNth("aa bb aa", "aa", "cc", 1), "aa bb cc");
-    EXPECT_EQ(replaceNth("aa bb aa", "aa", "cc", 5), "aa bb aa");
-}
+TEST(XRegex, ReplaceSpecific) {
+    const std::string text = "aa bb aa";
+    EXPECT_EQ(au::re::replaceSpecificMatchInString(text, "aa", "cc", 0), "cc bb aa");
+    EXPECT_EQ(au::re::replaceSpecificMatchInString(text, "aa", "cc", 1), "aa bb cc");
+    EXPECT_EQ(au::re::replaceSpecificMatchInString(text, "aa", "cc", 999), text);
+    EXPECT_EQ(au::re::replaceSpecificMatchInString(text, "xyz", "cc", 0), text);
+    EXPECT_EQ(au::re::replaceSpecificMatchInString(text, R"([)", "cc", 0), text);
 
-TEST(XRegex, Split) {
-    auto parts = split("a,b,,c", ",");
-    ASSERT_EQ(parts.size(), 4u);
-    EXPECT_EQ(parts[0], "a");
-    EXPECT_EQ(parts[1], "b");
-    EXPECT_EQ(parts[2], "");
-    EXPECT_EQ(parts[3], "c");
-}
-
-// ============================================================================
-// Edge cases
-// ============================================================================
-
-TEST(XRegex, EmptyInput) {
-    EXPECT_TRUE(match("", ".*"));
-    EXPECT_TRUE(fullMatch("", ".*"));
-    auto matches = getAllMatches("", R"(\w+)");
-    EXPECT_TRUE(matches.empty());
-}
-
-TEST(XRegex, NoMatchReturnsEmpty) {
-    EXPECT_EQ(getFirstMatch("abc", R"(\d+)"), "");
-    EXPECT_EQ(getLastMatch("abc", R"(\d+)"), "");
-    EXPECT_TRUE(getAllMatches("abc", R"(\d+)").empty());
-    auto groups = extractGroups("abc", R"((\d+))");
-    EXPECT_TRUE(groups.empty());
-}
-
-TEST(XRegex, ReplaceAllNoMatchReturnsOriginal) {
-    EXPECT_EQ(replaceAll("hello world", "xyz", "hi"), "hello world");
-}
-
-TEST(XRegex, SplitLeadingTrailingDelimiter) {
-    auto parts = split(",a,b", ",");
-    ASSERT_EQ(parts.size(), 3u);
-    EXPECT_EQ(parts[0], "");
-    EXPECT_EQ(parts[1], "a");
-    EXPECT_EQ(parts[2], "b");
-
-    // Trailing empty tokens are skipped by std::regex_token_iterator
-    auto parts2 = split("a,b,", ",");
-    ASSERT_EQ(parts2.size(), 2u);
-    EXPECT_EQ(parts2[0], "a");
-    EXPECT_EQ(parts2[1], "b");
-}
-
-TEST(XRegex, InvalidRegexThrows) {
-    EXPECT_THROW(match("abc", R"([)"), std::regex_error);
-}
-
-TEST(XRegex, ReplaceNthOutOfRange) {
-    EXPECT_EQ(replaceNth("aa bb aa", "aa", "cc", 999), "aa bb aa");
-    EXPECT_EQ(replaceNth("aa bb aa", "aa", "cc", 0), "cc bb aa");
-}
-
-TEST(XRegex, ExtractGroupsSingleGroup) {
-    auto groups = extractGroups("2026!", R"((\d{4})!)");
-    ASSERT_EQ(groups.size(), 1u);
-    EXPECT_EQ(groups[0], "2026");
+    // This function inserts replacement literally, unlike regex_replace.
+    EXPECT_EQ(au::re::replaceSpecificMatchInString("a1b2", R"(\d)", "$1", 0), "a$1b2");
 }
 
 #endif  // ENABLE_TEST_XREGEX

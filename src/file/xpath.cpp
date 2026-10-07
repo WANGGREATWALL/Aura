@@ -154,8 +154,8 @@ void imageSize(const char* in, uint32_t* outW, uint32_t* outH, bool first) noexc
         const std::string filename = filenameOf(normalizePath(in));
         const std::string pattern = "[0-9]{1,5}x[0-9]{1,5}";
         const std::string token = first
-            ? au::regex::getFirstMatch(filename, pattern)
-            : au::regex::getLastMatch(filename, pattern);
+            ? au::re::getFirstMatchInString(filename, pattern)
+            : au::re::getLastMatchInString(filename, pattern);
         if (!token.empty()) parseSize(token, outW, outH);
     } catch (...) {
         *outW = 0;
@@ -168,8 +168,8 @@ int stemBeforeSize(const char* in, char* out, int outSize, bool first)
     const std::string filename = filenameOf(normalizePath(in));
     const std::string pattern = "_[0-9]{1,5}x[0-9]{1,5}";
     const std::string token = first
-        ? au::regex::getFirstMatch(filename, pattern)
-        : au::regex::getLastMatch(filename, pattern);
+        ? au::re::getFirstMatchInString(filename, pattern)
+        : au::re::getLastMatchInString(filename, pattern);
     if (token.empty()) return writeOut(stemOf(filename), out, outSize);
     const size_t position = first ? filename.find(token) : filename.rfind(token);
     return writeOut(filename.substr(0, position), out, outSize);
@@ -324,7 +324,7 @@ AU_API int au_xpath_first_match(
 {
     return safeResult([&] {
         return writeOut(!in || !regex ? std::string()
-                                      : au::regex::getFirstMatch(in, regex), out, outSize);
+                                      : au::re::getFirstMatchInString(in, regex), out, outSize);
     });
 }
 
@@ -333,7 +333,7 @@ AU_API int au_xpath_last_match(
 {
     return safeResult([&] {
         return writeOut(!in || !regex ? std::string()
-                                      : au::regex::getLastMatch(in, regex), out, outSize);
+                                      : au::re::getLastMatchInString(in, regex), out, outSize);
     });
 }
 

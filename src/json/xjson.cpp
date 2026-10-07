@@ -147,7 +147,7 @@ XJson XJson::array()
 int XJson::parseFile(const std::string& filename)
 {
     std::string content;
-    int         ret = au::file::XFile::loadToString(filename, content);
+    int         ret = au::file::read(filename, content);
     XCHECK_WITH_RET(ret == err::kSuccess, ret);
     return parseString(content);
 }
