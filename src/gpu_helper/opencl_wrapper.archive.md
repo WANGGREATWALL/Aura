@@ -23,11 +23,11 @@
 
 ## 依赖缺口
 
-- `opencl_arg.h` 缺失；代码依赖其中提供的 `OpenCLArgBuffer`、`isOpenCLArg<T>()`，以及可访问 `buffer()` 的完整 `OpenCLBuffer` 类型。照片注释提到的 `opencl_buffer.h`、`opencl_registry.h` 也未在当前仓库找到。这 10 张照片没有它们的内容，未推测或补写占位实现。
+- `opencl_arg.h`、`opencl_buffer.h` 与 `opencl_registry.h` 及其实现已由后续十张配套照片补齐，见 [配套组件归档说明](opencl_components.archive.md)。
 - `inc/vivo_comdef.h` 依赖的 `vivo_comdef_v1.h` 缺失，当前仓库未提供此代码需要的 `VDKResult*` 定义。
-- 照片包含 `sys/xsystem.h`，当前平台识别函数的声明位于 `inc/sys/xsystem_vivo.h`。本次保持照片的 include 列表。
+- 照片包含 `sys/xsystem.h` 并调用 `sys::isMediaTekPlatform()`／`sys::isQualcommPlatform()`；当前仓库在 `inc/sys/xsystem_vivo.h` 中将它们声明于 `au::sys::vivo`。本次保持照片的 include 列表和调用命名空间。
 - `cl_symbols.h` 实际位于 `src/gpu_helper`；将来构建此归档时需要相应的 include 路径，并复用已有的 OpenCL 符号包装及 `clErrorInfo()` 定义。
-- 头文件直接使用 `std::enable_if`、`std::move`，照片未单独包含 `<type_traits>`、`<utility>`；原代码依赖包含链，本次未改变该行为。
+- 头文件直接使用 `std::enable_if`、`std::move`，照片未单独包含 `<type_traits>`、`<utility>`。后续补齐的 `opencl_arg.h` 包含 `<type_traits>`；`std::move` 仍依赖传递包含，本次未改变该行为。
 - 默认编译选项为 `-cl-std=CL2.0 -cl-fast-relaxed-math`，初始化要求 MediaTek / Qualcomm 平台；当前 `cl_symbols.h` 在 Apple 上选择 OpenCL 1.2。归档不等于完成 macOS 运行适配或 CMake 集成。
 
 ## 保留的原代码行为
@@ -38,7 +38,7 @@
 - 第 168–172 行的设备属性查询复用同一个错误变量，仅在最后一次查询后检查，较早查询的错误可能被覆盖。
 - 内存内核缓存只按 `nameKernel` 命中；同名且源码／选项变化的后续提交会复用旧内核。
 - `enqueue()` 忽略 `flush()` 返回值；回调包分配与容器操作没有异常屏障。`deinit()` 未主动调用 `finish()`，调用方需遵守原代码的同步与销毁约定。
-- 注释中关于回调线程只释放 `cl::Buffer` 的说明属于照片原文；由于 `OpenCLBuffer` 的实现尚未提供，此处不能验证其完整析构行为。
+- 后续配套照片提供的 `OpenCLBuffer` 析构先释放 `cl::Buffer`，随后关闭复制的 fd。原注释中关于回调线程只释放 `cl::Buffer` 的说明并不完整，详见 [配套组件说明](opencl_components.archive.md)。
 
 ## 核对结果
 
