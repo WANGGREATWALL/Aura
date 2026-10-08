@@ -1,458 +1,286 @@
 #if ENABLE_TEST_XIMAGE
 
-#include "gtest/gtest.h"
+#include <climits>
+#include <type_traits>
+#include <utility>
+
 #include "cv/ximage.h"
+#include "gtest/gtest.h"
+#include "mm/xmemory.h"
 
-using au::cv::XImage;
-using au::cv::Image;
-using au::cv::ImageRaw;
-using au::cv::XImageFormat;
-using au::cv::XImagePlane;
+static_assert(std::is_copy_constructible<au::cv::XImage>::value, "an image owner must be copyable");
+static_assert(std::is_copy_assignable<au::cv::XImage>::value, "an image owner must support copy assignment");
+static_assert(std::is_move_constructible<au::cv::XImage>::value, "an image owner must be movable");
+static_assert(std::is_move_assignable<au::cv::XImage>::value, "an image owner must support move assignment");
+static_assert(std::is_copy_constructible<au::cv::Image>::value, "a borrowed descriptor must be copyable");
+static_assert(std::is_constructible<au::cv::XImage, const au::cv::Image&>::value,
+              "an image descriptor must support borrowing");
+static_assert(!std::is_constructible<au::cv::XImage, au::cv::Image&&>::value,
+              "an Image rvalue cannot prove unique ownership");
+static_assert(std::is_assignable<au::cv::XImage&, const au::cv::Image&>::value,
+              "an image descriptor must support borrow assignment");
+static_assert(!std::is_assignable<au::cv::XImage&, au::cv::Image&&>::value,
+              "an Image rvalue cannot transfer ownership");
+static_assert(std::is_same<decltype(au::cv::kImageFormatNV12), au::cv::XImageFormat>::value,
+              "pixel formats use XImageFormat");
+static_assert(std::is_same<decltype(au::cv::kImageColorSpaceRec709), au::cv::XImageColorSpace>::value,
+              "color spaces use XImageColorSpace");
 
-// ============================================================================
-// Image struct
-// ============================================================================
-
-TEST(XImage, Image_default_values)
+TEST(XImage, DefaultsAndOwnedPlaneLayout)
 {
-    Image img;
-    EXPECT_EQ(img.width, 0);
-    EXPECT_EQ(img.height, 0);
-    EXPECT_EQ(img.format, 0);
-    EXPECT_EQ(img.data[0], nullptr);
-    EXPECT_EQ(img.stride[0], 0);
+    const au::cv::Image empty{};
+    EXPECT_FALSE(au::cv::isValid(empty));
+    EXPECT_EQ(empty.format, au::cv::kImageFormatInvalid);
+    EXPECT_EQ(empty.colorSpace, au::cv::kImageColorSpaceUnspecified);
+    EXPECT_EQ(empty.fd[0], -1);
+
+    unsigned char* base = nullptr;
+    {
+        au::cv::XImage image(5, 3, au::cv::kImageFormatNV12, au::mm::MemType::Pss, au::cv::kImageColorSpaceRec709);
+        ASSERT_TRUE(image.isValid());
+        const au::cv::Image view = image.view();
+        base                     = view.data[0];
+        ASSERT_NE(base, nullptr);
+        EXPECT_TRUE(au::mm::isManaged(base));
+        EXPECT_EQ(view.colorSpace, au::cv::kImageColorSpaceRec709);
+        EXPECT_EQ(view.stride[0], 8);
+        EXPECT_EQ(view.scanline[0], 4);
+        EXPECT_EQ(view.dataSize[0], 32);
+        EXPECT_EQ(view.stride[1], 8);
+        EXPECT_EQ(view.scanline[1], 2);
+        EXPECT_EQ(view.dataSize[1], 16);
+        EXPECT_EQ(view.data[1], base + 32);
+        EXPECT_EQ(view.fd[0], -1);
+        EXPECT_EQ(view.fdOffset[1], 32);
+        EXPECT_TRUE(image.isFormat(au::cv::kImageFormatNV12));
+        EXPECT_TRUE(image.isFormatIn({au::cv::kImageFormatNV21, au::cv::kImageFormatNV12}));
+        EXPECT_FALSE(image.info().empty());
+
+        au::cv::XImage moved(std::move(image));
+        EXPECT_FALSE(image.isValid());
+        EXPECT_FALSE(image.ownsMemory());
+        EXPECT_TRUE(moved.isValid());
+        EXPECT_TRUE(moved.ownsMemory());
+        EXPECT_EQ(moved.view().data[0], base);
+
+        au::cv::XImage assigned;
+        assigned = std::move(moved);
+        EXPECT_FALSE(moved.isValid());
+        EXPECT_TRUE(assigned.ownsMemory());
+        EXPECT_EQ(assigned.view().data[0], base);
+        assigned = std::move(assigned);
+        EXPECT_EQ(assigned.view().data[0], base);
+    }
+    EXPECT_FALSE(au::mm::isManaged(base));
 }
 
-// ============================================================================
-// Free functions: isValid
-// ============================================================================
-
-TEST(XImage, isValid_valid_image)
+TEST(XImage, ShallowCopiesBorrowWithoutFreeing)
 {
-    Image img;
-    img.width  = 64;
-    img.height = 64;
-    img.format = au::cv::kXFormatGrayU8;
-    img.stride[0] = 64;
-    uint8_t buf[64 * 64] = {};
-    img.data[0] = buf;
-    EXPECT_TRUE(au::cv::isValid(img));
+    unsigned char* base = nullptr;
+    au::cv::XImage copy;
+    au::cv::XImage assigned;
+    {
+        au::cv::XImage owner(5, 3, au::cv::kImageFormatNV12, au::mm::MemType::Pss, au::cv::kImageColorSpaceRec709);
+        ASSERT_TRUE(owner.isValid());
+        base                    = owner.view().data[0];
+        owner.view().data[0][0] = 17;
+
+        copy = owner;
+        EXPECT_FALSE(copy.ownsMemory());
+        EXPECT_EQ(copy.view().data[0], base);
+        EXPECT_EQ(copy.view().colorSpace, au::cv::kImageColorSpaceRec709);
+        EXPECT_EQ(copy.view().data[1], owner.view().data[1]);
+        au::cv::XImage movedBorrower(std::move(copy));
+        EXPECT_FALSE(copy.isValid());
+        EXPECT_FALSE(movedBorrower.ownsMemory());
+        EXPECT_EQ(movedBorrower.view().data[0], base);
+        copy = movedBorrower;
+
+        au::cv::XImage old(2, 2, au::cv::kImageFormatGrayU8, au::mm::MemType::Pss);
+        ASSERT_TRUE(old.isValid());
+        unsigned char* oldData = old.view().data[0];
+        old                    = owner;
+        EXPECT_FALSE(old.ownsMemory());
+        EXPECT_EQ(old.view().data[0], base);
+        EXPECT_FALSE(au::mm::isManaged(oldData));
+        old = old;
+        EXPECT_EQ(old.view().data[0], base);
+
+        const au::cv::Image view = owner.view();
+        au::cv::XImage      fromImage(view);
+        EXPECT_FALSE(fromImage.ownsMemory());
+        EXPECT_EQ(fromImage.view().data[0], base);
+        assigned = view;
+        EXPECT_FALSE(assigned.ownsMemory());
+        EXPECT_EQ(assigned.view().data[0], base);
+        fromImage.view().data[0][0] = 29;
+        EXPECT_EQ(owner.view().data[0][0], 29);
+
+        owner = owner;
+        owner = view;
+        EXPECT_TRUE(owner.ownsMemory());
+        EXPECT_EQ(owner.view().data[0], base);
+        owner = old;
+        EXPECT_TRUE(owner.ownsMemory());
+        EXPECT_EQ(owner.view().data[0], base);
+    }
+    EXPECT_FALSE(au::mm::isManaged(base));
+    EXPECT_FALSE(copy.ownsMemory());
+    EXPECT_FALSE(assigned.ownsMemory());
+    copy.reset();
+    assigned.reset();
 }
 
-TEST(XImage, isValid_zero_width)
+TEST(XImage, MoveOwnershipBetweenXImages)
 {
-    Image img;
-    img.width = 0;
-    img.height = 64;
-    img.format = au::cv::kXFormatGrayU8;
-    EXPECT_FALSE(au::cv::isValid(img));
+    au::cv::XImage owner(3, 2, au::cv::kImageFormatGrayU8, au::mm::MemType::Pss);
+    ASSERT_TRUE(owner.isValid());
+    unsigned char* base = owner.view().data[0];
+    EXPECT_TRUE(owner.ownsMemory());
+
+    au::cv::XImage borrowed(owner);
+    EXPECT_FALSE(borrowed.ownsMemory());
+    au::cv::XImage moved(std::move(owner));
+    EXPECT_FALSE(owner.isValid());
+    EXPECT_TRUE(moved.ownsMemory());
+    EXPECT_EQ(moved.view().data[0], base);
+    EXPECT_EQ(borrowed.view().data[0], base);
+
+    au::cv::XImage destination(2, 2, au::cv::kImageFormatGrayU8, au::mm::MemType::Pss);
+    ASSERT_TRUE(destination.isValid());
+    unsigned char* oldData = destination.view().data[0];
+    destination            = std::move(moved);
+    EXPECT_FALSE(moved.isValid());
+    EXPECT_TRUE(destination.ownsMemory());
+    EXPECT_EQ(destination.view().data[0], base);
+    EXPECT_FALSE(au::mm::isManaged(oldData));
+
+    // Moving a borrower over its owner must not release the shared buffer.
+    destination = std::move(borrowed);
+    EXPECT_FALSE(borrowed.isValid());
+    EXPECT_TRUE(destination.ownsMemory());
+    EXPECT_EQ(destination.view().data[0], base);
+    destination = std::move(destination);
+    EXPECT_TRUE(destination.ownsMemory());
+    destination.reset();
+    EXPECT_FALSE(au::mm::isManaged(base));
 }
 
-TEST(XImage, isValid_zero_height)
+TEST(XImage, ExternalImageCanOnlyBeBorrowed)
 {
-    Image img;
-    img.width = 64;
-    img.height = 0;
-    img.format = au::cv::kXFormatGrayU8;
-    EXPECT_FALSE(au::cv::isValid(img));
+    unsigned char external[16] = {1, 2, 3, 77, 77, 77, 77, 77, 4, 5, 6, 88, 88, 88, 88, 88};
+    au::cv::Image image{};
+    image.width       = 3;
+    image.height      = 2;
+    image.format      = au::cv::kImageFormatGrayU8;
+    image.data[0]     = external;
+    image.stride[0]   = 8;
+    image.scanline[0] = 2;
+    image.dataSize[0] = 16;
+    ASSERT_TRUE(au::cv::isValid(image));
+
+    au::cv::XImage borrowed(image);
+    EXPECT_FALSE(borrowed.ownsMemory());
+    EXPECT_EQ(borrowed.view().data[0], external);
+    au::cv::XImage assigned;
+    assigned = image;
+    EXPECT_FALSE(assigned.ownsMemory());
+    EXPECT_EQ(assigned.view().data[0], external);
+    external[0] = 42;
+    EXPECT_EQ(borrowed.view().data[0][0], 42);
+
+    assigned.reset();
+    EXPECT_EQ(external[0], 42);
 }
 
-TEST(XImage, isValid_invalid_format)
+TEST(XImage, BorrowedViewValidationAndPredicates)
 {
-    Image img;
-    img.width  = 64;
-    img.height = 64;
-    img.format = au::cv::kXFormatInvalid;
-    uint8_t buf[64 * 64] = {};
-    img.data[0] = buf;
-    img.stride[0] = 64;
-    EXPECT_FALSE(au::cv::isValid(img));
+    au::cv::XImage image(5, 3, au::cv::kImageFormatNV12, au::mm::MemType::Pss);
+    ASSERT_TRUE(image.isValid());
+    const au::cv::Image original = image.view();
+    au::cv::Image       view     = original;
+
+    EXPECT_TRUE(au::cv::isSameWith(original, view));
+    EXPECT_TRUE(au::cv::isSameSizeAndFormatWith(original, view));
+    EXPECT_TRUE(au::cv::isFormatIn(view, {au::cv::kImageFormatNV21, au::cv::kImageFormatNV12}));
+    EXPECT_FALSE(au::cv::isFormatIn(view, {}));
+
+    view.data[1] = nullptr;
+    EXPECT_FALSE(au::cv::isValid(view));
+    view           = original;
+    view.stride[1] = 5;
+    EXPECT_FALSE(au::cv::isValid(view));
+    EXPECT_FALSE(au::cv::isSameSizeWith(original, view));
+    view             = original;
+    view.scanline[1] = 1;
+    EXPECT_FALSE(au::cv::isValid(view));
+    view             = original;
+    view.dataSize[1] = 8;
+    EXPECT_FALSE(au::cv::isValid(view));
+    view            = original;
+    view.colorSpace = 999;
+    EXPECT_FALSE(au::cv::isValid(view));
+    EXPECT_FALSE(au::cv::isSameWith(original, view));
+    view             = original;
+    view.fdOffset[1] = -1;
+    EXPECT_FALSE(au::cv::isValid(view));
 }
 
-TEST(XImage, isValid_null_data)
+TEST(XImage, InvalidInputsAndManualLifetime)
 {
-    Image img;
-    img.width  = 64;
-    img.height = 64;
-    img.format = au::cv::kXFormatGrayU8;
-    img.stride[0] = 64;
-    EXPECT_FALSE(au::cv::isValid(img));
+    EXPECT_FALSE(au::cv::XImage(0, 3, au::cv::kImageFormatNV12).isValid());
+    EXPECT_FALSE(au::cv::XImage(5, 0, au::cv::kImageFormatNV12).isValid());
+    EXPECT_FALSE(au::cv::XImage(5, 3, au::cv::kImageFormatInvalid).isValid());
+    EXPECT_FALSE(au::cv::XImage(5, 3, au::cv::kImageFormatNV12, au::mm::MemType::Pss, 999).isValid());
+    EXPECT_FALSE(
+        au::cv::XImage(5, 3, au::cv::kImageFormatNV12, au::mm::MemType::Pss, au::cv::kImageColorSpaceUnspecified, 0)
+            .isValid());
+    EXPECT_FALSE(au::cv::XImage(INT_MAX, INT_MAX, au::cv::kImageFormatRGBAU8, au::mm::MemType::Pss).isValid());
+
+    au::cv::Image owned = au::cv::createImage(3, 3, au::cv::kImageFormatI420, au::mm::MemType::Pss);
+    ASSERT_TRUE(au::cv::isValid(owned));
+    EXPECT_EQ(owned.stride[0], 8);
+    EXPECT_EQ(owned.stride[1], 8);
+    EXPECT_EQ(owned.stride[2], 8);
+    EXPECT_EQ(owned.fdOffset[1], owned.dataSize[0]);
+    EXPECT_EQ(owned.fdOffset[2], owned.dataSize[0] + owned.dataSize[1]);
+    EXPECT_TRUE(au::cv::destroyImage(owned));
+    EXPECT_FALSE(au::cv::isValid(owned));
+    EXPECT_FALSE(au::cv::destroyImage(owned));
 }
 
-TEST(XImage, isValid_stride_less_than_width)
+TEST(XImage, RegisteredFormatsAndColorSpaces)
 {
-    Image img;
-    img.width  = 64;
-    img.height = 64;
-    img.format = au::cv::kXFormatGrayU8;
-    img.stride[0] = 32;
-    uint8_t buf[64 * 64] = {};
-    img.data[0] = buf;
-    EXPECT_FALSE(au::cv::isValid(img));
-}
-
-// ============================================================================
-// Free functions: isFormat / isFormatIn
-// ============================================================================
-
-TEST(XImage, isFormat_exact_match)
-{
-    Image img;
-    img.format = au::cv::kXFormatRGBU8;
-    EXPECT_TRUE(au::cv::isFormat(img, au::cv::kXFormatRGBU8));
-    EXPECT_FALSE(au::cv::isFormat(img, au::cv::kXFormatGrayU8));
-}
-
-TEST(XImage, isFormatIn_match_found)
-{
-    Image img;
-    img.format = au::cv::kXFormatRGBAU8;
-    EXPECT_TRUE(au::cv::isFormatIn(img, {au::cv::kXFormatRGBU8, au::cv::kXFormatRGBAU8}));
-    EXPECT_FALSE(au::cv::isFormatIn(img, {au::cv::kXFormatRGBU8, au::cv::kXFormatGrayU8}));
-}
-
-TEST(XImage, isFormatIn_empty_list)
-{
-    Image img;
-    img.format = au::cv::kXFormatGrayU8;
-    EXPECT_FALSE(au::cv::isFormatIn(img, {}));
-}
-
-// ============================================================================
-// Free functions: isSame*
-// ============================================================================
-
-TEST(XImage, isSameSizeWith_same_size_same_format)
-{
-    Image a, b;
-    a.width = b.width = 64;
-    a.height = b.height = 64;
-    a.format = b.format = au::cv::kXFormatGrayU8;
-    a.stride[0] = b.stride[0] = 64;
-    EXPECT_TRUE(au::cv::isSameSizeWith(a, b));
-}
-
-TEST(XImage, isSameSizeWith_different_size)
-{
-    Image a, b;
-    a.width = 64; b.width = 32;
-    a.height = b.height = 64;
-    a.format = b.format = au::cv::kXFormatGrayU8;
-    EXPECT_FALSE(au::cv::isSameSizeWith(a, b));
-}
-
-TEST(XImage, isSameSizeWith_different_format)
-{
-    Image a, b;
-    a.width = b.width = 64;
-    a.height = b.height = 64;
-    a.format = au::cv::kXFormatGrayU8;
-    b.format = au::cv::kXFormatRGBU8;
-    EXPECT_FALSE(au::cv::isSameSizeWith(a, b));
-}
-
-TEST(XImage, isSameFormatWith_match)
-{
-    Image a, b;
-    a.format = b.format = au::cv::kXFormatRGBAU8;
-    EXPECT_TRUE(au::cv::isSameFormatWith(a, b));
-}
-
-TEST(XImage, isSameFormatWith_mismatch)
-{
-    Image a, b;
-    a.format = au::cv::kXFormatGrayU8;
-    b.format = au::cv::kXFormatRGBU8;
-    EXPECT_FALSE(au::cv::isSameFormatWith(a, b));
-}
-
-TEST(XImage, isSameSizeAndFormatWith)
-{
-    Image a, b;
-    a.width = b.width = 32;
-    a.height = b.height = 32;
-    a.format = b.format = au::cv::kXFormatGrayU8;
-    a.stride[0] = b.stride[0] = 32;
-    EXPECT_TRUE(au::cv::isSameSizeAndFormatWith(a, b));
-    b.height = 16;
-    EXPECT_FALSE(au::cv::isSameSizeAndFormatWith(a, b));
-}
-
-TEST(XImage, isSameWith_same_data_pointer)
-{
-    Image a;
-    a.width = a.height = 64;
-    a.format = au::cv::kXFormatGrayU8;
-    a.stride[0] = 64;
-    uint8_t buf[64 * 64] = {};
-    a.data[0] = buf;
-    Image b = a;
-    EXPECT_TRUE(au::cv::isSameWith(a, b));
-}
-
-TEST(XImage, isSameWith_different_data_pointer)
-{
-    Image a;
-    a.width = a.height = 64;
-    a.format = au::cv::kXFormatGrayU8;
-    a.stride[0] = 64;
-    uint8_t buf1[64 * 64] = {};
-    uint8_t buf2[64 * 64] = {};
-    a.data[0] = buf1;
-    Image b = a;
-    b.data[0] = buf2;
-    EXPECT_FALSE(au::cv::isSameWith(a, b));
-}
-
-// ============================================================================
-// Free function: info
-// ============================================================================
-
-TEST(XImage, info_returns_non_empty)
-{
-    Image img;
-    img.width = 10;
-    img.height = 20;
-    img.format = au::cv::kXFormatGrayU8;
-    img.stride[0] = 16;
-    uint8_t buf[320] = {};
-    img.data[0] = buf;
-    std::string s = au::cv::info(img);
-    EXPECT_FALSE(s.empty());
-    EXPECT_NE(s.find("10x20"), std::string::npos);
-}
-
-// ============================================================================
-// XImage: default construction
-// ============================================================================
-
-TEST(XImage, default_ctor_invalid)
-{
-    XImage img;
-    EXPECT_FALSE(img.isValid());
-    EXPECT_EQ(img.data[0], nullptr);
-    EXPECT_EQ(img.width, 0);
-}
-
-// ============================================================================
-// XImage: allocation construction
-// ============================================================================
-
-TEST(XImage, alloc_ctor_gray_u8)
-{
-    XImage img(nullptr, 64, 64, au::cv::kXFormatGrayU8);
-    EXPECT_TRUE(img.isValid());
-    EXPECT_EQ(img.width, 64);
-    EXPECT_EQ(img.height, 64);
-    EXPECT_EQ(img.format, au::cv::kXFormatGrayU8);
-    EXPECT_NE(img.data[0], nullptr);
-    // stride should be ceilTo8(64) = 64
-}
-
-TEST(XImage, alloc_ctor_rgba_u8)
-{
-    XImage img(nullptr, 32, 32, au::cv::kXFormatRGBAU8);
-    EXPECT_TRUE(img.isValid());
-    EXPECT_NE(img.data[0], nullptr);
-}
-
-TEST(XImage, alloc_ctor_nv12)
-{
-    XImage img(nullptr, 64, 64, au::cv::kXFormatNV12);
-    EXPECT_TRUE(img.isValid());
-    EXPECT_NE(img.data[0], nullptr);
-    EXPECT_NE(img.data[1], nullptr);  // NV12 has 2 planes
-}
-
-TEST(XImage, alloc_ctor_nv21)
-{
-    XImage img(nullptr, 64, 64, au::cv::kXFormatNV21);
-    EXPECT_TRUE(img.isValid());
-    EXPECT_NE(img.data[0], nullptr);
-    EXPECT_NE(img.data[1], nullptr);
-}
-
-TEST(XImage, alloc_ctor_enum_overload)
-{
-    XImage img(nullptr, 64, 64, XImageFormat::kXFormatRGBU8);
-    EXPECT_TRUE(img.isValid());
-    EXPECT_EQ(img.format, au::cv::kXFormatRGBU8);
-}
-
-TEST(XImage, alloc_ctor_zero_width_returns_invalid)
-{
-    XImage img(nullptr, 0, 64, au::cv::kXFormatGrayU8);
-    EXPECT_FALSE(img.isValid());
-}
-
-TEST(XImage, alloc_ctor_zero_height_returns_invalid)
-{
-    XImage img(nullptr, 64, 0, au::cv::kXFormatGrayU8);
-    EXPECT_FALSE(img.isValid());
-}
-
-// ============================================================================
-// XImage: wrapper construction
-// ============================================================================
-
-TEST(XImage, wrapper_ctor_wraps_external_buffer)
-{
-    uint8_t buf[64 * 64 * 4] = {};
-    XImage img(64, 64, 64 * 4, au::cv::kXFormatRGBAU8, buf);
-    EXPECT_TRUE(img.isValid());
-    EXPECT_EQ(img.data[0], buf);
-    // Wrapper images should not own the memory
-}
-
-TEST(XImage, wrapper_ctor_enum_overload)
-{
-    uint8_t buf[64 * 64] = {};
-    XImage img(64, 64, 64, XImageFormat::kXFormatGrayU8, buf);
-    EXPECT_TRUE(img.isValid());
-    EXPECT_EQ(img.data[0], buf);
-}
-
-// ============================================================================
-// XImage: dataptr
-// ============================================================================
-
-TEST(XImage, dataptr_default_plane0_row0_col0)
-{
-    XImage img(nullptr, 64, 64, au::cv::kXFormatGrayU8);
-    auto* p = img.dataptr<uint8_t>();
-    EXPECT_EQ(p, img.data[0]);
-}
-
-TEST(XImage, dataptr_with_row_and_col)
-{
-    XImage img(nullptr, 64, 64, au::cv::kXFormatGrayU8);
-    // stride is ceilTo8(64) = 64, so row 1 starts at offset 64
-    auto* p = img.dataptr<uint8_t>(XImagePlane::Plane0, 1, 0);
-    EXPECT_EQ(p, img.data[0] + 64);
-    auto* p2 = img.dataptr<uint8_t>(XImagePlane::Plane0, 1, 3);
-    EXPECT_EQ(p2, img.data[0] + 67);
-}
-
-TEST(XImage, dataptr_const_version)
-{
-    XImage img(nullptr, 64, 64, au::cv::kXFormatGrayU8);
-    const XImage& cimg = img;
-    const auto* p = cimg.dataptr<uint8_t>();
-    EXPECT_EQ(p, img.data[0]);
-}
-
-TEST(XImage, dataptr_different_types)
-{
-    XImage img(nullptr, 64, 64, au::cv::kXFormatGrayU16);
-    auto* pu16 = img.dataptr<uint16_t>();
-    EXPECT_NE(reinterpret_cast<void*>(pu16), nullptr);
-    auto* pu32 = img.dataptr<uint32_t>();
-    EXPECT_NE(reinterpret_cast<void*>(pu32), nullptr);
-}
-
-// ============================================================================
-// XImage: copy semantics
-// ============================================================================
-
-TEST(XImage, copy_ctor_shares_pointer)
-{
-    XImage a(nullptr, 32, 32, au::cv::kXFormatGrayU8);
-    XImage b(a);
-    EXPECT_TRUE(b.isValid());
-    // Copy is shallow — same data pointer
-    EXPECT_EQ(a.data[0], b.data[0]);
-}
-
-TEST(XImage, copy_assign_from_image)
-{
-    XImage a(nullptr, 32, 32, au::cv::kXFormatGrayU8);
-    Image raw = a;  // upcast
-    XImage b;
-    b = raw;
-    EXPECT_TRUE(b.isValid());
-}
-
-TEST(XImage, copy_assign_from_ximage)
-{
-    XImage a(nullptr, 64, 64, au::cv::kXFormatRGBU8);
-    XImage b;
-    b = a;
-    EXPECT_TRUE(b.isValid());
-    EXPECT_EQ(b.width, 64);
-    EXPECT_EQ(b.format, au::cv::kXFormatRGBU8);
-}
-
-// ============================================================================
-// XImage: move semantics
-// ============================================================================
-
-TEST(XImage, move_ctor_transfers_ownership)
-{
-    XImage a(nullptr, 32, 32, au::cv::kXFormatGrayU8);
-    void* origData = a.data[0];
-    XImage b(std::move(a));
-    EXPECT_TRUE(b.isValid());
-    EXPECT_EQ(b.data[0], origData);
-    // After move, source should not destroy data
-}
-
-TEST(XImage, move_assign_transfers_ownership)
-{
-    XImage a(nullptr, 64, 64, au::cv::kXFormatRGBAU8);
-    void* origData = a.data[0];
-    XImage b;
-    b = std::move(a);
-    EXPECT_TRUE(b.isValid());
-    EXPECT_EQ(b.data[0], origData);
-}
-
-// ============================================================================
-// XImage: isFormat / isFormatIn member functions
-// ============================================================================
-
-TEST(XImage, member_isFormat)
-{
-    XImage img(nullptr, 32, 32, au::cv::kXFormatRGBU8);
-    EXPECT_TRUE(img.isFormat(au::cv::kXFormatRGBU8));
-    EXPECT_FALSE(img.isFormat(au::cv::kXFormatGrayU8));
-    EXPECT_TRUE(img.isFormat(XImageFormat::kXFormatRGBU8));
-}
-
-TEST(XImage, member_isFormatIn_int_list)
-{
-    XImage img(nullptr, 32, 32, au::cv::kXFormatRGBAU8);
-    EXPECT_TRUE(img.isFormatIn({au::cv::kXFormatRGBU8, au::cv::kXFormatRGBAU8}));
-    EXPECT_FALSE(img.isFormatIn({au::cv::kXFormatGrayU8, au::cv::kXFormatRGBU8}));
-}
-
-TEST(XImage, member_isFormatIn_enum_list)
-{
-    XImage img(nullptr, 32, 32, XImageFormat::kXFormatGrayU8);
-    EXPECT_TRUE(img.isFormatIn({XImageFormat::kXFormatGrayU8, XImageFormat::kXFormatRGBU8}));
-    EXPECT_FALSE(img.isFormatIn({XImageFormat::kXFormatRGBU8, XImageFormat::kXFormatRGBAU8}));
-}
-
-// ============================================================================
-// XImage: member info
-// ============================================================================
-
-TEST(XImage, member_info_returns_non_empty)
-{
-    XImage img(nullptr, 16, 32, au::cv::kXFormatGrayU8);
-    std::string s = img.info();
-    EXPECT_FALSE(s.empty());
-    EXPECT_NE(s.find("16x32"), std::string::npos);
-}
-
-// ============================================================================
-// XImage: self-assignment safety
-// ============================================================================
-
-TEST(XImage, self_assign_is_safe)
-{
-    XImage img(nullptr, 32, 32, au::cv::kXFormatGrayU8);
-    img = img;  // self-assignment
-    EXPECT_TRUE(img.isValid());
+    const int formats[] = {
+        au::cv::kImageFormatGrayU8,         au::cv::kImageFormatGrayU16,        au::cv::kImageFormatGrayS16,
+        au::cv::kImageFormatGrayU32,        au::cv::kImageFormatGrayS32,        au::cv::kImageFormatGrayF32,
+        au::cv::kImageFormatUVU8,           au::cv::kImageFormatRGBU8,          au::cv::kImageFormatBGRU8,
+        au::cv::kImageFormatRGBAU8,         au::cv::kImageFormatBGRAU8,         au::cv::kImageFormatARGBU8,
+        au::cv::kImageFormatRGBU16,         au::cv::kImageFormatRGBF32,         au::cv::kImageFormatRGBF16,
+        au::cv::kImageFormatBGRF16,         au::cv::kImageFormatNV12,           au::cv::kImageFormatNV21,
+        au::cv::kImageFormatI420,           au::cv::kImageFormatYV12,           au::cv::kImageFormatP010,
+        au::cv::kImageFormatP016,           au::cv::kImageFormatNV12F16,        au::cv::kImageFormatNV21F16,
+        au::cv::kImageFormatMipiRGGB10,     au::cv::kImageFormatMipiGRBG10,     au::cv::kImageFormatMipiBGGR10,
+        au::cv::kImageFormatMipiGBRG10,     au::cv::kImageFormatRawPackedU10,   au::cv::kImageFormatRawU16,
+        au::cv::kImageFormatUnpackedRGGB10, au::cv::kImageFormatUnpackedGRBG10, au::cv::kImageFormatUnpackedBGGR10,
+        au::cv::kImageFormatUnpackedGBRG10, au::cv::kImageFormatUnpackedRGGB12, au::cv::kImageFormatUnpackedGRBG12,
+        au::cv::kImageFormatUnpackedBGGR12, au::cv::kImageFormatUnpackedGBRG12, au::cv::kImageFormatUnpackedRGGB14,
+        au::cv::kImageFormatUnpackedGRBG14, au::cv::kImageFormatUnpackedBGGR14, au::cv::kImageFormatUnpackedGBRG14,
+        au::cv::kImageFormatUnpackedRGGB16, au::cv::kImageFormatUnpackedGRBG16, au::cv::kImageFormatUnpackedBGGR16,
+        au::cv::kImageFormatUnpackedGBRG16,
+    };
+    for (int format : formats) {
+        au::cv::XImage image(3, 3, format, au::mm::MemType::Pss);
+        EXPECT_TRUE(image.isValid()) << "format " << format;
+    }
+    const int colorSpaces[] = {
+        au::cv::kImageColorSpaceUnspecified, au::cv::kImageColorSpaceSRGB,      au::cv::kImageColorSpaceLinearSRGB,
+        au::cv::kImageColorSpaceRec709,      au::cv::kImageColorSpaceDisplayP3, au::cv::kImageColorSpaceRec2020PQ,
+    };
+    for (int colorSpace : colorSpaces) {
+        au::cv::XImage image(1, 1, au::cv::kImageFormatRGBU8, au::mm::MemType::Pss, colorSpace);
+        EXPECT_TRUE(image.isValid()) << "color space " << colorSpace;
+    }
 }
 
 #endif  // ENABLE_TEST_XIMAGE
