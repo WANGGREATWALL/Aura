@@ -6,8 +6,7 @@
 
 #include "gtest/gtest.h"
 #include "log/xlogger.h"
-#include "perf/xperf_macros.h"
-#include "perf/xtracer.h"
+#include "perf/xperf.h"
 
 // ---------------------------------------------------------------------------
 //  Fixture
@@ -37,7 +36,7 @@ protected:
 TEST_F(XTracerTest, BasicScopeNoCrash)
 {
     {
-        au::perf::XTracerScoped s(std::string("trace.basic"));
+        au::perf::XPerfScoped s(std::string("trace.basic"));
         au::perf::XTimer::sleepFor(1);
     }
     SUCCEED();
@@ -48,8 +47,8 @@ TEST_F(XTracerTest, DisabledHardOff)
     au::perf::Config::get().setEnabled(false);
 
     {
-        au::perf::XTracerScoped a(std::string("off.tracer.a"));
-        au::perf::XTracerScoped b(std::string("off.tracer.b"));
+        au::perf::XPerfScoped a(std::string("off.tracer.a"));
+        au::perf::XPerfScoped b(std::string("off.tracer.b"));
     }
     SUCCEED();
 }
@@ -60,12 +59,12 @@ TEST_F(XTracerTest, LevelGating)
 
     cfg.setTracerLevel(au::perf::Config::LEVEL_OFF);
     {
-        au::perf::XTracerScoped s(std::string("never.traced"));
+        au::perf::XPerfScoped s(std::string("never.traced"));
     }
 
     cfg.setTracerLevel(0);
     {
-        au::perf::XTracerScoped s(std::string("traced"));
+        au::perf::XPerfScoped s(std::string("traced"));
     }
 
     cfg.setTracerLevel(au::perf::Config::LEVEL_ALL);
@@ -75,7 +74,7 @@ TEST_F(XTracerTest, LevelGating)
 TEST_F(XTracerTest, SubPhaseTransitions)
 {
     {
-        au::perf::XTracerScoped root(std::string("root.tracer"));
+        au::perf::XPerfScoped root(std::string("root.tracer"));
         root.sub(std::string("phase1"));
         au::perf::XTimer::sleepFor(1);
         root.sub(std::string("phase2"));
@@ -85,13 +84,15 @@ TEST_F(XTracerTest, SubPhaseTransitions)
     SUCCEED();
 }
 
-TEST_F(XTracerTest, CompositeMacroSafe)
+TEST_F(XTracerTest, CompositeScopeSafe)
 {
     au::perf::Config::get().setTimerLevel(au::perf::Config::LEVEL_ALL);
 
     {
-        AU_PERF_SCOPE(std::string("composite.tracer.scope"));
+        au::perf::XPerfScoped scope("composite.tracer.scope");
+        scope.sub("composite.tracer.phase");
         au::perf::XTimer::sleepFor(1);
+        scope.sub();
     }
     SUCCEED();
 }
@@ -104,7 +105,7 @@ TEST_F(XTracerTest, MultiThreadStress)
     for (int i = 0; i < kThreads; ++i) {
         ths.emplace_back([] {
             for (int j = 0; j < 8; ++j) {
-                au::perf::XTracerScoped s(std::string("mt.tracer"));
+                au::perf::XPerfScoped s(std::string("mt.tracer"));
                 au::perf::XTimer::sleepFor(1);
             }
         });
@@ -118,11 +119,11 @@ TEST_F(XTracerTest, MultiThreadStress)
 TEST_F(XTracerTest, NestedScopeDepthSymmetry)
 {
     for (int cycle = 0; cycle < 32; ++cycle) {
-        au::perf::XTracerScoped outer(std::string("outer.nest"));
+        au::perf::XPerfScoped outer(std::string("outer.nest"));
         outer.sub(std::string("before.inner"));
         au::perf::XTimer::sleepFor(0);
         {
-            au::perf::XTracerScoped inner(std::string("inner.nest"));
+            au::perf::XPerfScoped inner(std::string("inner.nest"));
             inner.sub(std::string("inner.phase"));
             au::perf::XTimer::sleepFor(0);
         }
@@ -136,7 +137,7 @@ TEST_F(XTracerTest, NestedScopeDepthSymmetry)
 TEST_F(XTracerTest, BareSubBeforeFirstNamedSub)
 {
     {
-        au::perf::XTracerScoped s(std::string("bare.first"));
+        au::perf::XPerfScoped s(std::string("bare.first"));
         s.sub();
         s.sub();
         s.sub(std::string("first.real.phase"));
@@ -151,7 +152,7 @@ TEST_F(XTracerTest, AlternatingSubMultiCycle)
     au::perf::Config::get().setTracerLevel(au::perf::Config::LEVEL_ALL);
 
     {
-        au::perf::XTracerScoped s(std::string("alt.root"));
+        au::perf::XPerfScoped s(std::string("alt.root"));
         for (int i = 0; i < 8; ++i) {
             s.sub(std::string("phase.") + std::to_string(i));
             au::perf::XTimer::sleepFor(0);
@@ -164,10 +165,10 @@ TEST_F(XTracerTest, AlternatingSubMultiCycle)
 TEST_F(XTracerTest, EmptyNameAndSubName)
 {
     {
-        au::perf::XTracerScoped s(std::string(""));
+        au::perf::XPerfScoped s(std::string(""));
     }
     {
-        au::perf::XTracerScoped s(std::string("root.with.empty.sub"));
+        au::perf::XPerfScoped s(std::string("root.with.empty.sub"));
         s.sub(std::string(""));
         au::perf::XTimer::sleepFor(0);
         s.sub();
@@ -178,8 +179,8 @@ TEST_F(XTracerTest, EmptyNameAndSubName)
 TEST_F(XTracerTest, SameThreadMultipleInstances)
 {
     {
-        au::perf::XTracerScoped a(std::string("tracer.a"));
-        au::perf::XTracerScoped b(std::string("tracer.b"));
+        au::perf::XPerfScoped a(std::string("tracer.a"));
+        au::perf::XPerfScoped b(std::string("tracer.b"));
         a.sub(std::string("a.phase"));
         au::perf::XTimer::sleepFor(0);
         a.sub();

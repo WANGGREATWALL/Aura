@@ -11,8 +11,7 @@
 
 #include "gtest/gtest.h"
 #include "log/xlogger.h"
-#include "perf/xperf_macros.h"
-#include "perf/xtimer.h"
+#include "perf/xperf.h"
 
 class StdoutCapture
 {
@@ -54,7 +53,7 @@ protected:
         cfg.setEnabled(true);
         cfg.setDebugMode(false);
         cfg.setTimerLevel(3);
-        cfg.setTracerLevel(au::perf::Config::LEVEL_ALL);
+        cfg.setTracerLevel(au::perf::Config::LEVEL_OFF);
         cfg.setAggregateMode(false);
         cfg.setRootName("perf");
     }
@@ -64,7 +63,7 @@ protected:
         // Defensive cleanup: drain TLS tree to isolate subsequent tests.
         au::log::Config::get().setLevel(au::log::Level::Silent);
         {
-            au::perf::XTimerScoped drain("_cleanup_");
+            au::perf::XPerfScoped drain("_cleanup_");
         }
         au::log::Config::get().setLevel(au::log::Level::Verbose);
     }
@@ -153,7 +152,7 @@ TEST_F(XTimerTest, SubReleaseImmediateOutput)
 
     StdoutCapture cap;
     {
-        au::perf::XTimerScoped root(std::string("relPipeline"));
+        au::perf::XPerfScoped root(std::string("relPipeline"));
         root.sub(std::string("phase1"));
         au::perf::XTimer::sleepFor(2);
         root.sub(std::string("phase2"));
@@ -180,16 +179,16 @@ TEST_F(XTimerTest, DebugModeTreeHierarchy)
 
     StdoutCapture cap;
     {
-        au::perf::XTimerScoped root(std::string("root5"));
+        au::perf::XPerfScoped root(std::string("root5"));
         {
-            au::perf::XTimerScoped a(std::string("childA5"));
+            au::perf::XPerfScoped a(std::string("childA5"));
             {
-                au::perf::XTimerScoped c(std::string("grand5"));
+                au::perf::XPerfScoped c(std::string("grand5"));
                 au::perf::XTimer::sleepFor(1);
             }
         }
         {
-            au::perf::XTimerScoped b(std::string("childB5"));
+            au::perf::XPerfScoped b(std::string("childB5"));
             au::perf::XTimer::sleepFor(1);
         }
     }
@@ -215,7 +214,7 @@ TEST_F(XTimerTest, SubAndSubNamedDebug)
 
     StdoutCapture cap;
     {
-        au::perf::XTimerScoped root(std::string("pipeline5"));
+        au::perf::XPerfScoped root(std::string("pipeline5"));
         root.sub(std::string("step1"));
         au::perf::XTimer::sleepFor(1);
         root.sub(std::string("step2"));
@@ -238,7 +237,7 @@ TEST_F(XTimerTest, WideTreeSiblingOrdering)
 
     StdoutCapture cap;
     {
-        au::perf::XTimerScoped root(std::string("wide"));
+        au::perf::XPerfScoped root(std::string("wide"));
         for (int i = 0; i < 20; ++i) {
             root.sub(std::string("s") + std::to_string(i));
             au::perf::XTimer::sleepFor(0);
@@ -271,9 +270,9 @@ TEST_F(XTimerTest, LevelFiltering)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped root(std::string("depth0"));
+            au::perf::XPerfScoped root(std::string("depth0"));
             {
-                au::perf::XTimerScoped child(std::string("depth1"));
+                au::perf::XPerfScoped child(std::string("depth1"));
             }
         }
         const std::string out = cap.drain();
@@ -285,7 +284,7 @@ TEST_F(XTimerTest, LevelFiltering)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped s(std::string("never5"));
+            au::perf::XPerfScoped s(std::string("never5"));
         }
         EXPECT_EQ(cap.drain().find("never5"), std::string::npos);
     }
@@ -300,8 +299,8 @@ TEST_F(XTimerTest, DisabledHardOff)
 
     StdoutCapture cap;
     {
-        au::perf::XTimerScoped a(std::string("off5.a"));
-        au::perf::XTimerScoped b(std::string("off5.b"));
+        au::perf::XPerfScoped a(std::string("off5.a"));
+        au::perf::XPerfScoped b(std::string("off5.b"));
     }
     EXPECT_TRUE(cap.drain().empty());
 }
@@ -324,9 +323,9 @@ TEST_F(XTimerTest, MultiThreadIsolation)
         ths.reserve(kThreads);
         for (int i = 0; i < kThreads; ++i) {
             ths.emplace_back([] {
-                au::perf::XTimerScoped root(std::string("rootMT5"));
+                au::perf::XPerfScoped root(std::string("rootMT5"));
                 for (int j = 0; j < 3; ++j) {
-                    au::perf::XTimerScoped child(std::string("childMT5"));
+                    au::perf::XPerfScoped child(std::string("childMT5"));
                     au::perf::XTimer::sleepFor(1);
                 }
             });
@@ -353,11 +352,11 @@ TEST_F(XTimerTest, AggregateModeFlush)
         StdoutCapture capDuring;
         {
             std::thread worker([] {
-                au::perf::XTimerScoped r(std::string("agg5.worker"));
+                au::perf::XPerfScoped r(std::string("agg5.worker"));
                 au::perf::XTimer::sleepFor(1);
             });
             worker.join();
-            au::perf::XTimerScoped r(std::string("agg5.main"));
+            au::perf::XPerfScoped r(std::string("agg5.main"));
         }
         const std::string outDuring = capDuring.drain();
         EXPECT_EQ(outDuring.find("agg5.worker"), std::string::npos);
@@ -397,7 +396,7 @@ TEST_F(XTimerTest, NameCorruptionDefense)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped s(std::string("line1\nline2"));
+            au::perf::XPerfScoped s(std::string("line1\nline2"));
             au::perf::XTimer::sleepFor(1);
         }
         const std::string out = cap.drain();
@@ -408,7 +407,7 @@ TEST_F(XTimerTest, NameCorruptionDefense)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped s(std::string("%s%d%p_test"));
+            au::perf::XPerfScoped s(std::string("%s%d%p_test"));
             au::perf::XTimer::sleepFor(1);
         }
         const std::string out = cap.drain();
@@ -417,7 +416,7 @@ TEST_F(XTimerTest, NameCorruptionDefense)
 
     // Tab and backslash.
     {
-        au::perf::XTimerScoped s(std::string("tab\there\\path"));
+        au::perf::XPerfScoped s(std::string("tab\there\\path"));
         SUCCEED();
     }
 
@@ -425,7 +424,7 @@ TEST_F(XTimerTest, NameCorruptionDefense)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped s(std::string("utf8_\xc3\xa4\xc3\xb6"));
+            au::perf::XPerfScoped s(std::string("utf8_\xc3\xa4\xc3\xb6"));
         }
         const std::string out = cap.drain();
         EXPECT_NE(out.find("utf8_"), std::string::npos);
@@ -435,7 +434,7 @@ TEST_F(XTimerTest, NameCorruptionDefense)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped s(std::string("\033[31mRED\033[0m"));
+            au::perf::XPerfScoped s(std::string("\033[31mRED\033[0m"));
             au::perf::XTimer::sleepFor(1);
         }
         const std::string out = cap.drain();
@@ -455,7 +454,7 @@ TEST_F(XTimerTest, TemporaryStringNameNoDangle)
 
     StdoutCapture cap;
     {
-        au::perf::XTimerScoped s(std::string("temp.name.") + std::to_string(42));
+        au::perf::XPerfScoped s(std::string("temp.name.") + std::to_string(42));
         au::perf::XTimer::sleepFor(1);
     }
     const std::string out = cap.drain();
@@ -473,7 +472,7 @@ TEST_F(XTimerTest, ColorOutput)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped root(std::string("color_test"));
+            au::perf::XPerfScoped root(std::string("color_test"));
             au::perf::XTimer::sleepFor(1);
         }
         const std::string out = cap.drain();
@@ -489,7 +488,7 @@ TEST_F(XTimerTest, ColorOutput)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped root(std::string("nocolor"));
+            au::perf::XPerfScoped root(std::string("nocolor"));
             au::perf::XTimer::sleepFor(1);
         }
         const std::string out = cap.drain();
@@ -499,45 +498,26 @@ TEST_F(XTimerTest, ColorOutput)
 }
 
 // ---------------------------------------------------------------------------
-//  Convenience macros
+//  Composite scope class
 // ---------------------------------------------------------------------------
 
-TEST_F(XTimerTest, ConvenienceMacros)
+TEST_F(XTimerTest, CompositeScope)
 {
     auto& cfg = au::perf::Config::get();
     cfg.setDebugMode(false);
     cfg.setTimerLevel(au::perf::Config::LEVEL_ALL);
+    cfg.setTracerLevel(au::perf::Config::LEVEL_ALL);
 
+    StdoutCapture cap;
     {
-        StdoutCapture cap;
-        {
-            AU_TIMER(std::string("macro5.basic"));
-            au::perf::XTimer::sleepFor(1);
-        }
-        EXPECT_NE(cap.drain().find("macro5.basic"), std::string::npos);
+        au::perf::XPerfScoped scope("composite.scope");
+        scope.sub("composite.phase");
+        au::perf::XTimer::sleepFor(1);
+        scope.sub();
     }
-
-    // __COUNTER__ disambiguation: two macros on the same source line.
-    {
-        StdoutCapture cap;
-        {
-            AU_TIMER(std::string("same.A"));
-            AU_TIMER(std::string("same.B"));
-        }
-        const std::string out = cap.drain();
-        EXPECT_NE(out.find("same.A"), std::string::npos);
-        EXPECT_NE(out.find("same.B"), std::string::npos);
-    }
-
-    // Composite macro.
-    {
-        StdoutCapture cap;
-        {
-            AU_PERF_SCOPE(std::string("composite.scope"));
-            au::perf::XTimer::sleepFor(1);
-        }
-        EXPECT_NE(cap.drain().find("composite.scope"), std::string::npos);
-    }
+    const std::string out = cap.drain();
+    EXPECT_NE(out.find("composite.scope"), std::string::npos);
+    EXPECT_NE(out.find("composite.phase"), std::string::npos);
 }
 
 // ---------------------------------------------------------------------------
@@ -569,7 +549,7 @@ TEST_F(XTimerTest, HardDepthCapNoCrash)
     std::function<void(int)> recurse = [&](int n) {
         if (n <= 0)
             return;
-        au::perf::XTimerScoped s(std::string("d"));
+        au::perf::XPerfScoped s(std::string("d"));
         recurse(n - 1);
     };
     recurse(static_cast<int>(au::perf::Config::HARD_MAX_DEPTH) + 16);
@@ -586,7 +566,7 @@ TEST_F(XTimerTest, StressTenThousandScopes)
     StdoutCapture cap;
     auto          begin = std::chrono::steady_clock::now();
     for (int i = 0; i < 10000; ++i) {
-        au::perf::XTimerScoped s(std::string("stress"));
+        au::perf::XPerfScoped s(std::string("stress"));
     }
     auto end = std::chrono::steady_clock::now();
     (void)cap.drain();
@@ -604,7 +584,7 @@ TEST_F(XTimerTest, StressHundredThousandScopesDebug)
     au::log::Config::get().setLevel(au::log::Level::Silent);
     {
         for (int i = 0; i < 100000; ++i) {
-            au::perf::XTimerScoped s(std::string("memtest"));
+            au::perf::XPerfScoped s(std::string("memtest"));
         }
     }
     au::log::Config::get().setLevel(au::log::Level::Verbose);
@@ -621,17 +601,17 @@ TEST_F(XTimerTest, StressMixedPatterns)
     {
         for (int i = 0; i < 1000; ++i) {
             {
-                au::perf::XTimerScoped s(std::string("flat"));
+                au::perf::XPerfScoped s(std::string("flat"));
             }
             {
-                au::perf::XTimerScoped s(std::string("subs"));
+                au::perf::XPerfScoped s(std::string("subs"));
                 s.sub(std::string("a"));
                 s.sub();
             }
             {
-                au::perf::XTimerScoped o(std::string("outer"));
+                au::perf::XPerfScoped o(std::string("outer"));
                 {
-                    au::perf::XTimerScoped in(std::string("inner"));
+                    au::perf::XPerfScoped in(std::string("inner"));
                 }
             }
         }
@@ -654,7 +634,7 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped root(std::string("unbalanced"));
+            au::perf::XPerfScoped root(std::string("unbalanced"));
             root.sub(std::string("A"));
             au::perf::XTimer::sleepFor(1);
             root.sub();
@@ -674,7 +654,7 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
     {
         StdoutCapture cap;
         {
-            au::perf::XTimerScoped root(std::string("bare_first"));
+            au::perf::XPerfScoped root(std::string("bare_first"));
             root.sub();
             root.sub();
             root.sub(std::string("after"));
@@ -691,7 +671,7 @@ TEST_F(XTimerTest, SubStateExceptionRecovery)
         StdoutCapture cap;
         bool          caught = false;
         try {
-            au::perf::XTimerScoped root(std::string("mid_sub"));
+            au::perf::XPerfScoped root(std::string("mid_sub"));
             root.sub(std::string("A"));
             throw std::runtime_error("mid");
         } catch (const std::exception&) {
