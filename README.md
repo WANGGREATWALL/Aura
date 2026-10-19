@@ -28,13 +28,13 @@
 
 <hr />
 
-Aura is a curated collection of high-performance C++17 components designed to streamline the development of efficient, cross-platform applications. It focuses on zero-overhead abstractions, robust diagnostics, and simplified system-level operations.
+Aura is a curated collection of high-performance C++17 components designed to streamline the development of efficient, cross-platform applications. It focuses on zero-overhead abstractions, robust diagnostics, and simplified system-level operations. Public headers target C++11 compatibility; the library implementation uses C++17.
 
 ### Module Status
 
 - ![stable](https://img.shields.io/badge/stable-31A843?style=flat) **stable** — Public API in `inc/`, complete & passing tests.
 - ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) **verified** — Internal in `src/`, passing tests with switch ON.
-- ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) **draft** — Internal in `src/`, tests written but switch OFF.
+- ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) **draft** — Work in progress; behavior and tests have not yet been verified as complete.
 - ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) **plan** — Internal in `src/`, not yet implemented.
 
 ### Core Modules
@@ -53,10 +53,12 @@ Aura is a curated collection of high-performance C++17 components designed to st
 | `au::util` | `xargs` | Lightweight CLI argument parser with short/long options and quoted values. | ![verified](https://img.shields.io/badge/verified-2F80ED?style=flat) |
 | `au::sys` | `xplatform` | Hardware topology (CPU cores, memory), environment variables, and OS detection. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | | `xdlib` | Unified cross-platform dynamic library loading (dlopen / LoadLibrary). | ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) |
-| `au::cv` | `ximage` | Lightweight multi-channel image container with ROI extraction and pixel iterators. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
+| `au::cv` | `ximage` | Multi-plane image descriptors, explicit formats and color spaces, single-block allocation, borrowed copies, and ownership-transferring `XImage` moves. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
 | `au::flow` | `xthread_flow` | Directed acyclic graph of tasks with parallel scheduling across thread-pool workers. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
 | | `xthreadpool` | Low-latency work-stealing thread pool with priority-aware task dispatch. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
 | `au::json` | `xjson` | Rapid JSON parsing and serialization built on cJSON with C++ RAII wrappers. | ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) |
+
+`au::cv::Image` is a plain descriptor: storage returned by `createImage()` requires `destroyImage()`. An `XImage` created from dimensions owns its storage; copying it or constructing one from an `Image` lvalue borrows that storage and requires the original owner to remain alive. Moving an `XImage` transfers ownership. `Image` rvalues cannot be adopted by `XImage`.
 
 ### Supported Platforms
 * **Desktop**: macOS (Apple Silicon/Intel), Linux (x86_64/AArch64), Windows (MSVC)

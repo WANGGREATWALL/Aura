@@ -1,113 +1,15 @@
 {
-    "files.associations": {
-        "*.txt": "bibtex",
-        "cerrno": "cpp",
-        "atomic": "cpp",
-        "bit": "cpp",
-        "cctype": "cpp",
-        "clocale": "cpp",
-        "cmath": "cpp",
-        "compare": "cpp",
-        "concepts": "cpp",
-        "cstddef": "cpp",
-        "cstdint": "cpp",
-        "cstdio": "cpp",
-        "cstdlib": "cpp",
-        "cstring": "cpp",
-        "ctime": "cpp",
-        "cwchar": "cpp",
-        "exception": "cpp",
-        "fstream": "cpp",
-        "initializer_list": "cpp",
-        "ios": "cpp",
-        "iosfwd": "cpp",
-        "istream": "cpp",
-        "iterator": "cpp",
-        "limits": "cpp",
-        "memory": "cpp",
-        "new": "cpp",
-        "ostream": "cpp",
-        "stdexcept": "cpp",
-        "streambuf": "cpp",
-        "string": "cpp",
-        "system_error": "cpp",
-        "tuple": "cpp",
-        "type_traits": "cpp",
-        "typeinfo": "cpp",
-        "utility": "cpp",
-        "xfacet": "cpp",
-        "xiosbase": "cpp",
-        "xlocale": "cpp",
-        "xlocinfo": "cpp",
-        "xlocnum": "cpp",
-        "xmemory": "cpp",
-        "xstddef": "cpp",
-        "xstring": "cpp",
-        "xtr1common": "cpp",
-        "xutility": "cpp",
-        "array": "cpp",
-        "*.tcc": "cpp",
-        "bitset": "cpp",
-        "cstdarg": "cpp",
-        "cwctype": "cpp",
-        "deque": "cpp",
-        "unordered_map": "cpp",
-        "vector": "cpp",
-        "algorithm": "cpp",
-        "map": "cpp",
-        "memory_resource": "cpp",
-        "optional": "cpp",
-        "regex": "cpp",
-        "string_view": "cpp",
-        "sstream": "cpp",
-        "charconv": "cpp",
-        "chrono": "cpp",
-        "condition_variable": "cpp",
-        "forward_list": "cpp",
-        "list": "cpp",
-        "functional": "cpp",
-        "ratio": "cpp",
-        "future": "cpp",
-        "iomanip": "cpp",
-        "mutex": "cpp",
-        "thread": "cpp",
-        "cassert": "cpp",
-        "any": "cpp",
-        "format": "cpp",
-        "iostream": "cpp",
-        "locale": "cpp",
-        "queue": "cpp",
-        "set": "cpp",
-        "stack": "cpp",
-        "stop_token": "cpp",
-        "unordered_set": "cpp",
-        "variant": "cpp",
-        "xhash": "cpp",
-        "xlocbuf": "cpp",
-        "xlocmes": "cpp",
-        "xlocmon": "cpp",
-        "xloctime": "cpp",
-        "xtree": "cpp"
+    "[c]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "ms-vscode.cpptools"
     },
     "[cpp]": {
-        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
-        "editor.formatOnSave": true
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "ms-vscode.cpptools"
     },
-    "[c]": {
-        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
-        "editor.formatOnSave": true
-    },
-    // --- clangd 配置 ---
-    "clangd.arguments": [
-        "--compile-commands-dir=build", // 告诉 clangd 编译命令在 build 目录
-        "--background-index", // 后台索引提高速度
-        "--clang-tidy", // 开启静态检查
-        "--completion-style=detailed"
-    ],
-    "clangd.fallbackFlags": [
-        "-std=c++17" // 如果找不到编译数据库时的默认标准
-    ],
-    // --- 禁用旧插件的相关配置（可选，防止冲突） ---
-    "C_Cpp.intelliSenseEngine": "disabled",
-    "C_Cpp.formatting": "disabled"
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.configureSettings": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+    }
 }

@@ -4,8 +4,8 @@ cmake_minimum_required(VERSION 3.14)
 # Version (update here; triggers re-configure)
 # ============================================================================
 set(AURA_VERSION_MAJOR 1)
-set(AURA_VERSION_MINOR 4)
-set(AURA_VERSION_PATCH 1)
+set(AURA_VERSION_MINOR 5)
+set(AURA_VERSION_PATCH 0)
 set(AURA_VERSION "${AURA_VERSION_MAJOR}.${AURA_VERSION_MINOR}.${AURA_VERSION_PATCH}")
 
 project(Aura VERSION ${AURA_VERSION} LANGUAGES C CXX)
@@ -34,7 +34,8 @@ configure_file(
 # ============================================================================
 set(AURA_SOURCES
     src/sys/xdlib.cpp
-    src/sys/xplatform.cpp
+    src/sys/xsystem.cpp
+    src/sys/xsystem_vivo.cpp
     src/file/xpath.cpp
     src/file/xfile.cpp
     src/regex/xregex.cpp
@@ -43,6 +44,10 @@ set(AURA_SOURCES
     src/cv/ximage.cpp
     src/perf/xtimer.cpp
     src/perf/xtracer.cpp
+    src/mm/xmemory.cpp
+    src/mm/backend.cpp
+    src/mm/registry.cpp
+    src/mm/pool_backend.cpp
     src/util/xargs.cpp
     third_party/cJSON/cJSON.c
 )
@@ -51,6 +56,12 @@ set(AURA_SOURCES
 # Library
 # ============================================================================
 add_library(aura STATIC ${AURA_SOURCES})
+target_compile_definitions(aura PUBLIC AURA_STATIC)
+if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(aura PRIVATE src/mm/native_backend.cpp)
+else()
+    target_sources(aura PRIVATE src/mm/native_backend_unsupported.cpp)
+endif()
 target_include_directories(aura PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/inc
     ${CMAKE_CURRENT_BINARY_DIR}/inc
@@ -69,12 +80,13 @@ option(ENABLE_TEST_XBUFFER   "Enable xbuffer unit test"   ON)
 option(ENABLE_TEST_XREGEX    "Enable xregex unit test"    ON)
 option(ENABLE_TEST_XARGS     "Enable xargs unit test"     ON)
 option(ENABLE_TEST_XPATH     "Enable xpath unit test"     ON)
-option(ENABLE_TEST_XTIMER   "Enable xtimer unit test"   ON)
-option(ENABLE_TEST_XTRACER  "Enable xtracer unit test"  ON)
-option(ENABLE_TEST_XPLATFORM "Enable xplatform unit test" ON)
+option(ENABLE_TEST_XTIMER    "Enable xtimer unit test"    ON)
+option(ENABLE_TEST_XTRACER   "Enable xtracer unit test"   ON)
+option(ENABLE_TEST_XMEMORY   "Enable xmemory unit test"   ON)
+option(ENABLE_TEST_XSYSTEM   "Enable xsystem unit test"   ON)
 option(ENABLE_TEST_XERROR    "Enable xerror unit test"    ON)
 option(ENABLE_TEST_XFILE     "Enable xfile unit test"     ON)
-option(ENABLE_TEST_XIMAGE    "Enable ximage unit test"    OFF)
+option(ENABLE_TEST_XIMAGE    "Enable ximage unit test"    ON)
 option(ENABLE_TEST_XFLOW     "Enable xflow unit test"     OFF)
 
 # ============================================================================
@@ -112,7 +124,8 @@ aura_add_test(xargs)
 aura_add_test(xpath)
 aura_add_test(xtimer)
 aura_add_test(xtracer)
-aura_add_test(xplatform)
+aura_add_test(xmemory)
+aura_add_test(xsystem)
 aura_add_test(xerror)
 aura_add_test(xfile)
 aura_add_test(ximage)
@@ -133,6 +146,9 @@ target_include_directories(aura_test PRIVATE
 target_link_libraries(aura_test PRIVATE aura)
 
 # Platform-specific link libraries
+if(ANDROID)
+    target_link_libraries(aura PRIVATE android)
+endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(aura PRIVATE dl pthread)
     target_link_libraries(aura_test PRIVATE pthread)

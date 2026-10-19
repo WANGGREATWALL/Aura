@@ -11,11 +11,11 @@
 #include "log/xerror.h"
 #include "log/xlogger.h"
 #include "math/xmath.h"
-#include "perf/xperf_macros.h"
-#include "perf/xtimer.h"
-#include "perf/xtracer.h"
+#include "mm/xmemory.h"
+#include "perf/xperf.h"
 #include "regex/xregex.h"
-#include "sys/xplatform.h"
+#include "sys/xsystem.h"
+#include "sys/xsystem_vivo.h"
 #include "version.h"
 
 #endif  // AURA_H_

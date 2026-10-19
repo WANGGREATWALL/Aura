@@ -1,67 +1,167 @@
-#ifndef AURA_FILE_XFILE_H_
-#define AURA_FILE_XFILE_H_
-
-/**
- * @file xfile.h
- * @brief File I/O utilities: read/write file contents, directory listing.
- *
- * @example
- *   std::string content;
- *   au::file::XFile::loadToString("config.json", content);
- *   au::file::XFile::saveFromString(content, "config_bak.json");
- */
+#ifndef AURA_XFILE_H_
+#define AURA_XFILE_H_
 
 #include <string>
 #include <vector>
+#include <cstdint>
+#include <cstddef>
 
-#include "memory/xbuffer.h"
+#include "file/xpath.h"
+#include "sys/xsystem.h"  // for AU_API
 
 namespace au {
 namespace file {
 
-bool exists(const std::string& filename);
-bool isDirectory(const std::string& dir);
-int  createDirectory(const std::string& dir);
+// =============================================================================
+// Existence checks
+// =============================================================================
 
-class XFile
-{
-public:
-    static int loadToBuffer(const std::string& filename, au::memory::XBuffer<char>& buffer);
-    static int loadToString(const std::string& filename, std::string& buffer);
-    static int saveFromBuffer(const au::memory::XBuffer<char>& buffer, const std::string& filename);
-    static int saveFromString(const std::string& content, const std::string& filename);
-};
+/** @brief Returns true if path refers to a regular file (not a directory). */
+AU_API bool existFile(const std::string& path);
 
-class XFileList
-{
-public:
-    /** @brief Get all entries (full path) in a directory. */
-    static std::vector<std::string> getFullListIn(const std::string& folder);
+/** @brief Returns true if path refers to an existing directory. */
+AU_API bool existDir(const std::string& path);
 
-    /** @brief Get entries filtered by regex pattern. */
-    static std::vector<std::string> getFilteredListIn(const std::string& folder, const std::string& regex);
-};
+/** @brief Returns true if path exists as any filesystem entry (file, dir, etc.). */
+AU_API bool exists(const std::string& path);
 
-class XFileName
-{
-public:
-    static std::string getFolder(const std::string& filename);
-    static std::string stripPath(const std::string& filename);
-    static std::string stripPathAndExt(const std::string& filename);
 
-    struct ImageSize
-    {
-        uint32_t width;
-        uint32_t height;
-    };
-    static ImageSize getFirstFoundImageSize(const std::string& filename);
-    static ImageSize getLastFoundImageSize(const std::string& filename);
+// =============================================================================
+// File attributes
+// =============================================================================
 
-    static std::string getFirstMatchByRegex(const std::string& filename, const std::string& regex);
-    static std::string getLastMatchByRegex(const std::string& filename, const std::string& regex);
-};
+/**
+ * @brief Returns the file size in bytes.
+ *        Returns 0 if the file does not exist or an error occurs.
+ */
+AU_API size_t sizeOf(const std::string& path);
+
+
+// =============================================================================
+// Directory operations
+// =============================================================================
+
+/**
+ * @brief Creates a single directory; the parent must already exist.
+ *        Succeeds silently if the directory already exists.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int createDir(const std::string& path);
+
+/**
+ * @brief Creates a directory and all missing parent directories (mkdir -p).
+ *        Succeeds if the path already exists.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int createDirs(const std::string& path);
+
+
+// =============================================================================
+// File create / remove
+// =============================================================================
+
+/**
+ * @brief Creates an empty file, truncating it if it already exists.
+ *        The parent directory must exist.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int createFile(const std::string& path);
+
+/**
+ * @brief Deletes a file.
+ *        Returns 0 on success, negative on failure (including when the file does not exist).
+ */
+AU_API int removeFile(const std::string& path);
+
+
+// =============================================================================
+// Read
+// =============================================================================
+
+/**
+ * @brief Reads the entire file into a std::string (binary-safe).
+ *        buffer is cleared and resized to match the file size.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int read(const std::string& path, std::string& buffer);
+
+/**
+ * @brief Reads the entire file into a caller-provided memory block.
+ *        sizeInByte must equal the file size exactly.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int read(const std::string& path, void* data, size_t sizeInByte);
+
+/**
+ * @brief Reads sizeInByte bytes starting at offset into a caller-provided buffer.
+ *        Fails if offset + sizeInByte exceeds the file size.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int readAt(const std::string& path, size_t offset, void* data, size_t sizeInByte);
+
+
+// =============================================================================
+// Write
+// =============================================================================
+
+/**
+ * @brief Writes content to a file, overwriting any existing content.
+ *        Creates the file if it does not exist.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int write(const std::string& content, const std::string& path);
+
+/**
+ * @brief Writes a raw memory block to a file, overwriting any existing content.
+ *        Returns error if data is nullptr.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int write(const void* data, size_t sizeInByte, const std::string& path);
+
+/**
+ * @brief Appends content to a file.
+ *        Creates the file if it does not exist.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int append(const std::string& content, const std::string& path);
+
+/**
+ * @brief Appends a raw memory block to a file.
+ *        Creates the file if it does not exist.
+ *        Returns error if data is nullptr.
+ *        Returns 0 on success, negative on failure.
+ */
+AU_API int append(const void* data, size_t sizeInByte, const std::string& path);
+
+
+// =============================================================================
+// Directory listing
+// =============================================================================
+
+/**
+ * @brief Lists regular files in dir (non-recursive).
+ *        regex filters by filename; pass "" to disable filtering.
+ *        absolute=true  -> returns full paths  (e.g. "dir/a.txt")
+ *        absolute=false -> returns names only  (e.g. "a.txt")
+ */
+AU_API std::vector<XPath> listFiles(
+    const std::string& dir,
+    const std::string& regex = "",
+    bool absolute = true);
+
+/**
+ * @brief Lists immediate subdirectories of dir (non-recursive).
+ *        "." and ".." are always excluded.
+ *        regex filters by directory name; pass "" to disable filtering.
+ *        absolute=true  -> returns full paths  (e.g. "dir/sub")
+ *        absolute=false -> returns names only  (e.g. "sub")
+ */
+AU_API std::vector<XPath> listDirs(
+    const std::string& dir,
+    const std::string& regex = "",
+    bool absolute = true);
 
 }  // namespace file
 }  // namespace au
 
-#endif  // AURA_FILE_XFILE_H_
+#endif  // AURA_XFILE_H_

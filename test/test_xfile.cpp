@@ -1,345 +1,192 @@
 #if ENABLE_TEST_XFILE
 
-#include <cstdio>
-#include <fstream>
+#include <chrono>
+#include <filesystem>
+#include <string>
+#include <system_error>
+#include <utility>
 
 #include "gtest/gtest.h"
 #include "file/xfile.h"
-#include "memory/xbuffer.h"
-
-using au::file::XFile;
-using au::file::XFileList;
-using au::file::XFileName;
-
-// ============================================================================
-// Helpers
-// ============================================================================
+#include "log/xerror.h"
 
 namespace {
 
-std::string tmpPath(const std::string& name)
-{
-    return "/tmp/aura_xfile_test_" + name;
-}
+class TemporaryDirectory {
+public:
+    TemporaryDirectory()
+    {
+        std::error_code ec;
+        const std::filesystem::path base = std::filesystem::temp_directory_path(ec);
+        if (ec) return;
 
-void writeFile(const std::string& path, const std::string& content)
-{
-    std::ofstream ofs(path, std::ios::binary);
-    ofs << content;
-}
+        const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+        for (unsigned attempt = 0; attempt < 100; ++attempt) {
+            mPath = base / ("aura_xfile_" + std::to_string(nonce) + "_" + std::to_string(attempt));
+            if (std::filesystem::create_directory(mPath, ec)) return;
+            if (ec) break;
+        }
+        mPath.clear();
+    }
+
+    ~TemporaryDirectory() { cleanup(); }
+
+    TemporaryDirectory(const TemporaryDirectory&) = delete;
+    TemporaryDirectory& operator=(const TemporaryDirectory&) = delete;
+
+    TemporaryDirectory(TemporaryDirectory&& other) noexcept : mPath(std::move(other.mPath))
+    {
+        other.mPath.clear();
+    }
+
+    TemporaryDirectory& operator=(TemporaryDirectory&& other) noexcept
+    {
+        if (this != &other) {
+            cleanup();
+            mPath = std::move(other.mPath);
+            other.mPath.clear();
+        }
+        return *this;
+    }
+
+    bool valid() const { return !mPath.empty(); }
+    std::string path() const { return mPath.u8string(); }
+    std::string child(const char* name) const { return (mPath / name).u8string(); }
+
+private:
+    void cleanup() noexcept
+    {
+        if (mPath.empty()) return;
+        std::error_code ec;
+        std::filesystem::remove_all(mPath, ec);
+    }
+
+    std::filesystem::path mPath;
+};
 
 }  // namespace
 
-// ============================================================================
-// exists / isDirectory / createDirectory
-// ============================================================================
-
-TEST(XFile, exists_true_for_existing_path)
+TEST(XFile, ExistenceAndCreation)
 {
-    EXPECT_TRUE(au::file::exists("/tmp"));
+    TemporaryDirectory dir;
+    ASSERT_TRUE(dir.valid());
+
+    EXPECT_TRUE(au::file::exists(dir.path()));
+    EXPECT_TRUE(au::file::existDir(dir.path()));
+    EXPECT_FALSE(au::file::existFile(dir.path()));
+    EXPECT_FALSE(au::file::exists(dir.child("missing")));
+    EXPECT_EQ(au::file::sizeOf(dir.child("missing")), 0u);
+
+    ASSERT_EQ(au::file::createDir(dir.child("single")), au::err::kSuccess);
+    EXPECT_EQ(au::file::createDir(dir.child("single")), au::err::kSuccess);
+    ASSERT_EQ(au::file::createDirs(dir.child("nested/deep")), au::err::kSuccess);
+    EXPECT_EQ(au::file::createDirs(dir.child("nested/deep")), au::err::kSuccess);
+    EXPECT_TRUE(au::file::existDir(dir.child("nested/deep")));
+    EXPECT_NE(au::file::createDir(dir.child("absent/child")), au::err::kSuccess);
+
+    const std::string file = dir.child("created.txt");
+    ASSERT_EQ(au::file::createFile(file), au::err::kSuccess);
+    EXPECT_TRUE(au::file::exists(file));
+    EXPECT_TRUE(au::file::existFile(file));
+    EXPECT_FALSE(au::file::existDir(file));
+    EXPECT_EQ(au::file::sizeOf(file), 0u);
+    ASSERT_EQ(au::file::write(std::string("data"), file), au::err::kSuccess);
+    EXPECT_EQ(au::file::sizeOf(file), 4u);
+    ASSERT_EQ(au::file::createFile(file), au::err::kSuccess);
+    EXPECT_EQ(au::file::sizeOf(file), 0u);
+    EXPECT_EQ(au::file::removeFile(file), au::err::kSuccess);
+    EXPECT_FALSE(au::file::exists(file));
+    EXPECT_EQ(au::file::removeFile(file), au::err::kErrorFileNotFound);
 }
 
-TEST(XFile, exists_false_for_non_existent)
+TEST(XFile, ReadWriteAndAppend)
 {
-    EXPECT_FALSE(au::file::exists("/tmp/__aura_nonexistent_xyz__"));
+    TemporaryDirectory dir;
+    ASSERT_TRUE(dir.valid());
+    const std::string file = dir.child("content.bin");
+    const std::string content("A\0B", 3);
+
+    ASSERT_EQ(au::file::write(content, file), au::err::kSuccess);
+    EXPECT_EQ(au::file::sizeOf(file), content.size());
+
+    std::string text = "stale";
+    ASSERT_EQ(au::file::read(file, text), au::err::kSuccess);
+    EXPECT_EQ(text, content);
+
+    char buffer[3] = {};
+    ASSERT_EQ(au::file::read(file, buffer, sizeof(buffer)), au::err::kSuccess);
+    EXPECT_EQ(std::string(buffer, sizeof(buffer)), content);
+
+    char partial[2] = {};
+    ASSERT_EQ(au::file::readAt(file, 1, partial, sizeof(partial)), au::err::kSuccess);
+    EXPECT_EQ(std::string(partial, sizeof(partial)), content.substr(1));
+
+    ASSERT_EQ(au::file::append(std::string("C"), file), au::err::kSuccess);
+    const char last = 'D';
+    ASSERT_EQ(au::file::append(&last, 1, file), au::err::kSuccess);
+    ASSERT_EQ(au::file::read(file, text), au::err::kSuccess);
+    EXPECT_EQ(text, content + "CD");
+
+    const char replacement[] = {'x', '\0', 'y'};
+    ASSERT_EQ(au::file::write(replacement, sizeof(replacement), file), au::err::kSuccess);
+    ASSERT_EQ(au::file::read(file, text), au::err::kSuccess);
+    EXPECT_EQ(text, std::string(replacement, sizeof(replacement)));
+
+    ASSERT_EQ(au::file::createFile(file), au::err::kSuccess);
+    ASSERT_EQ(au::file::read(file, text), au::err::kSuccess);
+    EXPECT_TRUE(text.empty());
 }
 
-TEST(XFile, isDirectory_true_for_directory)
+TEST(XFile, ReadWriteErrors)
 {
-    EXPECT_TRUE(au::file::isDirectory("/tmp"));
+    TemporaryDirectory dir;
+    ASSERT_TRUE(dir.valid());
+    const std::string file = dir.child("content.txt");
+    const std::string missing = dir.child("missing.txt");
+    ASSERT_EQ(au::file::write(std::string("abc"), file), au::err::kSuccess);
+
+    char buffer[3] = {};
+    std::string text;
+    EXPECT_EQ(au::file::read(missing, text), au::err::kErrorFileNotFound);
+    EXPECT_EQ(au::file::read(file, buffer, 2), au::err::kErrorFileSizeMismatch);
+    EXPECT_EQ(au::file::readAt(file, 2, buffer, 2), au::err::kErrorOutOfRange);
+    EXPECT_EQ(au::file::read(file, nullptr, 3), au::err::kErrorNullPointer);
+    EXPECT_EQ(au::file::readAt(file, 0, nullptr, 1), au::err::kErrorNullPointer);
+    EXPECT_EQ(au::file::write(nullptr, 1, file), au::err::kErrorNullPointer);
+    EXPECT_EQ(au::file::append(nullptr, 1, file), au::err::kErrorNullPointer);
+    EXPECT_EQ(au::file::createDir(std::string()), au::err::kErrorInvalidParam);
+    EXPECT_EQ(au::file::createDirs(std::string()), au::err::kErrorInvalidParam);
 }
 
-TEST(XFile, isDirectory_false_for_file)
+TEST(XFile, DirectoryListing)
 {
-    // Use a known file
-    EXPECT_FALSE(au::file::isDirectory("/etc/hosts"));
-}
+    TemporaryDirectory dir;
+    ASSERT_TRUE(dir.valid());
+    ASSERT_EQ(au::file::write(std::string("a"), dir.child("a.txt")), au::err::kSuccess);
+    ASSERT_EQ(au::file::write(std::string("b"), dir.child("b.log")), au::err::kSuccess);
+    ASSERT_EQ(au::file::createDirs(dir.child("sub/nested")), au::err::kSuccess);
 
-TEST(XFile, createDirectory_success)
-{
-    std::string p = tmpPath("createdir");
-    std::string sub = p + "/sub";
-    int ret = au::file::createDirectory(sub);
-    EXPECT_EQ(ret, 0);
-    EXPECT_TRUE(au::file::isDirectory(sub));
-    // cleanup
-    std::remove(sub.c_str());
-    std::remove(p.c_str());
-}
+    const auto files = au::file::listFiles(dir.path(), "", false);
+    ASSERT_EQ(files.size(), 2u);
+    bool foundText = false;
+    bool foundLog = false;
+    for (const au::file::XPath& entry : files) {
+        foundText |= entry.string() == "a.txt";
+        foundLog |= entry.string() == "b.log";
+    }
+    EXPECT_TRUE(foundText);
+    EXPECT_TRUE(foundLog);
 
-TEST(XFile, createDirectory_already_exists_succeeds)
-{
-    int ret = au::file::createDirectory("/tmp");
-    EXPECT_EQ(ret, 0);
-}
+    const auto filtered = au::file::listFiles(dir.path(), R"(\.txt$)", true);
+    ASSERT_EQ(filtered.size(), 1u);
+    EXPECT_EQ(filtered[0].string(), (au::file::XPath(dir.path()) / "a.txt").string());
 
-// ============================================================================
-// XFile load / save
-// ============================================================================
-
-TEST(XFile, loadToString_normal_file)
-{
-    std::string p = tmpPath("loadstr");
-    writeFile(p, "hello world");
-    std::string out;
-    int ret = XFile::loadToString(p, out);
-    EXPECT_EQ(ret, 0);
-    EXPECT_EQ(out, "hello world");
-    std::remove(p.c_str());
-}
-
-TEST(XFile, loadToString_empty_file)
-{
-    std::string p = tmpPath("loadstr_empty");
-    writeFile(p, "");
-    std::string out = "not_empty";
-    int ret = XFile::loadToString(p, out);
-    EXPECT_EQ(ret, 0);
-    EXPECT_EQ(out, "");
-    std::remove(p.c_str());
-}
-
-TEST(XFile, loadToString_non_existent)
-{
-    std::string out;
-    int ret = XFile::loadToString("/tmp/__aura_no_such_file__", out);
-    EXPECT_NE(ret, 0);
-}
-
-TEST(XFile, loadToBuffer_normal_file)
-{
-    std::string p = tmpPath("loadbuf");
-    std::string content("binary\0data", 11);
-    writeFile(p, content);
-    au::memory::XBuffer<char> buf;
-    int ret = XFile::loadToBuffer(p, buf);
-    EXPECT_EQ(ret, 0);
-    // XFile appends a null terminator, so buffer size = file_size + 1
-    EXPECT_EQ(buf.size(), content.size() + 1);
-    EXPECT_EQ(std::memcmp(buf.data(), content.data(), content.size()), 0);
-    EXPECT_EQ(buf.data()[content.size()], '\0');
-    std::remove(p.c_str());
-}
-
-TEST(XFile, loadToBuffer_empty_file)
-{
-    std::string p = tmpPath("loadbuf_empty");
-    writeFile(p, "");
-    au::memory::XBuffer<char> buf;
-    int ret = XFile::loadToBuffer(p, buf);
-    EXPECT_EQ(ret, 0);
-    // Empty file → 1-byte buffer (null terminator only)
-    EXPECT_EQ(buf.size(), 1u);
-    EXPECT_EQ(buf.data()[0], '\0');
-    std::remove(p.c_str());
-}
-
-TEST(XFile, loadToBuffer_non_existent)
-{
-    au::memory::XBuffer<char> buf;
-    int ret = XFile::loadToBuffer("/tmp/__aura_no_such_file__", buf);
-    EXPECT_NE(ret, 0);
-}
-
-TEST(XFile, saveFromString_and_loadToString_roundtrip)
-{
-    std::string p = tmpPath("roundtrip_str");
-    std::string content = "line1\nline2\n";
-    int ret = XFile::saveFromString(content, p);
-    EXPECT_EQ(ret, 0);
-    std::string out;
-    ret = XFile::loadToString(p, out);
-    EXPECT_EQ(ret, 0);
-    EXPECT_EQ(out, content);
-    std::remove(p.c_str());
-}
-
-TEST(XFile, saveFromString_empty_content)
-{
-    std::string p = tmpPath("save_empty");
-    int ret = XFile::saveFromString("", p);
-    EXPECT_EQ(ret, 0);
-    std::string out;
-    XFile::loadToString(p, out);
-    EXPECT_EQ(out, "");
-    std::remove(p.c_str());
-}
-
-TEST(XFile, saveFromString_multiline)
-{
-    std::string p = tmpPath("save_multiline");
-    std::string content = "line1\nline2\nline3\n";
-    XFile::saveFromString(content, p);
-    std::string out;
-    XFile::loadToString(p, out);
-    EXPECT_EQ(out, content);
-    std::remove(p.c_str());
-}
-
-TEST(XFile, saveFromBuffer_and_loadToBuffer_roundtrip)
-{
-    std::string p = tmpPath("roundtrip_buf");
-    std::string raw("binary\0payload\xff", 16);
-    au::memory::XBuffer<char> buf(raw.size());
-    std::memcpy(buf.data(), raw.data(), raw.size());
-    int ret = XFile::saveFromBuffer(buf, p);
-    EXPECT_EQ(ret, 0);
-    au::memory::XBuffer<char> out;
-    ret = XFile::loadToBuffer(p, out);
-    EXPECT_EQ(ret, 0);
-    // loadToBuffer adds null terminator
-    EXPECT_EQ(out.size(), raw.size() + 1);
-    EXPECT_EQ(std::memcmp(out.data(), raw.data(), raw.size()), 0);
-    EXPECT_EQ(out.data()[raw.size()], '\0');
-    std::remove(p.c_str());
-}
-
-TEST(XFile, saveFromBuffer_empty_buffer)
-{
-    std::string p = tmpPath("save_buf_empty");
-    au::memory::XBuffer<char> buf;
-    int ret = XFile::saveFromBuffer(buf, p);
-    EXPECT_EQ(ret, 0);
-    au::memory::XBuffer<char> out;
-    XFile::loadToBuffer(p, out);
-    // loadToBuffer null-terminates empty file → 1 byte
-    EXPECT_EQ(out.size(), 1u);
-    EXPECT_EQ(out.data()[0], '\0');
-    std::remove(p.c_str());
-}
-
-// ============================================================================
-// XFileList
-// ============================================================================
-
-TEST(XFileList, getFullListIn_valid_directory)
-{
-    auto list = XFileList::getFullListIn("/tmp");
-    // /tmp should have entries
-    EXPECT_FALSE(list.empty());
-}
-
-TEST(XFileList, getFullListIn_non_directory_returns_empty)
-{
-    auto list = XFileList::getFullListIn("/tmp/__aura_nonexistent_dir__");
-    EXPECT_TRUE(list.empty());
-}
-
-TEST(XFileList, getFilteredListIn_with_matching_pattern)
-{
-    // Create temp files to filter
-    std::string dir = tmpPath("filterdir");
-    au::file::createDirectory(dir);
-    writeFile(dir + "/test_a.txt", "a");
-    writeFile(dir + "/test_b.txt", "b");
-    writeFile(dir + "/other.log", "log");
-
-    auto list = XFileList::getFilteredListIn(dir, R"(test_.*\.txt)");
-    EXPECT_EQ(list.size(), 2u);
-    // cleanup
-    std::remove((dir + "/test_a.txt").c_str());
-    std::remove((dir + "/test_b.txt").c_str());
-    std::remove((dir + "/other.log").c_str());
-    std::remove(dir.c_str());
-}
-
-TEST(XFileList, getFilteredListIn_no_match_returns_empty)
-{
-    std::string dir = tmpPath("filterdir_nomatch");
-    au::file::createDirectory(dir);
-    writeFile(dir + "/data.txt", "x");
-
-    auto list = XFileList::getFilteredListIn(dir, R"(no_such_pattern)");
-    EXPECT_TRUE(list.empty());
-    std::remove((dir + "/data.txt").c_str());
-    std::remove(dir.c_str());
-}
-
-// ============================================================================
-// XFileName
-// ============================================================================
-
-TEST(XFileName, getFolder)
-{
-    EXPECT_EQ(XFileName::getFolder("/a/b/c.txt"), "/a/b");
-    EXPECT_EQ(XFileName::getFolder("c.txt"), "");
-    EXPECT_EQ(XFileName::getFolder("/root_file"), "/");
-    EXPECT_EQ(XFileName::getFolder("/"), "/");
-}
-
-TEST(XFileName, stripPath)
-{
-    EXPECT_EQ(XFileName::stripPath("/a/b/c.txt"), "c.txt");
-    EXPECT_EQ(XFileName::stripPath("c.txt"), "c.txt");
-    EXPECT_EQ(XFileName::stripPath("/a/"), "");
-}
-
-TEST(XFileName, stripPathAndExt)
-{
-    EXPECT_EQ(XFileName::stripPathAndExt("/a/b/c.txt"), "c");
-    EXPECT_EQ(XFileName::stripPathAndExt("file"), "file");
-    EXPECT_EQ(XFileName::stripPathAndExt("/a/b/file.tar.gz"), "file.tar");
-    EXPECT_EQ(XFileName::stripPathAndExt(".hidden"), ".hidden");
-}
-
-TEST(XFileName, getFirstFoundImageSize_match)
-{
-    auto sz = XFileName::getFirstFoundImageSize("image_1920x1080.png");
-    EXPECT_EQ(sz.width, 1920u);
-    EXPECT_EQ(sz.height, 1080u);
-}
-
-TEST(XFileName, getFirstFoundImageSize_multiple_matches)
-{
-    // First match should be "800x600", not "1920x1080"
-    auto sz = XFileName::getFirstFoundImageSize("res_800x600_1920x1080.jpg");
-    EXPECT_EQ(sz.width, 800u);
-    EXPECT_EQ(sz.height, 600u);
-}
-
-TEST(XFileName, getFirstFoundImageSize_no_match)
-{
-    auto sz = XFileName::getFirstFoundImageSize("no_dimensions_here.txt");
-    EXPECT_EQ(sz.width, 0u);
-    EXPECT_EQ(sz.height, 0u);
-}
-
-TEST(XFileName, getLastFoundImageSize_multiple_matches)
-{
-    auto sz = XFileName::getLastFoundImageSize("res_800x600_1920x1080.jpg");
-    EXPECT_EQ(sz.width, 1920u);
-    EXPECT_EQ(sz.height, 1080u);
-}
-
-TEST(XFileName, getLastFoundImageSize_no_match)
-{
-    auto sz = XFileName::getLastFoundImageSize("no_dimensions_here.txt");
-    EXPECT_EQ(sz.width, 0u);
-    EXPECT_EQ(sz.height, 0u);
-}
-
-TEST(XFileName, getFirstMatchByRegex_match)
-{
-    auto s = XFileName::getFirstMatchByRegex("abc123def", R"(\d+)");
-    EXPECT_EQ(s, "123");
-}
-
-TEST(XFileName, getFirstMatchByRegex_no_match)
-{
-    auto s = XFileName::getFirstMatchByRegex("abcdef", R"(\d+)");
-    EXPECT_EQ(s, "");
-}
-
-TEST(XFileName, getLastMatchByRegex_multiple_matches)
-{
-    auto s = XFileName::getLastMatchByRegex("a1b2c3", R"(\d)");
-    EXPECT_EQ(s, "3");
-}
-
-TEST(XFileName, getLastMatchByRegex_no_match)
-{
-    auto s = XFileName::getLastMatchByRegex("abcdef", R"(\d+)");
-    EXPECT_EQ(s, "");
+    const auto subdirs = au::file::listDirs(dir.path(), "", false);
+    ASSERT_EQ(subdirs.size(), 1u);
+    EXPECT_EQ(subdirs[0].string(), "sub");
+    EXPECT_EQ(au::file::listDirs(dir.path(), "^sub$", false).size(), 1u);
+    EXPECT_TRUE(au::file::listFiles(dir.path(), "missing").empty());
+    EXPECT_TRUE(au::file::listFiles(dir.child("absent")).empty());
 }
 
 #endif  // ENABLE_TEST_XFILE

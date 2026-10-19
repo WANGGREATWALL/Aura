@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "log/xlogger.h"
-#include "sys/xplatform.h"
+#include "sys/xsystem.h"
 
 namespace au {
 namespace perf {

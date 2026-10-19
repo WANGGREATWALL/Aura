@@ -104,4 +104,10 @@ inline const char* getErrorStr(int code)
 
 }  // namespace err
 
+// Aura modules use au::err; retain the existing global err namespace for
+// source compatibility with older callers.
+namespace au {
+namespace err = ::err;
+}
+
 #endif  // XERROR_H

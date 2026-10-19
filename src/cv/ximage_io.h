@@ -3,7 +3,7 @@
 
 /**
  * @file ximage_io.h
- * @brief Image load/save utilities.
+ * @brief XImage load/save utilities.
  *
  * Supported formats: JPEG, PNG, NV21/NV12, gray, raw.
  *
@@ -26,14 +26,14 @@ public:
      * @brief Load an image from file.
      * @param pathFull Full path with extension, e.g. "/data/image.jpg", "/data/img_512x512.nv12".
      */
-    static XImage load(const std::string& pathFull);
+    static au::cv::XImage load(const std::string& pathFull);
 
     /**
      * @brief Dump image to file.
      * @param image The image to save.
      * @param nameWithoutFormat Filename without extension (format auto-determined).
      */
-    static int dump(const XImage& image, const std::string& nameWithoutFormat);
+    static int dump(const au::cv::Image& image, const std::string& nameWithoutFormat);
 };
 
 }}  // namespace au::cv
