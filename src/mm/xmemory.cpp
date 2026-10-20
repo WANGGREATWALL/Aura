@@ -42,30 +42,25 @@ int free(void* ptr) noexcept
     if (ptr == nullptr)
         return au::err::kErrorNullPointer;
 
-    MemBlock block;
-    int retTake = Registry::instance().take(ptr, block);
-    if (retTake != au::err::kSuccess)
-        return retTake;
-
-    return forBackend(block.backend).release(block);
+    return Registry::instance().retire(ptr);
 }
 
 int syncCpuToDevice(void* ptr) noexcept
 {
-    MemBlock block;
-    int retFind = Registry::instance().find(ptr, block);
+    au::mm::detail::MemoryLease lease;
+    int retFind = Registry::instance().acquire(ptr, 1, lease);
     if (retFind != au::err::kSuccess)
         return retFind;
-    return forBackend(block.backend).syncCpuToDevice(block);
+    return forBackend(lease.block().backend).syncCpuToDevice(lease.block());
 }
 
 int syncDeviceToCpu(void* ptr) noexcept
 {
-    MemBlock block;
-    int retFind = Registry::instance().find(ptr, block);
+    au::mm::detail::MemoryLease lease;
+    int retFind = Registry::instance().acquire(ptr, 1, lease);
     if (retFind != au::err::kSuccess)
         return retFind;
-    return forBackend(block.backend).syncDeviceToCpu(block);
+    return forBackend(lease.block().backend).syncDeviceToCpu(lease.block());
 }
 
 int query(void* ptr, MemBlock& out) noexcept

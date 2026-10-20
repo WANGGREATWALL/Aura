@@ -59,7 +59,11 @@ struct MemBlock
 /// @return au::err::kSuccess or a negative error code.
 AU_API int alloc(size_t size, MemType type, MemBlock& out) noexcept;
 
-/// Release a block previously returned by alloc(). Safe to call with nullptr (returns kErrorNullPointer).
+/// Retire a block returned by alloc(). New queries fail immediately. Physical
+/// release waits for internal CPU/device leases; callers still obey borrowed
+/// pointer lifetimes. Returns a known immediate cleanup error, or success when
+/// retirement is accepted (deferred cleanup errors are logged by the backend).
+/// Passing nullptr returns kErrorNullPointer.
 AU_API int free(void* ptr) noexcept;
 
 /// Flush CPU cache lines for @p ptr so the device sees the latest CPU writes.

@@ -10,9 +10,6 @@ set(AURA_VERSION "${AURA_VERSION_MAJOR}.${AURA_VERSION_MINOR}.${AURA_VERSION_PAT
 
 project(Aura VERSION ${AURA_VERSION} LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 message(STATUS "***********************************************************")
 message(STATUS "*")
 message(STATUS "* Aura v${AURA_VERSION} (${CMAKE_BUILD_TYPE})")
@@ -36,6 +33,8 @@ set(AURA_SOURCES
     src/sys/xdlib.cpp
     src/sys/xsystem.cpp
     src/sys/xsystem_vivo.cpp
+    src/sys/flow_runtime.cpp
+    src/flow/xflow.cpp
     src/file/xpath.cpp
     src/file/xfile.cpp
     src/regex/xregex.cpp
@@ -47,6 +46,7 @@ set(AURA_SOURCES
     src/mm/xmemory.cpp
     src/mm/backend.cpp
     src/mm/registry.cpp
+    src/mm/memory_control.cpp
     src/mm/pool_backend.cpp
     src/util/xargs.cpp
     third_party/cJSON/cJSON.c
@@ -57,6 +57,11 @@ set(AURA_SOURCES
 # ============================================================================
 add_library(aura STATIC ${AURA_SOURCES})
 target_compile_definitions(aura PUBLIC AURA_STATIC)
+target_compile_features(aura PRIVATE cxx_std_17 INTERFACE cxx_std_11)
+set_target_properties(aura PROPERTIES POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+find_package(Threads REQUIRED)
+target_link_libraries(aura PRIVATE Threads::Threads)
 if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(aura PRIVATE src/mm/native_backend.cpp)
 else()
@@ -87,7 +92,10 @@ option(ENABLE_TEST_XSYSTEM   "Enable xsystem unit test"   ON)
 option(ENABLE_TEST_XERROR    "Enable xerror unit test"    ON)
 option(ENABLE_TEST_XFILE     "Enable xfile unit test"     ON)
 option(ENABLE_TEST_XIMAGE    "Enable ximage unit test"    ON)
-option(ENABLE_TEST_XFLOW     "Enable xflow unit test"     OFF)
+option(ENABLE_TEST_XFLOW     "Enable xflow unit test"     ON)
+if(ENABLE_TEST_XFLOW)
+    target_compile_definitions(aura PRIVATE AURA_FLOW_TESTING=1)
+endif()
 
 # ============================================================================
 # Tests
@@ -132,6 +140,7 @@ aura_add_test(ximage)
 aura_add_test(xflow)
 
 add_executable(aura_test ${AURA_TEST_SOURCES})
+target_compile_features(aura_test PRIVATE cxx_std_17)
 target_compile_definitions(aura_test PRIVATE ${AURA_TEST_DEFINITIONS})
 
 target_include_directories(aura_test PRIVATE
@@ -144,6 +153,38 @@ target_include_directories(aura_test PRIVATE
 )
 
 target_link_libraries(aura_test PRIVATE aura)
+
+include(CTest)
+if(BUILD_TESTING AND ENABLE_TEST_XFLOW)
+    add_test(NAME flow_unit COMMAND aura_test --gtest_filter=XFlow.*)
+    set_tests_properties(flow_unit PROPERTIES TIMEOUT 60)
+    if(ENABLE_TEST_XMEMORY)
+        add_test(NAME flow_memory COMMAND aura_test --gtest_filter=XMemory.*)
+        set_tests_properties(flow_memory PROPERTIES TIMEOUT 60)
+    endif()
+    add_executable(flow_cxx11_test test/flow_cxx11.cpp)
+    target_include_directories(flow_cxx11_test PRIVATE src)
+    set_target_properties(flow_cxx11_test PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
+    target_link_libraries(flow_cxx11_test PRIVATE aura)
+    add_test(NAME flow_cxx11 COMMAND flow_cxx11_test)
+    add_test(NAME flow_worker_failure COMMAND flow_cxx11_test worker-failure)
+    add_executable(flow_c_api_test test/flow_c_api.c)
+    set_target_properties(flow_c_api_test PROPERTIES LINKER_LANGUAGE CXX)
+    target_link_libraries(flow_c_api_test PRIVATE aura)
+    add_test(NAME flow_c_api COMMAND flow_c_api_test)
+    if(UNIX)
+        foreach(plugin IN ITEMS flow_plugin_a flow_plugin_b)
+            add_library(${plugin} MODULE test/flow_plugin.cpp)
+            set_target_properties(${plugin} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+            target_link_libraries(${plugin} PRIVATE aura)
+        endforeach()
+        add_executable(flow_isolation_test test/flow_isolation.cpp)
+        target_include_directories(flow_isolation_test PRIVATE inc)
+        target_link_libraries(flow_isolation_test PRIVATE ${CMAKE_DL_LIBS})
+        add_test(NAME flow_isolation COMMAND flow_isolation_test
+            $<TARGET_FILE:flow_plugin_a> $<TARGET_FILE:flow_plugin_b>)
+    endif()
+endif()
 
 # Platform-specific link libraries
 if(ANDROID)
@@ -169,13 +210,21 @@ if(ENABLE_ASAN AND ENABLE_TSAN)
 endif()
 
 if(ENABLE_ASAN)
-    target_compile_options(aura_test PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
-    target_link_options(aura_test PRIVATE -fsanitize=address)
-    message(STATUS "AddressSanitizer enabled for aura_test")
+    foreach(target IN ITEMS aura aura_test flow_cxx11_test flow_c_api_test flow_plugin_a flow_plugin_b flow_isolation_test)
+        if(TARGET ${target})
+            target_compile_options(${target} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+            target_link_options(${target} PRIVATE -fsanitize=address)
+        endif()
+    endforeach()
+    message(STATUS "AddressSanitizer enabled for Aura and its test consumers")
 endif()
 
 if(ENABLE_TSAN)
-    target_compile_options(aura_test PRIVATE -fsanitize=thread -fno-omit-frame-pointer -g)
-    target_link_options(aura_test PRIVATE -fsanitize=thread)
-    message(STATUS "ThreadSanitizer enabled for aura_test")
+    foreach(target IN ITEMS aura aura_test flow_cxx11_test flow_c_api_test flow_plugin_a flow_plugin_b flow_isolation_test)
+        if(TARGET ${target})
+            target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer -g)
+            target_link_options(${target} PRIVATE -fsanitize=thread)
+        endif()
+    endforeach()
+    message(STATUS "ThreadSanitizer enabled for Aura and its test consumers")
 endif()

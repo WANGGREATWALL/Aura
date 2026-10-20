@@ -15,21 +15,25 @@
  *   });
  */
 
-#include "xthreadpool.h"
 #include <memory>
 
-namespace au { namespace flow {
+#include "xthreadpool.h"
 
-class XFlow {
+namespace au {
+namespace flow {
+
+class XFlow
+{
 public:
-    static XFlow& get() {
+    static XFlow& get()
+    {
         static XFlow instance;
         return instance;
     }
 
     ~XFlow();
 
-    XFlow(const XFlow&) = delete;
+    XFlow(const XFlow&)            = delete;
     XFlow& operator=(const XFlow&) = delete;
 
     int init(size_t workers, size_t pipelines);
@@ -42,13 +46,14 @@ public:
 private:
     XFlow();
 
-    bool mInited = false;
+    bool                         mInited = false;
     std::unique_ptr<XThreadpool> mWorkers;
     std::unique_ptr<XThreadpool> mPipelines;
 };
 
-}}  // namespace au::flow
+}  // namespace flow
+}  // namespace au
 
 #include "xthread_flow.impl.h"
 
-#endif // AURA_FLOW_XTHREAD_FLOW_H_
+#endif  // AURA_FLOW_XTHREAD_FLOW_H_
