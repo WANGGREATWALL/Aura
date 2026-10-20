@@ -4,7 +4,7 @@
 
 权威设计为 [Obsidian 设计文档](</srv/data/file/code/Obsidian/7 项目/7 taskflow/3 设计文档.md>). 本文件记录代码交付与验收边界, 不缩减或替换该设计. CPU 调度, mm 访问协议, 两套 OpenCL wrapper, cache 与设备资源生命周期均已接入同一完成契约. 接入新 wrapper 的异步 GPU 提交现在由 Task reservation 跟踪至设备和主机清理完成. 绕过 wrapper 的原生调用仍须自行接入协议.
 
-实现起点为 dev 的 `4438d46`, 后续改动在此之上继续实现. 原有 `src/flow/xthread_flow.h` 保留. 新代码从公开 `inc/flow/xflow.h` 进入, `inc/flow/xthread_flow.h` 提供历史 include 路径. 旧线程池和归档 TaskFlow 不参与新调度器.
+实现起点为 dev 的 `4438d46`, 后续改动在此之上继续实现. 新代码从公开 `inc/flow/xflow.h` 进入, `inc/flow/xthread_flow.h` 提供历史 include 路径. 未参与新调度器构建的旧双线程池实现和照片归档 TaskFlow 已从源码树移除, 已提交版本可从 Git 历史查阅.
 
 ## 1 代码入口
 

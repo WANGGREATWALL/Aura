@@ -54,8 +54,7 @@ Aura is a curated collection of high-performance C++17 components designed to st
 | `au::sys` | `xplatform` | Hardware topology (CPU cores, memory), environment variables, and OS detection. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | | `xdlib` | Unified cross-platform dynamic library loading (dlopen / LoadLibrary). | ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) |
 | `au::cv` | `ximage` | Multi-plane image descriptors, explicit formats and color spaces, single-block allocation, borrowed copies, and ownership-transferring `XImage` moves. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
-| `au::flow` | `xthread_flow` | Directed acyclic graph of tasks with parallel scheduling across thread-pool workers. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
-| | `xthreadpool` | Low-latency work-stealing thread pool with priority-aware task dispatch. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
+| `au::flow` | `xflow` | Dynamic task dependencies, structured completion, cooperative waits, and tiled parallelism with private workers. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
 | `au::json` | `xjson` | Rapid JSON parsing and serialization built on cJSON with C++ RAII wrappers. | ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) |
 
 `au::cv::Image` is a plain descriptor: storage returned by `createImage()` requires `destroyImage()`. An `XImage` created from dimensions owns its storage; copying it or constructing one from an `Image` lvalue borrows that storage and requires the original owner to remain alive. Moving an `XImage` transfers ownership. `Image` rvalues cannot be adopted by `XImage`.
