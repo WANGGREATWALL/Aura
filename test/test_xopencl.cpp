@@ -517,7 +517,7 @@ TEST(XOpenCL, PartialSubmissionFlushQueryAndKernelReuse)
         EXPECT_EQ(au::flow::XFlow::get().waitFor(task, 3), au::err::kErrorTimeout);
         EXPECT_GT(model.mEvents.load(std::memory_order_relaxed), 0);
         model.mReady.store(true, std::memory_order_release);
-        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), 0);
+        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), au::err::kErrorPlatformAPI);
         EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
         EXPECT_EQ(result.mNativeCode, scenario == 4 ? CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST : CL_OUT_OF_RESOURCES);
         EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
@@ -606,7 +606,7 @@ TEST(XOpenCL, EmptyKernelAndRejectedCallsRemainObservable)
         (void)au::gpu::CLWrapper::get().setNDRange({0}).enqueue("empty", nullptr, nullptr);
         return 0; // Dropping the synchronous error must not report a successful task.
     });
-    ASSERT_EQ(au::flow::XFlow::get().wait(rejected, &result), 0);
+    ASSERT_EQ(au::flow::XFlow::get().wait(rejected, &result), au::err::kErrorInvalidParam);
     EXPECT_EQ(result.mCode, au::err::kErrorInvalidParam); EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
     EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), before);
     void* context = nullptr; ASSERT_EQ(au::gpu::CLWrapper::get().nativeContext(context), 0);
@@ -654,7 +654,7 @@ TEST(XOpenCL, CacheFailureBeforeAndAfterNativeAcceptance)
             return au::gpu::OpenCLWrapper::get().setNDRange({4096}).enqueue("add", gSource, nullptr,
                 au::gpu::buffer(au::mm::readWriteAccess(pointer, 4096)), static_cast<unsigned char>(3));
         });
-        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), 0);
+        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), au::err::kErrorPlatformAPI);
         EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mNativeCode, 99);
         EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Memory);
         EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), scenario < 2 ? 0 : 3);
@@ -686,7 +686,7 @@ TEST(XOpenCL, MissingNativeEventRetainsWorkUntilQueueProof)
         EXPECT_GT(model.mMemory.load(std::memory_order_relaxed), 0);
         EXPECT_GT(model.mEvents.load(std::memory_order_relaxed), 0);
         model.mReady.store(true, std::memory_order_release);
-        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), 0);
+        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), au::err::kErrorPlatformAPI);
         EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mNativeCode, CL_INVALID_EVENT);
         EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
         EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed), 1); // Live allocation keeps a reusable native cache entry.
@@ -708,11 +708,11 @@ TEST(XOpenCL, ResourceFailureKeepsOriginalGpuTaskCause)
             au::gpu::buffer(au::mm::readWriteAccess(memory.ptr, memory.size)), static_cast<unsigned char>(7));
     };
     auto origin = au::flow::XFlow::get().enqueue(submit);
-    au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(origin, &result), 0);
+    au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(origin, &result), au::err::kErrorPlatformAPI);
     ASSERT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mCauseTaskId, origin.id());
     const int commands = model.mCommands.load(std::memory_order_relaxed);
     auto nextGpu = au::flow::XFlow::get().enqueue(submit); // Resource fence detects the failure without inventing a business DAG.
-    ASSERT_EQ(au::flow::XFlow::get().wait(nextGpu, &result), 0);
+    ASSERT_EQ(au::flow::XFlow::get().wait(nextGpu, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mCauseTaskId, origin.id());
     EXPECT_EQ(result.mNativeCode, CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
@@ -720,7 +720,7 @@ TEST(XOpenCL, ResourceFailureKeepsOriginalGpuTaskCause)
     auto nextCpu = au::flow::XFlow::get().enqueue([&]() -> int {
         au::mm::CpuAccessScope cpu; return cpu.begin({au::mm::readAccess(memory.ptr, memory.size)});
     });
-    ASSERT_EQ(au::flow::XFlow::get().wait(nextCpu, &result), 0);
+    ASSERT_EQ(au::flow::XFlow::get().wait(nextCpu, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mCauseTaskId, origin.id());
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
     EXPECT_EQ(au::mm::free(memory.ptr), 0);
@@ -840,14 +840,14 @@ TEST(XOpenCL, NativeChainsSubmitWithoutHostWaitAndKeepRootFailure)
         if (fail) model.mExecution.store(-9, std::memory_order_relaxed);
         model.mReady.store(true, std::memory_order_release);
         au::flow::TaskResult result{};
-        ASSERT_EQ(au::flow::XFlow::get().wait(tasks.back(), &result), 0);
+        ASSERT_EQ(au::flow::XFlow::get().wait(tasks.back(), &result), fail ? au::err::kErrorPlatformAPI : 0);
         EXPECT_EQ(result.mCode, fail ? au::err::kErrorPlatformAPI : 0);
         if (fail) { EXPECT_EQ(result.mNativeCode, -9); EXPECT_EQ(result.mCauseTaskId, tasks.front().id()); }
         else {
             au::mm::CpuAccessScope cpu; ASSERT_EQ(cpu.begin({au::mm::readAccess(pointer, 4096)}), 0);
             EXPECT_EQ(static_cast<unsigned char*>(pointer)[0], 65); EXPECT_EQ(cpu.finish(), 0);
         }
-        for (auto& task : tasks) EXPECT_EQ(au::flow::XFlow::get().wait(task), 0);
+        for (auto& task : tasks) EXPECT_EQ(au::flow::XFlow::get().wait(task), fail ? au::err::kErrorPlatformAPI : 0);
         EXPECT_EQ(memory.reset(), 0);
         EXPECT_EQ(au::gpu::OpenCLWrapper::get().finish(), fail ? au::err::kErrorPlatformAPI : 0);
         EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed), 0);

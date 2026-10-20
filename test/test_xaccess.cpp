@@ -318,7 +318,7 @@ TEST(XMemory, FailedDeviceFenceRetainsSourceAndBlocksCpuRead)
         return 0;
     });
     au::flow::TaskResult result{};
-    ASSERT_EQ(au::flow::XFlow::get().wait(consumer, &result), 0);
+    ASSERT_EQ(au::flow::XFlow::get().wait(consumer, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mNativeCode, -7);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL); EXPECT_EQ(result.mCauseTaskId, producer.id());
     EXPECT_EQ(device.finish(), au::err::kErrorPlatformAPI);
@@ -371,7 +371,7 @@ TEST(XMemory, AccessFailuresJoinTaskAndNativeCause)
         return 0; // Destructor must report the failed END to the task scope.
     });
     au::flow::TaskResult result{};
-    ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), 0);
+    ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Memory);
     EXPECT_EQ(result.mNativeCode, 77);
@@ -388,7 +388,7 @@ TEST(XMemory, AccessFailuresJoinTaskAndNativeCause)
     auto captured = au::flow::XFlow::get().enqueue([scope = std::move(owned), &later]() -> int {
         return scope->begin({au::mm::writeAccess(later.mFirst, 256)});
     });
-    ASSERT_EQ(au::flow::XFlow::get().wait(captured, &result), 0);
+    ASSERT_EQ(au::flow::XFlow::get().wait(captured, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Memory);
     EXPECT_EQ(result.mNativeCode, 77);
@@ -404,7 +404,7 @@ TEST(XMemory, AccessFailuresJoinTaskAndNativeCause)
         const int code = scope.begin({au::mm::writeAccess(explicitFinish.mFirst, 256)});
         return code ? code : scope.finish();
     });
-    ASSERT_EQ(au::flow::XFlow::get().wait(forwarded, &result), 0);
+    ASSERT_EQ(au::flow::XFlow::get().wait(forwarded, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Memory); EXPECT_EQ(result.mNativeCode, 77);
     EXPECT_EQ(result.mCauseTaskId, forwarded.id());

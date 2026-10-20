@@ -73,6 +73,8 @@ void au_flow_abandon(au_flow_handle group) AU_FLOW_NOEXCEPT;
 int au_flow_submit(au_flow_handle handle) AU_FLOW_NOEXCEPT;
 void au_flow_record_error(int code) AU_FLOW_NOEXCEPT;
 void au_flow_record_exception(void) AU_FLOW_NOEXCEPT;
+/* C waist: zero means the wait completed, not that the task succeeded.
+ * Inspect out->mCode for the task result. C++ wait methods combine both codes. */
 int au_flow_wait(au_flow_handle handle, uint64_t timeoutMs,
                  au_flow_result* out) AU_FLOW_NOEXCEPT;
 int au_flow_wait_all(void) AU_FLOW_NOEXCEPT;

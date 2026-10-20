@@ -1,7 +1,7 @@
 #ifndef AURA_FLOW_COMPLETION_H_
 #define AURA_FLOW_COMPLETION_H_
 
-#include "flow/xflow.h"
+#include "flow/xflow_types.h"
 
 namespace au {
 namespace flow AU_LOCAL {
@@ -61,18 +61,13 @@ std::uint64_t currentTaskId() noexcept;
 // Synchronous wrapper preparation/enqueue failures can enrich an int return
 // with the actual native status without requiring an accepted native event.
 void recordExternalError(const au::flow::detail::ExternalStatus& status) noexcept;
-// Pins protect token storage, not a provider callback return stack during dlclose.
-// OpenCL v1 uses polling and never registers native callbacks.
-// Arm before registering a generic provider callback, including immediate callbacks.
-void armExternalCallback(au::flow::detail::ExternalToken* token) noexcept;
-void leaveExternalCallback(au::flow::detail::ExternalToken* token) noexcept;
-// Notification only: atomics, intrusive publication and a wake. Does not run
-// cleanup/user code. A live registrar or callback pin must cover this call.
+// Providers query on normal threads. Notification before publication is also
+// allowed while the registrar still owns the token; never call after release.
 void notifyExternal(au::flow::detail::ExternalToken* token,
                     const au::flow::detail::ExternalStatus& status) noexcept;
-// On callback registration failure, disarm its unused pin and enable fallback.
+// Publish a prepared query to the scheduler without allocating another record.
 void pollExternal(au::flow::detail::ExternalToken* token) noexcept;
-// Last registrar access. No use of token after this call without a callback pin.
+// Last registrar access. No use of token after this call.
 void leaveExternalRegistrar(au::flow::detail::ExternalToken* token) noexcept;
 
 } // namespace detail

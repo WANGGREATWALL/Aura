@@ -3,6 +3,7 @@
 #include "gpu/xopencl_api.h"
 
 static int work(void* payload) { *(int*)payload = 1; return 0; }
+static int failure(void* payload) { (void)payload; return 17; }
 int main(void)
 {
     int called = 0;
@@ -30,5 +31,8 @@ int main(void)
     if (au_flow_submit(handle)) return 2;
     if (au_flow_wait(handle, UINT64_MAX, &result) || result.mCode || called != 1) return 3;
     au_flow_release(handle);
+    if (au_flow_make(failure, 0, 0, &handle) || au_flow_submit(handle)) return 10;
+    if (au_flow_wait(handle, UINT64_MAX, &result) || result.mCode != 17) return 11;
+    au_flow_release(handle); /* The C waist still reports wait status separately. */
     return au_flow_shutdown();
 }

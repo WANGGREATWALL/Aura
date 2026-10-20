@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <new>
 #include <tuple>
@@ -11,47 +12,13 @@
 #include <utility>
 
 #include "flow/xflow_api.h"
+#include "flow/xflow_types.h"
 #include "log/xerror.h"
 #include "sys/xvisibility.h"
 
 namespace au {
 namespace flow AU_LOCAL {
 
-constexpr int kErrorDependencyFailed = -5001;
-constexpr int kErrorCycleDetected = -5002;
-constexpr int kErrorWouldDeadlock = -5003;
-constexpr int kErrorUnhandledException = -5004;
-
-enum class TaskState : std::uint32_t {
-    Invalid, Draft, Pending, Ready, Running, Waiting,
-    Succeeded, Failed, Skipped, Rejected
-};
-enum class ErrorDomain : std::uint32_t { None, Flow, Callable, Memory, OpenCL, System };
-enum class AffinityMode : std::uint32_t { SystemDefault, ExplicitCpuSet };
-
-struct TaskResult {
-    std::uint32_t mStructSize;
-    au::flow::TaskState mState;
-    au::flow::ErrorDomain mDomain;
-    int mCode;
-    int mNativeCode;
-    std::uint64_t mCauseTaskId;
-};
-struct AffinityPolicy {
-    au::flow::AffinityMode mMode;
-    const std::uint32_t* mCpuIds;
-    std::size_t mCount;
-};
-struct WorkerInfo {
-    std::uint32_t mStructSize;
-    std::uint32_t mWorkerId;
-    std::uint64_t mThreadId;
-    std::uint64_t mRequestedVersion;
-    std::uint64_t mAppliedVersion;
-    int mAffinityCode;
-};
-
-const char* getErrorStr(int code) noexcept;
 class XFlow;
 class Tasks;
 
@@ -210,6 +177,30 @@ public:
         if (!ret) au::flow::detail::copyResult(value, out);
         return ret;
     }
+    bool ready() const noexcept { return state() >= au::flow::TaskState::Succeeded; }
+    // Nonblocking: NotReady until terminal; then the original task error code.
+    int code() const noexcept
+    {
+        au::flow::TaskResult value = {};
+        const int ret = result(value);
+        return ret ? ret : value.mCode;
+    }
+    // All C++ wait methods return the task code after successful completion.
+    // A wait failure leaves out unchanged; a terminal result fills its details.
+    int wait(au::flow::TaskResult* out = nullptr) const noexcept
+    { return waitFor(UINT64_MAX, out); }
+    int waitFor(std::uint64_t timeoutMs, au::flow::TaskResult* out = nullptr) const noexcept
+    {
+        if (mRejection) {
+            if (out) (void)result(*out);
+            return mRejection;
+        }
+        au_flow_result value = {}; value.mStructSize = sizeof(value);
+        const int ret = au_flow_wait(mHandle, timeoutMs, &value);
+        if (ret) return ret; // Leave details unchanged when the wait did not complete.
+        if (out) au::flow::detail::copyResult(value, *out);
+        return value.mCode;
+    }
     int setName(const char* name) noexcept { return mRejection ? mRejection : au_flow_name(mHandle, name); }
     int precede(const au::flow::Task& next) const noexcept
     {
@@ -230,6 +221,8 @@ class Tasks {
 public:
     Tasks() noexcept : mTask(), mOwnsBuilder(true)
     { mTask.mRejection = au_flow_group(&mTask.mHandle); }
+    Tasks(std::initializer_list<au::flow::Task> tasks) noexcept : Tasks()
+    { for (const auto& task : tasks) if (add(task)) break; }
     ~Tasks() noexcept { if (mOwnsBuilder) au_flow_abandon(mTask.mHandle); }
     Tasks(const au::flow::Tasks&) = delete;
     au::flow::Tasks& operator=(const au::flow::Tasks&) = delete;
@@ -258,6 +251,11 @@ public:
         return ret;
     }
     au::flow::Task handle() const noexcept { return mTask; }
+    bool ready() const noexcept { return mTask.ready(); }
+    int code() const noexcept { return mTask.code(); }
+    int wait(au::flow::TaskResult* out = nullptr) const noexcept { return mTask.wait(out); }
+    int waitFor(std::uint64_t timeoutMs, au::flow::TaskResult* out = nullptr) const noexcept
+    { return mTask.waitFor(timeoutMs, out); }
     int precede(const au::flow::Task& next) const noexcept { return mTask.precede(next); }
     int precede(au::flow::Tasks& next) const noexcept { return mTask.precede(next.mTask); }
 private:
@@ -302,22 +300,29 @@ public:
         return !ret || task.state() == au::flow::TaskState::Rejected ? task : au::flow::Task(nullptr, ret);
     }
     au::flow::Task enqueue(au::flow::Tasks& tasks) noexcept { return enqueue(tasks.handle()); }
+    template <class F, class... Args>
+    au::flow::Task enqueueAfter(const au::flow::Task& before, F&& f, Args&&... args) noexcept
+    {
+        au::flow::Task task = makeTask(std::forward<F>(f), std::forward<Args>(args)...);
+        if (!task.mRejection) {
+            const int ret = before.precede(task);
+            if (ret) (void)au_flow_builder_error(task.mHandle, ret);
+        }
+        return enqueue(task);
+    }
+    template <class F, class... Args>
+    au::flow::Task enqueueAfter(const au::flow::Tasks& before, F&& f, Args&&... args) noexcept
+    { return enqueueAfter(before.handle(), std::forward<F>(f), std::forward<Args>(args)...); }
     int wait(const au::flow::Task& task, au::flow::TaskResult* out = nullptr) noexcept
-    { return waitFor(task, UINT64_MAX, out); }
+    { return task.wait(out); }
     int wait(const au::flow::Tasks& tasks, au::flow::TaskResult* out = nullptr) noexcept
-    { return wait(tasks.handle(), out); }
+    { return tasks.wait(out); }
     int waitFor(const au::flow::Task& task, std::uint64_t timeoutMs,
                 au::flow::TaskResult* out = nullptr) noexcept
-    {
-        if (task.mRejection) {
-            if (out) return task.result(*out);
-            return 0;
-        }
-        au_flow_result value = {}; value.mStructSize = sizeof(value);
-        const int ret = au_flow_wait(task.mHandle, timeoutMs, out ? &value : nullptr);
-        if (!ret && out) au::flow::detail::copyResult(value, *out);
-        return ret;
-    }
+    { return task.waitFor(timeoutMs, out); }
+    int waitFor(const au::flow::Tasks& tasks, std::uint64_t timeoutMs,
+                au::flow::TaskResult* out = nullptr) noexcept
+    { return tasks.waitFor(timeoutMs, out); }
     int waitAll() noexcept { return au_flow_wait_all(); }
     template <class F>
     int parallelizeTiledTasks(std::size_t range, std::size_t tile, F&& f) noexcept

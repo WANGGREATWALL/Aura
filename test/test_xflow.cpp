@@ -51,7 +51,7 @@ TEST(XFlow, CallableOwnershipAndResults)
     EXPECT_FALSE(owned);
     au::flow::Task failure = flow.enqueue([]() -> int { return 17; });
     au::flow::TaskResult result{};
-    EXPECT_EQ(flow.wait(failure, &result), 0);
+    EXPECT_EQ(flow.wait(failure, &result), 17);
     EXPECT_EQ(result.mCode, 17);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Callable);
     EXPECT_EQ(result.mCauseTaskId, failure.id());
@@ -65,20 +65,62 @@ TEST(XFlow, UnexpectedExceptionAndEqualBusinessCodeKeepTheirOrigins)
     au::flow::XFlow& flow = au::flow::XFlow::get();
     au::flow::TaskResult result{};
     au::flow::Task throwing = flow.enqueue([]() -> int { throw std::runtime_error("test"); });
-    ASSERT_EQ(flow.wait(throwing, &result), 0);
+    ASSERT_EQ(flow.wait(throwing, &result), au::flow::kErrorUnhandledException);
     EXPECT_EQ(result.mCode, au::flow::kErrorUnhandledException);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Flow);
     au::flow::Task business = flow.enqueue([]() -> int { return au::flow::kErrorUnhandledException; });
-    ASSERT_EQ(flow.wait(business, &result), 0);
+    ASSERT_EQ(flow.wait(business, &result), au::flow::kErrorUnhandledException);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Callable);
     au::flow::Task tile = flow.enqueue([&]() -> int {
         return flow.parallelizeTiledTasks(16, 1, [](std::size_t, std::size_t) -> int {
             throw std::runtime_error("tile");
         });
     });
-    ASSERT_EQ(flow.wait(tile, &result), 0);
+    ASSERT_EQ(flow.wait(tile, &result), au::flow::kErrorUnhandledException);
     EXPECT_EQ(result.mCode, au::flow::kErrorUnhandledException);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Flow);
+}
+
+TEST(XFlow, CompletionConveniencesShareTaskErrorSemantics)
+{
+    au::flow::XFlow& flow = au::flow::XFlow::get();
+    au::flow::Task empty, draft = flow.makeTask([]() -> int { return 17; });
+    EXPECT_FALSE(empty.ready()); EXPECT_FALSE(draft.ready());
+    EXPECT_EQ(empty.code(), au::err::kErrorInvalidHandle);
+    EXPECT_EQ(empty.wait(), au::err::kErrorInvalidHandle);
+    EXPECT_EQ(draft.code(), au::err::kErrorNotReady);
+    EXPECT_EQ(draft.waitFor(0), au::err::kErrorNotReady);
+    au::flow::TaskResult result{};
+    ASSERT_EQ(flow.enqueue(draft).wait(&result), 17);
+    EXPECT_TRUE(draft.ready()); EXPECT_EQ(draft.code(), 17);
+    EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Callable);
+    EXPECT_EQ(result.mCauseTaskId, draft.id());
+    EXPECT_EQ(flow.wait(draft), 17);
+    EXPECT_EQ(flow.waitFor(draft, 0), 17);
+    au::flow::testing::failAfter(au::flow::testing::Failure::Node, 0);
+    au::flow::Task rejected = flow.enqueue([]() -> int { return 0; });
+    EXPECT_TRUE(rejected.ready()); EXPECT_EQ(rejected.code(), au::err::kErrorNoMemory);
+    EXPECT_EQ(rejected.wait(&result), au::err::kErrorNoMemory);
+    EXPECT_EQ(result.mState, au::flow::TaskState::Rejected);
+    std::atomic<bool> release{false};
+    au::flow::Task pending = flow.enqueue([&]() -> int {
+        while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+        return 23;
+    });
+    result.mCode = 71;
+    EXPECT_FALSE(pending.ready()); EXPECT_EQ(pending.code(), au::err::kErrorNotReady);
+    EXPECT_EQ(pending.waitFor(0, &result), au::err::kErrorTimeout);
+    EXPECT_EQ(result.mCode, 71); // No completed result was produced.
+    release.store(true, std::memory_order_release);
+    EXPECT_EQ(pending.wait(), 23);
+    au::flow::Tasks group;
+    EXPECT_FALSE(group.ready()); EXPECT_EQ(group.code(), au::err::kErrorNotReady);
+    ASSERT_EQ(group.add(flow.makeTask([]() -> int { return 29; })), 0);
+    ASSERT_EQ(flow.enqueue(group).submissionCode(), 0);
+    EXPECT_EQ(group.wait(&result), 29); EXPECT_TRUE(group.ready());
+    EXPECT_EQ(group.waitFor(0), 29); EXPECT_EQ(group.code(), 29);
+    EXPECT_EQ(flow.wait(group), 29); EXPECT_EQ(flow.waitFor(group, 0), 29);
+    EXPECT_EQ(result.mCode, 29);
 }
 
 TEST(XFlow, DiamondAndNestedGroups)
@@ -99,6 +141,101 @@ TEST(XFlow, DiamondAndNestedGroups)
     EXPECT_EQ(code(b), 0);
     EXPECT_NE(flow.enqueue(graph).submissionCode(), 0);
     EXPECT_EQ(code(all), 0);
+}
+
+TEST(XFlow, ConvenienceBuildersKeepErrorsAndDependencies)
+{
+    au::flow::XFlow& flow = au::flow::XFlow::get();
+    int source = 0, output = 0;
+    au::flow::Task a = flow.makeTask([&]() -> int { source = 7; return 0; });
+    au::flow::Task b = flow.makeTask([&]() -> int { output = source * 2; return 0; });
+    ASSERT_EQ(a.precede(b), 0);
+    au::flow::Tasks graph{a, b};
+    EXPECT_EQ(flow.enqueue(graph).wait(), 0); EXPECT_EQ(output, 14);
+    std::unique_ptr<int> owned(new int(14));
+    EXPECT_EQ(flow.enqueueAfter(graph, [&output](std::unique_ptr<int> value) -> int {
+        return output == *value ? 0 : 1;
+    }, std::move(owned)).wait(), 0);
+    EXPECT_FALSE(owned);
+
+    std::atomic<bool> release{false}; std::atomic<int> calls{0};
+    au::flow::Task before = flow.enqueue([&]() -> int {
+        while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+        return 0;
+    });
+    au::flow::Task after = flow.enqueueAfter(before, [&]() -> int { calls.fetch_add(1, std::memory_order_relaxed); return 0; });
+    EXPECT_EQ(flow.waitFor(after, 0), au::err::kErrorTimeout);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 0);
+    release.store(true, std::memory_order_release);
+    EXPECT_EQ(after.wait(), 0); EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
+    auto body = [&]() -> int { calls.fetch_add(1, std::memory_order_relaxed); return 0; };
+    au::flow::Task invalid, draft = flow.makeTask([]() -> int { return 0; });
+    EXPECT_EQ(flow.enqueueAfter(invalid, body).wait(), au::err::kErrorInvalidHandle);
+    EXPECT_EQ(flow.enqueueAfter(draft, body).wait(), au::err::kErrorStateInvalid);
+    au::flow::Task failure = flow.enqueue([]() -> int { return 31; });
+    au::flow::Task skipped = flow.enqueueAfter(failure, body);
+    au::flow::TaskResult result{};
+    EXPECT_EQ(flow.wait(skipped, &result), 31);
+    EXPECT_EQ(result.mState, au::flow::TaskState::Skipped); EXPECT_EQ(result.mCauseTaskId, failure.id());
+    au::flow::testing::failAfter(au::flow::testing::Failure::Edge, 0);
+    EXPECT_EQ(flow.enqueueAfter(before, body).wait(), au::err::kErrorNoMemory);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
+
+    au::flow::Task untouched = flow.makeTask(body);
+    au::flow::testing::failAfter(au::flow::testing::Failure::Node, 0);
+    au::flow::Task rejected = flow.makeTask(body);
+    EXPECT_EQ(flow.wait(rejected, &result), au::err::kErrorNoMemory);
+    au::flow::Tasks bad{untouched, rejected};
+    EXPECT_EQ(flow.enqueue(bad).wait(), au::err::kErrorNoMemory);
+    EXPECT_EQ(untouched.state(), au::flow::TaskState::Rejected);
+    au::flow::Task duplicate = flow.makeTask(body);
+    au::flow::Tasks repeated{duplicate, duplicate};
+    EXPECT_EQ(flow.enqueue(repeated).wait(), au::err::kErrorStateInvalid);
+    au::flow::Tasks owner{draft}, conflicting{draft};
+    EXPECT_EQ(flow.enqueue(conflicting).wait(), au::err::kErrorStateInvalid);
+    EXPECT_EQ(flow.enqueue(owner).wait(), 0); // A failed competing builder does not change the owner.
+    au::flow::Tasks alreadySubmitted{before};
+    EXPECT_EQ(flow.enqueue(alreadySubmitted).wait(), au::err::kErrorStateInvalid);
+    EXPECT_EQ(before.wait(), 0);
+    EXPECT_EQ(flow.enqueueAfter(rejected, body).wait(), au::err::kErrorNoMemory);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
+}
+
+TEST(XFlow, LinearContinuationYieldsToQueuedWorkAndPropagatesFailure)
+{
+    au::flow::XFlow& flow = au::flow::XFlow::get();
+    ASSERT_EQ(flow.waitAll(), 0);
+    const std::size_t budget = au::flow::testing::budget();
+    ASSERT_EQ(au::flow::testing::setBudget(1), 0);
+    std::atomic<bool> entered{false}, release{false};
+    std::atomic<unsigned int> calls{0};
+    au::flow::Tasks graph;
+    std::vector<au::flow::Task> chain;
+    chain.reserve(64);
+    for (unsigned int i = 0; i < 64; ++i) {
+        chain.emplace_back(flow.makeTask([&, i]() -> int {
+            if (i == 8) {
+                entered.store(true, std::memory_order_release);
+                while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+            }
+            if (calls.fetch_add(1, std::memory_order_relaxed) != i) return 1;
+            return i == 43 ? 37 : 0;
+        }));
+        ASSERT_EQ(graph.add(chain.back()), 0);
+        if (i) ASSERT_EQ(chain[i - 1].precede(chain[i]), 0);
+    }
+    const au::flow::Task joined = flow.enqueue(graph);
+    while (!entered.load(std::memory_order_acquire)) std::this_thread::yield();
+    unsigned int observed = 0;
+    const au::flow::Task competitor = flow.enqueue([&]() -> int {
+        observed = calls.load(std::memory_order_relaxed); return 0;
+    });
+    release.store(true, std::memory_order_release);
+    EXPECT_EQ(joined.wait(), 37); EXPECT_EQ(competitor.wait(), 0);
+    EXPECT_EQ(observed, 9u); EXPECT_EQ(calls.load(std::memory_order_relaxed), 44u);
+    EXPECT_EQ(chain.back().state(), au::flow::TaskState::Skipped);
+    EXPECT_EQ(flow.waitAll(), 0);
+    EXPECT_EQ(au::flow::testing::setBudget(budget), 0);
 }
 
 TEST(XFlow, RejectionAndDependencyFailure)
@@ -193,6 +330,77 @@ TEST(XFlow, TiledNestedAndSaturatedWorkers)
         checked = _i + _ti;
     XTHREAD_PARALLELIZE_END
     EXPECT_EQ(checked, 1u);
+}
+
+TEST(XFlow, ExternalTiledCallerFallsBackAndJoinsHelpers)
+{
+    au::flow::XFlow& flow = au::flow::XFlow::get();
+    ASSERT_EQ(flow.waitAll(), 0);
+    const std::size_t budget = au::flow::testing::budget();
+    ASSERT_EQ(au::flow::testing::setBudget(4), 0);
+    const auto caller = std::this_thread::get_id();
+    std::atomic<std::size_t> covered{0}, callerTiles{0};
+    std::atomic<bool> callerEntered{false};
+    EXPECT_EQ(flow.parallelizeTiledTasks(1003, 17, [&](std::size_t, std::size_t count) -> int {
+        if (std::this_thread::get_id() == caller) {
+            callerTiles.fetch_add(1, std::memory_order_relaxed);
+            callerEntered.store(true, std::memory_order_release);
+        } else {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (!callerEntered.load(std::memory_order_acquire)) {
+                if (std::chrono::steady_clock::now() > deadline) return 1;
+                std::this_thread::yield();
+            }
+        }
+        covered.fetch_add(count, std::memory_order_relaxed);
+        return 0;
+    }), 0);
+    EXPECT_GT(callerTiles.load(std::memory_order_relaxed), 0u);
+    EXPECT_EQ(covered.load(std::memory_order_relaxed), 1003u);
+    au::flow::testing::failAfter(au::flow::testing::Failure::Node, 1); // Root succeeds, first helper fails.
+    covered.store(0, std::memory_order_relaxed);
+    EXPECT_EQ(flow.parallelizeTiledTasks(257, 3, [&](std::size_t, std::size_t count) -> int {
+        if (std::this_thread::get_id() != caller) return 2;
+        covered.fetch_add(count, std::memory_order_relaxed); return 0;
+    }), 0);
+    EXPECT_EQ(covered.load(std::memory_order_relaxed), 257u);
+    EXPECT_EQ(flow.enqueue([&]() -> int {
+        au::flow::testing::failAfter(au::flow::testing::Failure::Node, 0);
+        return flow.parallelizeTiledTasks(19, 1, [](std::size_t, std::size_t) {});
+    }).wait(), 0); // Optional helper failure must not poison a managed parent either.
+    EXPECT_EQ(flow.parallelizeTiledTasks(19, 1, [](std::size_t, std::size_t) -> int {
+        throw std::runtime_error("external tile");
+    }), au::flow::kErrorUnhandledException);
+    EXPECT_EQ(flow.waitAll(), 0);
+    EXPECT_EQ(au::flow::testing::setBudget(budget), 0);
+}
+
+TEST(XFlow, SnapshotIncludesExternalTiledCallerWithoutHelpers)
+{
+    au::flow::XFlow& flow = au::flow::XFlow::get();
+    std::atomic<bool> entered{false}, release{false}, snapshot{false}, drained{false}, bodyDone{false};
+    int tileCode = 1, waitCode = 1;
+    std::thread caller([&] {
+        tileCode = flow.parallelizeTiledTasks(1, 1, [&](std::size_t, std::size_t) {
+            entered.store(true, std::memory_order_release);
+            while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+            bodyDone.store(true, std::memory_order_release);
+        });
+    });
+    while (!entered.load(std::memory_order_acquire)) std::this_thread::yield();
+    au::flow::testing::SnapshotHook hook{[](void* value) {
+        static_cast<std::atomic<bool>*>(value)->store(true, std::memory_order_release);
+    }, &snapshot};
+    au::flow::testing::snapshotHook(&hook);
+    std::thread waiter([&] { waitCode = flow.waitAll(); drained.store(true, std::memory_order_release); });
+    while (!snapshot.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    EXPECT_FALSE(drained.load(std::memory_order_acquire));
+    EXPECT_FALSE(bodyDone.load(std::memory_order_acquire));
+    release.store(true, std::memory_order_release);
+    caller.join(); waiter.join(); au::flow::testing::snapshotHook(nullptr);
+    EXPECT_EQ(tileCode, 0); EXPECT_EQ(waitCode, 0);
+    EXPECT_TRUE(bodyDone.load(std::memory_order_acquire));
 }
 
 TEST(XFlow, OverflowQueueAndStableRecordReuse)
@@ -503,10 +711,8 @@ TEST(XFlow, ImmediateExternalCompletionAndRegistrarPin)
         const int prepared = au::flow::detail::prepareExternal(fakeOps(), payload.get(), &token);
         if (prepared || !token) return prepared ? prepared : 1;
         (void)payload.release();
-        au::flow::detail::armExternalCallback(token);
         au::flow::detail::notifyExternal(token, {});
-        au::flow::detail::notifyExternal(token, {}); // Duplicate notification with a live callback pin.
-        au::flow::detail::leaveExternalCallback(token);
+        au::flow::detail::notifyExternal(token, {}); // Duplicate notification while the registrar owns the token.
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         const bool earlyRelease = released.load(std::memory_order_relaxed) != 0;
         au::flow::detail::leaveExternalRegistrar(token);
@@ -516,38 +722,10 @@ TEST(XFlow, ImmediateExternalCompletionAndRegistrarPin)
     EXPECT_EQ(released.load(std::memory_order_relaxed), 1);
 }
 
-TEST(XFlow, ExternalCallbackExitAndFallbackErrors)
+TEST(XFlow, PollingExternalCompletionAndNativeErrors)
 {
     au::flow::XFlow& flow = au::flow::XFlow::get();
     std::atomic<int> released{0};
-    std::atomic<bool> callbackEntered{false}, callbackInstalled{false}, releaseCallback{false};
-    std::thread callback;
-    au::flow::Task task = flow.enqueue([&]() -> int {
-        std::unique_ptr<FakeExternal> payload(new FakeExternal()); payload->mReleased = &released;
-        au::flow::detail::ExternalToken* token = nullptr;
-        const int prepared = au::flow::detail::prepareExternal(fakeOps(), payload.get(), &token);
-        if (prepared) return prepared;
-        (void)payload.release();
-        au::flow::detail::armExternalCallback(token);
-        callback = std::thread([&, token] {
-            au::flow::detail::notifyExternal(token, {});
-            callbackEntered.store(true, std::memory_order_release);
-            while (!releaseCallback.load(std::memory_order_acquire)) std::this_thread::yield();
-            au::flow::detail::leaveExternalCallback(token);
-        });
-        callbackInstalled.store(true, std::memory_order_release);
-        au::flow::detail::leaveExternalRegistrar(token);
-        return 0;
-    });
-    while (!callbackEntered.load(std::memory_order_acquire)) std::this_thread::yield();
-    while (!callbackInstalled.load(std::memory_order_acquire)) std::this_thread::yield();
-    EXPECT_EQ(flow.waitFor(task, 2), au::err::kErrorTimeout);
-    EXPECT_EQ(released.load(std::memory_order_relaxed), 0);
-    releaseCallback.store(true, std::memory_order_release);
-    callback.join();
-    EXPECT_EQ(code(task), 0);
-    EXPECT_EQ(released.load(std::memory_order_relaxed), 1);
-
     std::atomic<FakeExternal*> pending{nullptr};
     au::flow::Task fallback = flow.enqueue([&]() -> int {
         std::unique_ptr<FakeExternal> payload(new FakeExternal()); payload->mReleased = &released;
@@ -556,8 +734,6 @@ TEST(XFlow, ExternalCallbackExitAndFallbackErrors)
         const int prepared = au::flow::detail::prepareExternal(fakeOps(), payload.get(), &token);
         if (prepared) return prepared;
         pending.store(payload.release(), std::memory_order_release);
-        au::flow::detail::armExternalCallback(token);
-        au::flow::detail::leaveExternalCallback(token); // Registration failed: native API will not call back.
         au::flow::detail::pollExternal(token);
         au::flow::detail::leaveExternalRegistrar(token);
         return 0;
@@ -567,19 +743,19 @@ TEST(XFlow, ExternalCallbackExitAndFallbackErrors)
     EXPECT_EQ(flow.waitFor(fallback, 2), au::err::kErrorTimeout);
     event->mDone.store(true, std::memory_order_release);
     au::flow::TaskResult result{};
-    EXPECT_EQ(flow.waitFor(fallback, 10000, &result), 0);
+    EXPECT_EQ(flow.waitFor(fallback, 10000, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
     EXPECT_EQ(result.mNativeCode, -7);
     EXPECT_EQ(result.mCauseTaskId, fallback.id());
-    EXPECT_EQ(released.load(std::memory_order_relaxed), 2);
+    EXPECT_EQ(released.load(std::memory_order_relaxed), 1);
     EXPECT_EQ(au::flow::detail::currentTaskId(), 0u);
     au::flow::Task immediate = flow.enqueue([]() -> int {
         EXPECT_NE(au::flow::detail::currentTaskId(), 0u);
         au::flow::detail::recordExternalError({au::err::kErrorPlatformAPI, -5, au::flow::ErrorDomain::OpenCL});
         return au::err::kErrorPlatformAPI;
     });
-    EXPECT_EQ(flow.waitFor(immediate, 10000, &result), 0);
+    EXPECT_EQ(flow.waitFor(immediate, 10000, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mNativeCode, -5);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL); EXPECT_EQ(result.mCauseTaskId, immediate.id());
 }
@@ -624,17 +800,17 @@ TEST(XFlow, BodyFailureStillWaitsForExternalMemoryLease)
 TEST(XFlow, ExternalRecordsGrowAndDrainWithoutAThirdThreadPool)
 {
     au::flow::XFlow& flow = au::flow::XFlow::get();
-    std::array<au::flow::detail::ExternalToken*, 192> tokens{};
+    std::array<FakeExternal*, 192> events{};
     std::atomic<int> released{0};
     std::atomic<bool> prepared{false};
     au::flow::Task work = flow.enqueue([&]() -> int {
-        for (auto& token : tokens) {
+        for (auto& event : events) {
             std::unique_ptr<FakeExternal> payload(new FakeExternal()); payload->mReleased = &released;
+            au::flow::detail::ExternalToken* token = nullptr;
             const int error = au::flow::detail::prepareExternal(fakeOps(), payload.get(), &token);
             if (error) return error;
-            (void)payload.release();
-            au::flow::detail::armExternalCallback(token);
-            au::flow::detail::notifyExternal(token, {});
+            event = payload.release();
+            au::flow::detail::pollExternal(token);
             au::flow::detail::leaveExternalRegistrar(token);
         }
         prepared.store(true, std::memory_order_release);
@@ -643,9 +819,9 @@ TEST(XFlow, ExternalRecordsGrowAndDrainWithoutAThirdThreadPool)
     while (!prepared.load(std::memory_order_acquire)) std::this_thread::yield();
     EXPECT_EQ(flow.waitFor(work, 2), au::err::kErrorTimeout);
     EXPECT_EQ(released.load(std::memory_order_relaxed), 0);
-    for (auto* token : tokens) au::flow::detail::leaveExternalCallback(token);
+    for (auto* event : events) event->mDone.store(true, std::memory_order_release);
     EXPECT_EQ(code(work), 0);
-    EXPECT_EQ(released.load(std::memory_order_relaxed), static_cast<int>(tokens.size()));
+    EXPECT_EQ(released.load(std::memory_order_relaxed), static_cast<int>(events.size()));
 }
 
 TEST(XFlow, AffinityAppliesBeforeTheNextCallableAndCanBeQueried)

@@ -160,7 +160,7 @@ TEST(XGpu, CancelCleanupAndPartialSubmissionError)
     EXPECT_EQ(au::flow::XFlow::get().waitFor(task, 2), au::err::kErrorTimeout);
     partial.mReady.store(true, std::memory_order_release);
     au::flow::TaskResult result{};
-    EXPECT_EQ(au::flow::XFlow::get().wait(task, &result), 0);
+    EXPECT_EQ(au::flow::XFlow::get().wait(task, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
     EXPECT_EQ(result.mNativeCode, -5);
@@ -233,7 +233,8 @@ TEST(XGpu, HostFenceCleanupRejectsReentryInOriginalTaskScope)
         EXPECT_EQ(hook.mShutdown, au::flow::kErrorWouldDeadlock);
         EXPECT_EQ(hook.mTiled, au::flow::kErrorWouldDeadlock);
         EXPECT_FALSE(hook.mTileInvoked);
-        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), 0);
+        au::flow::TaskResult result{};
+        ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), managed ? au::flow::kErrorWouldDeadlock : au::err::kErrorBusy);
         EXPECT_EQ(result.mCode, managed ? au::flow::kErrorWouldDeadlock : au::err::kErrorBusy);
         EXPECT_EQ(result.mDomain, managed ? au::flow::ErrorDomain::Flow : au::flow::ErrorDomain::Memory);
         EXPECT_EQ(model.mDestroyed.load(std::memory_order_relaxed), 1);

@@ -4,6 +4,7 @@
 #include "gpu/program_cache.h"
 #include "file/xfile.h"
 #include "gpu/pending.h"
+#include "flow/xflow_api.h"
 #include "CL/cl_ext.h"
 #include "mm/access.h"
 #include "mm/registry.h"

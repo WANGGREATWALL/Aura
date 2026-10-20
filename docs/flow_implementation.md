@@ -4,7 +4,7 @@
 
 权威设计为 [Obsidian 设计文档](</srv/data/file/code/Obsidian/7 项目/7 taskflow/3 设计文档.md>). 本文件记录代码交付与验收边界, 不缩减或替换该设计. CPU 调度, mm 访问协议, 两套 OpenCL wrapper, cache 与设备资源生命周期均已接入同一完成契约. 接入新 wrapper 的异步 GPU 提交现在由 Task reservation 跟踪至设备和主机清理完成. 绕过 wrapper 的原生调用仍须自行接入协议.
 
-当前基线为 dev 的 `4438d46`, 后续改动在此之上继续实现. 原有 `src/flow/xthread_flow.h` 保留. 新代码从公开 `inc/flow/xflow.h` 进入, `inc/flow/xthread_flow.h` 提供历史 include 路径. 旧线程池和归档 TaskFlow 不参与新调度器.
+实现起点为 dev 的 `4438d46`, 后续改动在此之上继续实现. 原有 `src/flow/xthread_flow.h` 保留. 新代码从公开 `inc/flow/xflow.h` 进入, `inc/flow/xthread_flow.h` 提供历史 include 路径. 旧线程池和归档 TaskFlow 不参与新调度器.
 
 ## 1 代码入口
 
@@ -12,7 +12,9 @@
 | --- | --- |
 | `inc/flow/xflow_api.h` | C 兼容窄腰, ABI 版本, opaque handle, 结果与容量查询 |
 | `inc/flow/xflow.h` | C++11 Task/Tasks/XFlow 外观, callable 绑定与旧宏 |
+| `inc/flow/xflow_types.h` | 轻量状态/结果/策略类型, 完成桥不引入公开任务模板 |
 | `src/flow/xflow.cpp` | C++17 状态机, 原子接受, 依赖, 结构化完成, worker 与等待 |
+| `src/flow/diagnostics.*` | 无调度器指针的图快照, DOT/trace 格式化与文件导出, 可选 trace 存储 |
 | `src/flow/ready_queue.h` | 256 槽 MPMC 快路径和侵入式 MPSC 溢出 |
 | `src/flow/slab.h` | 稳定地址页, Task/edge/external 初始页分别为 128/256/64 |
 | `src/flow/completion.h` | 外部完成与 GPU profiling 协议, 无 OpenCL 类型 |
@@ -37,7 +39,7 @@
 - 前驱后继链只入不出, 最终结果发布后原子关闭链表. 注册者与关闭者竞争时, 每条边只解析一次.
 - 主体 reservation 覆盖嵌套 enqueue 和外部完成记录. 主体先返回时进入 Waiting, 已开始工作全部清理后才最终完成. 子提交失败可登记到父作用域.
 - worker 的 wait 协作推进其他就绪工作, 检测自身, 祖先, 簇包含, 已知等待环与协作栈依赖. waitAll 建立根接受序号快照并覆盖后续结构化后代. worker 内拒绝 waitAll/shutdown.
-- tiled 最多 4 个参与者, 含父 worker. helper 每次完成一个 tile 后重新排队, 不逐 tile 建 Task/future. 内层 tiled 和过深协作栈串行退化, 父线程能独立领取全部区间. 返回前等待所有 helper.
+- tiled 最多 4 个参与者, 包含调用线程. 外部调用建立受跟踪的内联根作用域, 调用者参与计算, helper 最多 3 个; 快照和 shutdown 覆盖调用者及其后代. helper 每次完成一个 tile 后重新排队, 不逐 tile 建 Task/future. helper 准备或提交失败时退化为调用者计算, 不污染父任务结果; 必要根记录失败仍返回真实错误. 内层 tiled 和过深协作栈串行退化, 返回前等待所有 helper.
 - 结果保留状态, 来源, 原始 int/native code 和根因 Task ID. 主体返回值与已登记访问/外部错误相同时保留其详细来源; 不同业务返回值仍优先. 返回业务值 -5004 与实际未处理异常的来源可以区分. 失败依赖跳过节点, 独立兄弟继续收尾.
 - shutdown 拒绝新的外部根, 允许已接受作用域继续提交后代, 排空后 join. 已完成句柄在实例存活期间继续可查询, 不支持关闭后重启.
 - DOT 输出结构; 主机 trace 输出 Perfetto 可读 JSON. trace 默认关闭且不分配记录存储, 开启后固定容量记录, 满时统计丢失轨迹而不丢任务. GPU profiling 已接入独立设备时钟字段; 主机 callable wall 包含等待, 不冒充 CPU 利用率.
@@ -66,7 +68,7 @@ return access.finish(ret);
 
 ## 3 查询完成与 wrapper 接入
 
-2026-10-20 用户确认 v1 采用查询完成. 原生 OpenCL 完成回调没有可 join 的返回栈边界, 不用双 pin 归零推断卸载安全. `completion.h` 的通用 callback pin 仍用于模型/其他 provider, 两套 OpenCL wrapper 均不调用 clSetEventCallback.
+2026-10-20 用户确认 v1 采用查询完成. 原生 OpenCL 完成回调没有可 join 的返回栈边界, 不用双 pin 归零推断卸载安全. `completion.h` 只保留查询、发布与清理协议, 已裁剪无生产调用者的 callback pin 支持. 两套 OpenCL wrapper 均不调用 clSetEventCallback.
 
 1. native enqueue 前准备 Pending, 完成状态, mm fence, staging, 资源/事件引用和 flow token. 任一准备失败不发送设备命令.
 2. commit mm fence 后将最后一个有效 event 发布到预备侵入式 pending 链, 再结束 registrar. 无论调用方是否需要 event, 内部都持有它.
@@ -163,3 +165,48 @@ CTest 分别验证 flow 单测, mm 租约与分配测试, 严格 `-std=c++11` �
 ReadyQueue 的短暂 pop 失败不证明为空; 一个线程暂停在预留或 exchange/link 之间仍能延迟相应路径的进度. 不宣称整套调度器 wait-free, 不以“无锁”推导图像算子一定更快.
 
 DMA 协议依据: [Linux DMA-BUF CPU access](https://docs.kernel.org/driver-api/dma-buf.html#cpu-access-to-dma-buffer-objects). 完成与主机同步依据: [clGetEventInfo](https://registry.khronos.org/OpenCL/specs/unified/refpages/man/html/clGetEventInfo.html). 查询方案已获用户确认, 不使用原生 CL 回调作为卸载协议.
+
+## 7 对比评审后的采纳 (2026-10-20)
+
+参考 Claude/Sonnet 方案的设计思想, 保留原有完成与资源契约, 采用以下三项改进:
+
+- `Task/Tasks` 增加 `ready()/code()/wait()/waitFor()`. `code()` 不阻塞, 未完成返回 NotReady; 句柄 `wait*` 在等待成功后返回任务的原始错误码, 可同时取得 TaskResult. 等待超时/非法等待不改变 out. 后续第 8 节将 XFlow 的 C++ 等待语义一并统一. Draft、空句柄与拒绝结果各自保留原有错误语义.
+- 外部 tiled 调用者参与计算, 每次仍最多 4 个参与者, 包含 caller. caller 不套用 worker 的亲核性策略. 内联根记录保证只用 caller 的循环也参与 waitAll 快照、shutdown 和结构化后代完成; 不把调用者执行藏在仅统计 helper 的屏障外. 关闭后不接受新的外部循环.
+- worker 在完成任务并仅释放一个就绪后继时, 可迭代直接续跑该工作, 避免一次入队和许可通知. 每次 dispatch 最多连续 8 个任务; 已排队工作、挂起设备查询、tiled helper 均不进入该快路径. fan-out 保持正常排队, 每个直接后继仍遵循亲核性预算、完整清理和错误传播. 未引入工作窃取或 GPU DAG 提前提交.
+
+空闲 worker 退休暂不采用: 现有 worker ID/TID、亲核性查询与 trace 使用稳定槽位. 引入退休需要独立处理接受提交与最后 worker 退出的竞争, 锁外 join、代际及查询 pin; 应先测量 Android 驻留与首帧收益. 同样不移植原生 GPU callback、`.gpu()` 提前提交或方向式 cache hook.
+
+新增验证覆盖句柄结果/超时、外部 caller 实际参与、首 helper 分配/建线程失败、managed 父任务串行退化、无 helper 的快照/关闭、关闭期间内联根后代提交, 以及连续后继让出队列和失败传播. 首次内联根登记异步完成前确保存在完成消费者, 不因尚无 worker 而停滞; 外部 caller 不计入忙碌 worker 的扩容估计.
+
+最终版本验证 (2026-10-20 | 14:53): 全量 162/162 单测, 17 个 suite; CPU-only CTest 8/8; OpenCL CTest 11 项通过、1 项真实 GPU skipped; TSan 11/11; ASan/LSan 11/11, 未关闭泄漏扫描. 另通过 C/C++11 消费端、首次 worker 失败、关闭及双 .so 隔离. git diff --check 通过. 当前功能验证使用 Linux 主机与模型环境, 没有目标 GPU platform 或 Android 真机验收, 不据此声称设备性能提升.
+
+## 8 接口与内部职责整理
+
+- 所有 C++ `Task/Tasks/XFlow::wait/waitFor` 统一返回任务错误码; 超时或非法等待返回等待错误, 不更新 out. 获得终态时, 无论成功或失败都填写完整 TaskResult. `waitAll()` 继续作为根快照屏障, 不汇总历史业务错误.
+- **行为迁移**: 原来检查 `flow.wait(task) == 0` 只表示等到终态, 现在同时表示任务成功. 需要错误来源时传 TaskResult. 底层 C ABI `au_flow_wait` 保持等待状态与 `out.mCode` 分离的既有语义, ABI 版本不变; 新 C++ 行为需重新编译消费端.
+- `Tasks{a, b, ...}` 复用原有 builder. 任一成员无效、重复、构建失败或已经归属其他簇, 都令整个 builder 失败, 不运行半个簇. 不接受用该构造器收集已经提交的任务; 嵌套 Tasks 继续用 add(std::move(child)) 明确转移 builder 所有权.
+- `enqueueAfter(taskOrGroup, callable, args...)` 封装创建、建边和提交, 支持参数复制/移动/显式借用. 前驱必须已接受; 未提交的前驱应与目标一起加入 Tasks. 建边失败记入目标 builder, 前驱执行失败仍按依赖规则跳过目标并保留根因.
+- 公开基础类型移至 xflow_types.h. GPU pending 仅依赖轻量完成协议; GPU 关闭路径显式包含 C ABI 头, 不再经任务模板的传递 include 获得声明.
+- `Core` 负责采集图状态, 交给 diagnostics 的是独立值快照, 不含 Node 指针或 NodeRef. DOT/JSON 格式化、文件 I/O 和 trace 存储归 diagnostics, 不在图锁内执行. trace 仍默认关闭, 热路径不增加诊断分配.
+- 查询路径移除 callback 计数、arm/leave 接口及重复的 polling 标志. 已发布查询始终经同一完成路径处理, registrar 保证准备者最后一次访问之前不会清理记录. 非终态查询失败仍保活, 不改变资源与卸载契约.
+
+常见用法:
+
+```cpp
+auto& flow = au::flow::XFlow::get();
+auto a = flow.makeTask(first);
+auto b = flow.makeTask(second);
+int ret = a.precede(b);
+if (ret) return ret;
+au::flow::Tasks group{a, b};
+auto submitted = flow.enqueue(group);
+if (submitted.submissionCode()) return submitted.submissionCode();
+auto tail = flow.enqueueAfter(submitted, last);
+const int tailCode = tail.wait();
+const int groupCode = submitted.wait(); // Also join the group if tail submission failed.
+return tailCode ? tailCode : groupCode;
+```
+
+调用者仍须保证借用对象存活到所有已接受的工作结束. 例如最后一个任务提交失败时, `enqueueAfter` 不撤销前驱, 持有本地借用资源的代码需等待 `submitted`, 再返回主要提交错误.
+
+本轮整理验收 (2026-10-20 | 15:28): 全量 163/163 单测, 17 个 suite; CPU-only 8/8; OpenCL 11 项通过、1 项真实 GPU skipped; TSan 11/11; ASan/LSan 11/11 (含泄漏扫描). 严格 C++11/C11 的 -Wall -Wextra -Werror -pedantic 语法检查通过, C ABI 失败任务的等待状态保持兼容. 最终编译依赖确认 GPU 不再包含 xflow.h 任务模板. 未进行新性能对测或 Android 真机验收.

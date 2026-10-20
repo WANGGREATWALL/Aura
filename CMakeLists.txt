@@ -38,6 +38,7 @@ set(AURA_SOURCES
     src/sys/memory_runtime.cpp
     src/sys/memory_allocation.cpp
     src/flow/xflow.cpp
+    src/flow/diagnostics.cpp
     src/gpu/pending.cpp
     src/gpu/arguments.cpp
     src/file/xpath.cpp
