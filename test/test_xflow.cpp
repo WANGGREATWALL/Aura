@@ -27,6 +27,7 @@ struct Module {
     static int staticWork(int& out) { out = 19; return 0; }
 };
 struct Functor { int operator()(int& out) && { out = 23; return 0; } };
+int ordinaryTile(std::size_t, std::size_t count) { return count ? 0 : 1; }
 int code(const au::flow::Task& task)
 {
     au::flow::TaskResult result{};
@@ -201,6 +202,69 @@ TEST(XFlow, ConvenienceBuildersKeepErrorsAndDependencies)
     EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
 }
 
+TEST(XFlow, DynamicFanInAndTemporaryGroupsPreserveCompletion)
+{
+    auto& flow = au::flow::XFlow::get();
+    std::atomic<bool> release{false};
+    int left = 0, right = 0, result = 0;
+    auto a = flow.makeTask([&]() -> int {
+        while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+        left = 11; return 0;
+    });
+    auto b = flow.makeTask([&]() -> int {
+        while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+        right = 13; return 0;
+    });
+    auto group = flow.enqueue(au::flow::Tasks{a, b}); // Temporary builder must not abandon accepted members.
+    Module module;
+    auto tail = flow.enqueueAfter({a, b, a}, &Module::apply, std::ref(module), 7);
+    auto checked = flow.enqueueAfter({tail, group}, [&]() -> int {
+        result = left + right + module.mValue; return 0;
+    });
+    EXPECT_EQ(checked.waitFor(0), au::err::kErrorTimeout);
+    release.store(true, std::memory_order_release);
+    EXPECT_EQ(code(checked), 0); EXPECT_EQ(result, 31);
+    EXPECT_EQ(code(group), 0); EXPECT_EQ(code(tail), 0);
+    EXPECT_EQ(code(flow.enqueueAfter({}, []() -> int { return 0; })), 0);
+
+    std::atomic<int> calls{0};
+    auto body = [&]() -> int { calls.fetch_add(1, std::memory_order_relaxed); return 0; };
+    au::flow::Task invalid, draft = flow.makeTask(body);
+    EXPECT_EQ(code(flow.enqueueAfter({a, invalid, b}, body)), au::err::kErrorInvalidHandle);
+    EXPECT_EQ(code(flow.enqueueAfter({a, draft}, body)), au::err::kErrorStateInvalid);
+    auto failed = flow.enqueue([]() -> int { return 43; });
+    auto skipped = flow.enqueueAfter({a, failed, b}, body);
+    au::flow::TaskResult error{};
+    EXPECT_EQ(skipped.wait(&error), 43);
+    EXPECT_EQ(error.mState, au::flow::TaskState::Skipped); EXPECT_EQ(error.mCauseTaskId, failed.id());
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 0);
+    EXPECT_EQ(code(flow.enqueue(au::flow::Tasks{flow.makeTask(body), invalid})), au::err::kErrorInvalidHandle);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 0);
+}
+
+TEST(XFlow, BuilderFailuresKeepFirstCauseAndNeverChangeAcceptedResults)
+{
+    auto& flow = au::flow::XFlow::get();
+    std::atomic<int> calls{0};
+    auto body = [&]() -> int { calls.fetch_add(1, std::memory_order_relaxed); return 0; };
+    au::flow::Task invalid, task = flow.makeTask(body);
+    EXPECT_EQ(task.setName(nullptr), au::err::kErrorNullPointer);
+    EXPECT_EQ(invalid.precede(task), au::err::kErrorInvalidHandle); // Each operation still reports its own error.
+    EXPECT_EQ(task.precede(task), au::flow::kErrorCycleDetected);
+    EXPECT_EQ(code(flow.enqueue(task)), au::err::kErrorNullPointer);
+    au::flow::Tasks group;
+    EXPECT_EQ(group.handle().setName(nullptr), au::err::kErrorNullPointer);
+    EXPECT_EQ(group.add(invalid), au::err::kErrorInvalidHandle);
+    EXPECT_EQ(code(flow.enqueue(group)), au::err::kErrorNullPointer);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 0);
+
+    au::flow::Tasks accepted{flow.makeTask(body)};
+    ASSERT_EQ(code(flow.enqueue(accepted)), 0);
+    EXPECT_EQ(accepted.add(invalid), au::err::kErrorInvalidHandle);
+    EXPECT_EQ(accepted.handle().setName(nullptr), au::err::kErrorStateInvalid);
+    EXPECT_EQ(accepted.code(), 0); EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
+}
+
 TEST(XFlow, LinearContinuationYieldsToQueuedWorkAndPropagatesFailure)
 {
     au::flow::XFlow& flow = au::flow::XFlow::get();
@@ -332,6 +396,37 @@ TEST(XFlow, TiledNestedAndSaturatedWorkers)
     EXPECT_EQ(checked, 1u);
 }
 
+TEST(XFlow, SynchronousTilesBorrowNoncopyableCallbacksAndFunctions)
+{
+    struct Counter {
+        std::atomic<std::size_t>& mTotal;
+        explicit Counter(std::atomic<std::size_t>& total) noexcept : mTotal(total) {}
+        Counter(const Counter&) = delete;
+        Counter& operator=(const Counter&) = delete;
+        Counter(Counter&&) = delete;
+        Counter& operator=(Counter&&) = delete;
+        int operator()(std::size_t, std::size_t count) &
+        { mTotal.fetch_add(count, std::memory_order_relaxed); return 0; }
+    };
+    auto& flow = au::flow::XFlow::get();
+    std::atomic<std::size_t> total{0};
+    Counter callback(total);
+    EXPECT_EQ(flow.parallelizeTiledTasks(1003, 17, callback), 0); // Original object, with no std::ref or copy.
+    EXPECT_EQ(total.load(std::memory_order_relaxed), 1003u);
+    EXPECT_EQ(flow.parallelizeTiledTasks(101, 3, Counter(total)), 0); // Temporary need not be movable either.
+    const auto constant = [&total](std::size_t, std::size_t count) {
+        total.fetch_add(count, std::memory_order_relaxed);
+    };
+    EXPECT_EQ(flow.parallelizeTiledTasks(29, 7, constant), 0);
+    EXPECT_EQ(flow.parallelizeTiledTasks(13, 3, std::ref(callback)), 0);
+    EXPECT_EQ(flow.parallelizeTiledTasks(11, 3, std::cref(constant)), 0);
+    EXPECT_EQ(total.load(std::memory_order_relaxed), 1157u);
+    EXPECT_EQ(flow.parallelizeTiledTasks(19, 3, ordinaryTile), 0);
+    auto function = &ordinaryTile;
+    EXPECT_EQ(flow.parallelizeTiledTasks(19, 3, function), 0);
+    EXPECT_EQ(flow.parallelizeTiledTasks(19, 3, &ordinaryTile), 0);
+}
+
 TEST(XFlow, ExternalTiledCallerFallsBackAndJoinsHelpers)
 {
     au::flow::XFlow& flow = au::flow::XFlow::get();
@@ -455,6 +550,9 @@ TEST(XFlow, TimeoutAndDraftQuery)
 TEST(XFlow, AllocationRollbackAndParentSubmissionFailure)
 {
     au::flow::XFlow& flow = au::flow::XFlow::get();
+    au::flow::testing::failAfter(au::flow::testing::Failure::Node, 1);
+    au::flow::Tasks missingEntry; // Roll back the group owner when its entry allocation fails.
+    EXPECT_EQ(code(flow.enqueue(std::move(missingEntry))), au::err::kErrorNoMemory);
     au::flow::testing::failAfter(au::flow::testing::Failure::Node, 0);
     au::flow::Task rejected = flow.enqueue([]() -> int { return 0; });
     EXPECT_EQ(rejected.submissionCode(), au::err::kErrorNoMemory);
@@ -638,7 +736,7 @@ TEST(XFlow, CapturedStructuredChildrenAndNestedClustersRemainExportable)
 {
     auto& flow = au::flow::XFlow::get(); ASSERT_EQ(flow.setTracing(true), 0);
     au::flow::Tasks outer, inner;
-    ASSERT_EQ(outer.handle().setName("outer"), 0); ASSERT_EQ(inner.handle().setName("inner"), 0);
+    ASSERT_EQ(outer.setName("outer"), 0); ASSERT_EQ(inner.setName("inner"), 0);
     auto parent = flow.makeTask([&]() -> int {
         auto child = flow.makeTask([]() -> int { return 0; });
         std::string name = "dynamic \"child\"\nline";
@@ -650,7 +748,7 @@ TEST(XFlow, CapturedStructuredChildrenAndNestedClustersRemainExportable)
     ASSERT_EQ(parent.setName("parent \"label\""), 0); ASSERT_EQ(inner.add(parent), 0); ASSERT_EQ(outer.add(std::move(inner)), 0);
     auto group = flow.enqueue(outer); EXPECT_EQ(code(group), 0);
     EXPECT_EQ(flow.setTracing(false), 0);
-    ASSERT_EQ(flow.dumpDot(group, "flow-nested.dot"), 0); ASSERT_EQ(flow.dumpTrace("flow-nested.json"), 0);
+    ASSERT_EQ(flow.dumpDot(outer, "flow-nested.dot"), 0); ASSERT_EQ(flow.dumpTrace("flow-nested.json"), 0);
     std::string dot, trace; ASSERT_EQ(au::file::read("flow-nested.dot", dot), 0); ASSERT_EQ(au::file::read("flow-nested.json", trace), 0);
     EXPECT_NE(dot.find("subgraph cluster_" + std::to_string(group.id())), std::string::npos);
     EXPECT_NE(dot.find("label=\"inner\""), std::string::npos); EXPECT_NE(dot.find("structured child"), std::string::npos);
@@ -885,7 +983,18 @@ TEST(XFlow, ElasticCallableStorageAlignmentAndConstructionRollback)
         }
     };
     std::atomic<int> destroyed{0};
-    EXPECT_EQ(code(au::flow::XFlow::get().enqueue(LargeCallable(destroyed))), 0);
+    auto& flow = au::flow::XFlow::get();
+    au::flow::Task task = flow.makeTask(LargeCallable(destroyed));
+    au::flow::Task copy = task;
+    au::flow::Task* same = &copy;
+    copy = *same; copy = std::move(*same);
+    EXPECT_EQ(copy.id(), task.id());
+    au::flow::Task moved = std::move(copy);
+    EXPECT_FALSE(copy.valid());
+    copy = task; moved = std::move(copy); copy = au::flow::Task();
+    EXPECT_EQ(moved.id(), task.id()); EXPECT_FALSE(copy.valid());
+    EXPECT_EQ(destroyed.load(std::memory_order_relaxed), 0);
+    EXPECT_EQ(code(flow.enqueue(moved)), 0);
     EXPECT_EQ(destroyed.load(std::memory_order_relaxed), 1);
     struct ThrowOnCopy {
         int mFailure;

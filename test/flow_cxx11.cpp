@@ -1,6 +1,7 @@
 #include "flow/xflow.h"
 #include "flow/testing.h"
 #include "flow/completion.h"
+#include <atomic>
 #include <memory>
 #include "cv/ximage_access.h"
 #include "gpu/xopencl.h"
@@ -10,6 +11,12 @@ int ordinary(int& result) { result = 11; return 0; }
 struct Module {
     int member(int& result) const { result = 12; return 0; }
 };
+struct Tiles {
+    std::atomic<std::size_t> mTotal{0};
+    int operator()(std::size_t, std::size_t count) &
+    { mTotal.fetch_add(count, std::memory_order_relaxed); return 0; }
+};
+int ordinaryTile(std::size_t, std::size_t count) { return count ? 0 : 1; }
 }
 int main(int argc, char**)
 {
@@ -63,6 +70,15 @@ int main(int argc, char**)
     if (flow.wait(group, &status) != 17 || flow.waitFor(group, 0) != 17 || status.mCode != 17) return 14;
     result = 0;
     if (flow.enqueueAfter(c, &Module::member, std::cref(module), std::ref(result)).wait() || result != 12) return 15;
+    au::flow::Task pair = flow.enqueue(au::flow::Tasks{
+        flow.makeTask([]() -> int { return 0; }), flow.makeTask([]() -> int { return 0; })});
+    if (flow.enqueueAfter({a, b, c, pair}, &Module::member, std::cref(module), std::ref(result)).wait()) return 16;
+    if (flow.enqueueAfter({}, []() -> int { return 0; }).wait() || result != 12) return 17;
+    Tiles tiles; // Atomic state makes this noncopyable in C++11.
+    if (flow.parallelizeTiledTasks(31, 3, tiles) || tiles.mTotal.load(std::memory_order_relaxed) != 31) return 18;
+    if (flow.parallelizeTiledTasks(31, 3, ordinaryTile)) return 19;
+    au::flow::Tasks named;
+    if (named.setName("named group") || flow.enqueue(named).wait()) return 20;
     if (flow.shutdown()) return 6;
     if (c.result(status) || status.mCode) return 7;
     if (flow.enqueue(ordinary, std::ref(result)).submissionCode() != au::err::kErrorStateInvalid) return 8;

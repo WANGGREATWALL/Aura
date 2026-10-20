@@ -51,6 +51,12 @@ auto invoke(F&& f, A&&... a)
         decltype(std::mem_fn(f)(std::forward<A>(a)...))>::type
 { return std::mem_fn(f)(std::forward<A>(a)...); }
 
+// Own raw binding storage only: a failed placement construction must not call
+// the callable's destructor. au_flow_make takes over the constructed payload.
+template <class T> struct PayloadDeleter {
+    void operator()(void* payload) const noexcept
+    { au_flow_payload_release(payload, sizeof(T), alignof(T)); }
+};
 template <class F, class... A> struct Bound {
     F mFunction;
     std::tuple<A...> mArguments;
@@ -77,34 +83,8 @@ template <class F, class... A> struct Bound {
     static void destroy(void* p) noexcept
     {
         static_cast<au::flow::detail::Bound<F, A...>*>(p)->~Bound();
-        au_flow_payload_release(p, sizeof(au::flow::detail::Bound<F, A...>), alignof(au::flow::detail::Bound<F, A...>));
+        au::flow::detail::PayloadDeleter<au::flow::detail::Bound<F, A...>>()(p);
     }
-};
-class PayloadStorage final {
-public:
-    PayloadStorage(std::size_t size, std::size_t alignment) noexcept : mSize(size), mAlignment(alignment)
-    { mCode = au_flow_payload_allocate(size, alignment, &mData); }
-    ~PayloadStorage() noexcept { au_flow_payload_release(mData, mSize, mAlignment); }
-    PayloadStorage(const au::flow::detail::PayloadStorage&) = delete;
-    au::flow::detail::PayloadStorage& operator=(const au::flow::detail::PayloadStorage&) = delete;
-    PayloadStorage(au::flow::detail::PayloadStorage&& other) noexcept
-        : mData(other.release()), mSize(other.mSize), mAlignment(other.mAlignment), mCode(other.mCode) {}
-    au::flow::detail::PayloadStorage& operator=(au::flow::detail::PayloadStorage&& other) noexcept
-    {
-        if (this != &other) {
-            au_flow_payload_release(mData, mSize, mAlignment);
-            mData = other.release(); mSize = other.mSize; mAlignment = other.mAlignment; mCode = other.mCode;
-        }
-        return *this;
-    }
-    void* data() const noexcept { return mData; }
-    int code() const noexcept { return mCode; }
-    void* release() noexcept { void* data = mData; mData = nullptr; return data; }
-private:
-    void* mData = nullptr;
-    std::size_t mSize;
-    std::size_t mAlignment;
-    int mCode = 0;
 };
 
 template <class R> struct TileResult {
@@ -136,23 +116,12 @@ public:
     ~Task() noexcept { au_flow_release(mHandle); }
     Task(const au::flow::Task& other) noexcept
         : mHandle(other.mHandle), mRejection(other.mRejection) { au_flow_retain(mHandle); }
-    au::flow::Task& operator=(const au::flow::Task& other) noexcept
-    {
-        if (this != &other) {
-            au_flow_retain(other.mHandle); au_flow_release(mHandle);
-            mHandle = other.mHandle; mRejection = other.mRejection;
-        }
-        return *this;
-    }
     Task(au::flow::Task&& other) noexcept
         : mHandle(other.mHandle), mRejection(other.mRejection)
     { other.mHandle = nullptr; other.mRejection = 0; }
-    au::flow::Task& operator=(au::flow::Task&& other) noexcept
+    au::flow::Task& operator=(au::flow::Task other) noexcept
     {
-        if (this != &other) {
-            au_flow_release(mHandle); mHandle = other.mHandle; mRejection = other.mRejection;
-            other.mHandle = nullptr; other.mRejection = 0;
-        }
+        std::swap(mHandle, other.mHandle); std::swap(mRejection, other.mRejection);
         return *this;
     }
     bool valid() const noexcept { return mHandle != nullptr || mRejection != 0; }
@@ -251,6 +220,7 @@ public:
         return ret;
     }
     au::flow::Task handle() const noexcept { return mTask; }
+    int setName(const char* name) noexcept { return mTask.setName(name); }
     bool ready() const noexcept { return mTask.ready(); }
     int code() const noexcept { return mTask.code(); }
     int wait(au::flow::TaskResult* out = nullptr) const noexcept { return mTask.wait(out); }
@@ -259,10 +229,12 @@ public:
     int precede(const au::flow::Task& next) const noexcept { return mTask.precede(next); }
     int precede(au::flow::Tasks& next) const noexcept { return mTask.precede(next.mTask); }
 private:
+    friend class au::flow::Task;
+    friend class au::flow::XFlow;
     au::flow::Task mTask;
     bool mOwnsBuilder;
 };
-inline int Task::precede(au::flow::Tasks& next) const noexcept { return precede(next.handle()); }
+inline int Task::precede(au::flow::Tasks& next) const noexcept { return precede(next.mTask); }
 
 class XFlow {
 public:
@@ -278,9 +250,11 @@ public:
         try {
             typedef au::flow::detail::Bound<typename std::decay<F>::type,
                 typename std::decay<Args>::type...> Payload;
-            au::flow::detail::PayloadStorage payload(sizeof(Payload), alignof(Payload));
-            if (payload.code()) return au::flow::Task(nullptr, payload.code());
-            new (payload.data()) Payload(std::forward<F>(f), std::forward<Args>(args)...);
+            void* storage = nullptr;
+            const int allocated = au_flow_payload_allocate(sizeof(Payload), alignof(Payload), &storage);
+            if (allocated) return au::flow::Task(nullptr, allocated);
+            std::unique_ptr<void, au::flow::detail::PayloadDeleter<Payload>> payload(storage);
+            new (storage) Payload(std::forward<F>(f), std::forward<Args>(args)...);
             au_flow_handle h = nullptr;
             const int ret = au_flow_make(&Payload::run, &Payload::destroy, payload.release(), &h);
             return au::flow::Task(h, ret);
@@ -299,20 +273,27 @@ public:
         const int ret = au_flow_submit(task.mHandle);
         return !ret || task.state() == au::flow::TaskState::Rejected ? task : au::flow::Task(nullptr, ret);
     }
-    au::flow::Task enqueue(au::flow::Tasks& tasks) noexcept { return enqueue(tasks.handle()); }
+    au::flow::Task enqueue(au::flow::Tasks& tasks) noexcept { return enqueue(tasks.mTask); }
+    au::flow::Task enqueue(au::flow::Tasks&& tasks) noexcept { return enqueue(tasks); }
     template <class F, class... Args>
     au::flow::Task enqueueAfter(const au::flow::Task& before, F&& f, Args&&... args) noexcept
+    { return enqueueAfter({before}, std::forward<F>(f), std::forward<Args>(args)...); }
+    // Every predecessor must already be accepted. Empty lists submit a root;
+    // repeated predecessors are harmless. An invalid member rejects the target.
+    template <class F, class... Args>
+    au::flow::Task enqueueAfter(std::initializer_list<au::flow::Task> before,
+                                F&& f, Args&&... args) noexcept
     {
         au::flow::Task task = makeTask(std::forward<F>(f), std::forward<Args>(args)...);
-        if (!task.mRejection) {
-            const int ret = before.precede(task);
-            if (ret) (void)au_flow_builder_error(task.mHandle, ret);
+        if (!task.mRejection) for (const auto& predecessor : before) {
+            const int ret = predecessor.precede(task);
+            if (ret) { (void)au_flow_builder_error(task.mHandle, ret); break; }
         }
         return enqueue(task);
     }
     template <class F, class... Args>
     au::flow::Task enqueueAfter(const au::flow::Tasks& before, F&& f, Args&&... args) noexcept
-    { return enqueueAfter(before.handle(), std::forward<F>(f), std::forward<Args>(args)...); }
+    { return enqueueAfter(before.mTask, std::forward<F>(f), std::forward<Args>(args)...); }
     int wait(const au::flow::Task& task, au::flow::TaskResult* out = nullptr) noexcept
     { return task.wait(out); }
     int wait(const au::flow::Tasks& tasks, au::flow::TaskResult* out = nullptr) noexcept
@@ -324,15 +305,13 @@ public:
                 au::flow::TaskResult* out = nullptr) noexcept
     { return tasks.waitFor(timeoutMs, out); }
     int waitAll() noexcept { return au_flow_wait_all(); }
+    // Synchronous: one borrowed callback is shared by all participants until
+    // they join. Mutable state inside it must support concurrent invocation.
     template <class F>
     int parallelizeTiledTasks(std::size_t range, std::size_t tile, F&& f) noexcept
     {
-        try {
-            typename std::decay<F>::type callback(std::forward<F>(f));
-            return au_flow_tiled(range, tile,
-                &au::flow::detail::Tile<typename std::decay<F>::type>::run, &callback);
-        } catch (const std::bad_alloc&) { return au::err::kErrorNoMemory; }
-        catch (...) { return au::flow::kErrorUnhandledException; }
+        auto callback = std::ref(f); // Also wraps ordinary functions without casting a function pointer to void*.
+        return au_flow_tiled(range, tile, &au::flow::detail::Tile<decltype(callback)>::run, &callback);
     }
     int setAffinity(const au::flow::AffinityPolicy& policy) noexcept
     { return au_flow_affinity(static_cast<std::uint32_t>(policy.mMode), policy.mCpuIds, policy.mCount); }
@@ -348,6 +327,8 @@ public:
     int setTracing(bool enabled) noexcept { return au_flow_tracing(enabled ? 1 : 0); }
     int dumpDot(const au::flow::Task& task, const char* path) const noexcept
     { return au_flow_dot(task.mHandle, path); }
+    int dumpDot(const au::flow::Tasks& tasks, const char* path) const noexcept
+    { return dumpDot(tasks.mTask, path); }
     int dumpTrace(const char* path) noexcept { return au_flow_trace(path); }
     int shutdown() noexcept { return au_flow_shutdown(); }
 private:

@@ -210,3 +210,59 @@ return tailCode ? tailCode : groupCode;
 调用者仍须保证借用对象存活到所有已接受的工作结束. 例如最后一个任务提交失败时, `enqueueAfter` 不撤销前驱, 持有本地借用资源的代码需等待 `submitted`, 再返回主要提交错误.
 
 本轮整理验收 (2026-10-20 | 15:28): 全量 163/163 单测, 17 个 suite; CPU-only 8/8; OpenCL 11 项通过、1 项真实 GPU skipped; TSan 11/11; ASan/LSan 11/11 (含泄漏扫描). 严格 C++11/C11 的 -Wall -Wextra -Werror -pedantic 语法检查通过, C ABI 失败任务的等待状态保持兼容. 最终编译依赖确认 GPU 不再包含 xflow.h 任务模板. 未进行新性能对测或 Android 真机验收.
+
+
+## 9 所有权与动态编排收敛
+
+本轮基于 fbf15ff 继续整理, 没有新增生产文件、运行库依赖或调度状态机. 完成、结构化后代、GPU 查询、资源租约和 cache 访问契约继续沿用前文.
+
+- 删除自定义 PayloadStorage, 使用标准 unique_ptr 配合无状态、编译期尺寸/对齐的 deleter 管理未构造的闭包存储. 构造抛异常只归还字节, 不对未构造对象调用析构; make 仍在所有路径消费已经构造的 payload.
+- Node 工厂直接返回拥有初始引用的 NodeRef. 节点命名、簇入口构建、inline root 和 tiled helper 统一通过 RAII 回滚, 移除调用点手工 retain/release 配对. 只在 C ABI 输出时转交拥有引用.
+- Closure 明确只能移动, 防止误复制造成重复析构. Task 复制/移动赋值共用交换逻辑, 先更新自身句柄状态, 再释放旧引用; 覆盖自复制、自移动、共享引用及过对齐 move-only 闭包的恰好一次析构.
+- add/precede/setName 与 C ABI builder_error 共用首错登记逻辑. 当前操作返回自己的错误, 提交结果保留 Draft 的最早根因; 后续非法操作不写入已接受节点的构建状态. make 在参数非法时也清空有效 out, 并恰好消费 payload 一次.
+- worker 删除无人读取的有效 CPU 集合副本. 应用策略只保存应用版本/结果, 实际集合由 getWorkerAffinity 按需查询系统. 省去应用后的额外查询与容器分配, 不将查询错误混入策略应用结果.
+- 支持直接 enqueue(Tasks{a, b}), 临时 builder 销毁不取消已经接受的任务. 新增 enqueueAfter({a, b}, callable, args...) 多前驱汇合, 无需额外的汇合节点; 单前驱与任务簇便利重载复用该路径. 空列表为根任务, 重复前驱去重, 列表内每个前驱必须已接受. 非法或 Draft 成员使目标拒绝, 任一失败前驱使已接受目标跳过并保留根因. 仍支持成员函数及复制/移动/显式借用参数.
+- dumpDot 支持直接传 Tasks. 上述 API 保持 C++11, C ABI 版本与结果布局不变. 调用方应随更新后的公开头重新编译.
+
+动态汇合示例 (stageOne/stageTwo/merge 为返回 int 的业务函数):
+
+```cpp
+auto& flow = au::flow::XFlow::get();
+auto a = flow.enqueue(stageOne);
+auto b = flow.enqueue(stageTwo);
+auto tail = flow.enqueueAfter({a, b}, merge);
+const int tailCode = tail.wait();
+const int aCode = a.wait();
+const int bCode = b.wait();
+return tailCode ? tailCode : aCode ? aCode : bCode;
+```
+
+目标提交失败不会取消已有前驱. 示例即使 tail 被拒绝也等待 a/b; 若业务函数借用栈资源, 必须保持同样的保活边界. 多前驱列表不是用来把尚未提交的图自动收集并运行; Draft 图继续用 Tasks 统一验证和接受.
+
+本轮验收 (2026-10-20 | 15:46): 全量 165/165 单测, 17 个 suite; CPU-only CTest 8/8; OpenCL CTest 11 项通过、1 项真实 GPU skipped; TSan 11/11; ASan/LSan 11/11, 保留泄漏扫描. 严格 C++11/C11 的 -Wall -Wextra -Werror -pedantic 检查通过. 新增覆盖临时簇、多前驱/重复/空列表/非法与 Draft 成员、失败根因、首错保留、簇入口分配回滚、自赋值及恰好一次析构. 没有新的性能对测或 Android/真实 GPU 验收.
+
+
+## 10 同步借用与池化存储
+
+本轮进一步减少同步路径中的复制和重复状态, 保留现有完成、快照等待与设备资源契约.
+
+- parallelizeTiledTasks 在返回前等待参与者结束, 因而改为在调用期间借用同一个回调, 不再 decay-copy. 标准 reference_wrapper 同时适配函数对象、const 对象、普通函数与函数指针, 无需把函数指针转换成 void*. 新增支持直接传入不可复制/不可移动函数对象, 也无需额外 std::ref; 保留 void/int 返回、异常隔离及历史宏捕获方式.
+- **行为调整**: 以前传入左值函数对象会调用其副本, 现在调用原对象, 内部状态更新可见. 共享可变状态仍须支持并发调用. 如果需要隔离副本, 由调用方显式创建副本. 此规则仅适用于同步 tiled; 异步 enqueue 仍默认复制/移动, 借用须显式声明.
+- Slab 的槽位用 union 表达互斥的两种生命周期: 活动时为 T, 空闲时为链指针. 使用全局 placement new 显式构造 T, 析构后再激活空闲指针; 构造失败直接归还槽位, 不对失败对象调用析构. 页的空槽构造/析构不构造/析构 T, 扩页不再先清零整页存储; 实际 T 构造照常初始化自己的成员. 页面仍由 unique_ptr 持有, 对象地址稳定, 页增长和 T 构造/析构仍在池锁外.
+- 任务簇内部转发直接借用其已有 Task, 减少 enqueue/precede/enqueueAfter/dumpDot 中只为转发而创建的临时拥有引用. 对外 handle() 继续返回独立拥有引用, 不暴露借用句柄. Tasks 新增 setName(), 可直接命名图簇.
+- 删除 mInheritedSkipped, 从锁内已有结果状态推导, 避免维护相同信息的两个副本. 错误优先级和确定性规则不变.
+
+本机 x86_64 编译器类布局核对 (字节, 属于存储布局证据, 不是运行性能对测):
+
+| 闭包块大小 | 旧槽位 | 新槽位 |
+| --- | ---: | ---: |
+| 64 | 80 | 64 |
+| 256 | 272 | 256 |
+| 1024 | 1040 | 1024 |
+| 4096 | 4112 | 4096 |
+
+来源为当前编译器对 HEAD 旧 Slab 与新 Slab 的类布局输出, 临时核对文件 /tmp/aura-flow-round3-layout.txt. 不将该尺寸差外推为 Android 吞吐或能耗收益.
+
+本轮审查继续保留 waitAll 的根快照向量. 它在锁外准备存储, 避免把每次完成都扫描活动图的开销引入锁内. 完成 reservation、资源租约、协作等待环检测、查询完成及 worker 稳定身份也继续保留; 这些机制对应已有的正确性要求. 进一步调整空闲退休、工作窃取或任务切分阈值, 应先取得目标 Android 负载的排队、执行、建线程和功耗数据.
+
+本轮验收 (2026-10-20 | 16:02): 全量 167/167 单测, 17 个 suite; CPU-only CTest 8/8; OpenCL CTest 11 项通过、1 项真实 GPU skipped; TSan 11/11; ASan/LSan 11/11, 保留泄漏扫描. 严格 C++11/C11 的 -Wall -Wextra -Werror -pedantic 检查通过. 新增测试覆盖不可复制/不可移动回调、const/普通函数/函数指针、过对齐槽位复用、构造失败回滚、并发分配回收与恰好一次析构. 未新增运行性能对测或 Android/真实 GPU 验收.

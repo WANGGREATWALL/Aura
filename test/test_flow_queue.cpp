@@ -1,7 +1,11 @@
 #include "flow/ready_queue.h"
+#include "flow/slab.h"
 #include "gtest/gtest.h"
 #include <array>
 #include <atomic>
+#include <cstdint>
+#include <memory>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -16,6 +20,44 @@ struct PublicationPause {
     }
     void entered() { while (!mEntered.load(std::memory_order_acquire)) std::this_thread::yield(); }
 };
+}
+
+TEST(XFlow, SlabReusesOveralignedSlotsAndRollsBackConstruction)
+{
+    struct alignas(128) Record {
+        std::atomic<unsigned int>* mDestroyed;
+        std::unique_ptr<int> mValue;
+        Record(std::atomic<unsigned int>& destroyed, int value) : mDestroyed(&destroyed), mValue(new int(value))
+        { if (value < 0) throw std::runtime_error("construction rollback"); }
+        ~Record() noexcept { mDestroyed->fetch_add(1, std::memory_order_relaxed); }
+    };
+    std::atomic<unsigned int> destroyed{0};
+    au::flow::detail::Slab<Record, 2> pool;
+    auto release = [&pool](Record* record) noexcept { pool.destroy(record); };
+    {
+        std::unique_ptr<Record, decltype(release)> a(pool.create(destroyed, 1), release);
+        std::unique_ptr<Record, decltype(release)> b(pool.create(destroyed, 2), release);
+        std::unique_ptr<Record, decltype(release)> c(pool.create(destroyed, 3), release); // Grow a second page.
+        EXPECT_NE(a.get(), b.get()); EXPECT_NE(a.get(), c.get());
+        Record* recycled = b.get(); b.reset();
+        EXPECT_THROW(pool.create(destroyed, -1), std::runtime_error);
+        EXPECT_EQ(destroyed.load(std::memory_order_relaxed), 1u); // Failed T never has its destructor called.
+        std::unique_ptr<Record, decltype(release)> d(pool.create(destroyed, 4), release);
+        EXPECT_EQ(d.get(), recycled);
+        EXPECT_EQ(reinterpret_cast<std::uintptr_t>(d.get()) % alignof(Record), 0u);
+        EXPECT_EQ(*a->mValue, 1); EXPECT_EQ(*c->mValue, 3); EXPECT_EQ(*d->mValue, 4);
+    }
+    EXPECT_EQ(destroyed.load(std::memory_order_relaxed), 4u);
+    std::array<std::thread, 4> threads;
+    for (auto& thread : threads) thread = std::thread([&] {
+        for (int i = 0; i < 256; ++i) {
+            std::unique_ptr<Record, decltype(release)> record(pool.create(destroyed, i), release);
+            EXPECT_EQ(*record->mValue, i);
+            EXPECT_EQ(reinterpret_cast<std::uintptr_t>(record.get()) % alignof(Record), 0u);
+        }
+    });
+    for (auto& thread : threads) thread.join();
+    EXPECT_EQ(destroyed.load(std::memory_order_relaxed), 4u + 4u * 256u);
 }
 
 TEST(XFlow, ReadyQueueSequenceExhaustionAndImmediateReuse)

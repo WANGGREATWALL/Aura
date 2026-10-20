@@ -4,6 +4,7 @@
 
 static int work(void* payload) { *(int*)payload = 1; return 0; }
 static int failure(void* payload) { (void)payload; return 17; }
+static void release(void* payload) { ++*(int*)payload; }
 int main(void)
 {
     int called = 0;
@@ -27,6 +28,9 @@ int main(void)
     if (au_flow_version() != AURA_FLOW_ABI_VERSION) return 4;
     if (au_mm_access_version() != AURA_MM_ACCESS_ABI_VERSION) return 7;
     if (au_gpu_opencl_version() != AURA_GPU_OPENCL_ABI_VERSION) return 9;
+    int destroyed = 0;
+    au_flow_handle rejected = &destroyed;
+    if (!au_flow_make(0, release, &destroyed, &rejected) || rejected || destroyed != 1) return 12;
     if (au_flow_make(work, 0, &called, &handle)) return 1;
     if (au_flow_submit(handle)) return 2;
     if (au_flow_wait(handle, UINT64_MAX, &result) || result.mCode || called != 1) return 3;

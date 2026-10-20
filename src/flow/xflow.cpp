@@ -42,17 +42,34 @@ public:
     NodeRef() noexcept = default;
     explicit NodeRef(au::flow::detail::Node* value) noexcept : mValue(value) { au::flow::detail::retain(mValue); }
     NodeRef(const au::flow::detail::NodeRef& other) noexcept : NodeRef(other.mValue) {}
-    NodeRef(au::flow::detail::NodeRef&& other) noexcept : mValue(other.mValue) { other.mValue = nullptr; }
+    NodeRef(au::flow::detail::NodeRef&& other) noexcept : mValue(other.release()) {}
     ~NodeRef() noexcept { au::flow::detail::release(mValue); }
     au::flow::detail::NodeRef& operator=(au::flow::detail::NodeRef other) noexcept
     { std::swap(mValue, other.mValue); return *this; }
     au::flow::detail::Node* get() const noexcept { return mValue; }
     au::flow::detail::Node* operator->() const noexcept { return mValue; }
+    static au::flow::detail::NodeRef adopt(au::flow::detail::Node* value) noexcept
+    { au::flow::detail::NodeRef ref; ref.mValue = value; return ref; }
+    au::flow::detail::Node* release() noexcept { return std::exchange(mValue, nullptr); }
 private:
     au::flow::detail::Node* mValue = nullptr;
 };
 
 struct Closure {
+    Closure(au_flow_invoke invoke = nullptr, au_flow_destroy destroy = nullptr, void* payload = nullptr) noexcept
+        : mInvoke(invoke), mDestroy(destroy), mPayload(payload) {}
+    Closure(const au::flow::detail::Closure&) = delete;
+    au::flow::detail::Closure& operator=(const au::flow::detail::Closure&) = delete;
+    Closure(au::flow::detail::Closure&& other) noexcept
+        : Closure(other.mInvoke, other.mDestroy, std::exchange(other.mPayload, nullptr)) {}
+    au::flow::detail::Closure& operator=(au::flow::detail::Closure&& other) noexcept
+    {
+        if (this != &other) {
+            clear(); mInvoke = other.mInvoke; mDestroy = other.mDestroy;
+            mPayload = std::exchange(other.mPayload, nullptr);
+        }
+        return *this;
+    }
     au_flow_invoke mInvoke = nullptr;
     au_flow_destroy mDestroy = nullptr;
     void* mPayload = nullptr;
@@ -108,7 +125,6 @@ struct Node {
     au::flow::ErrorDomain mBodyDomain = au::flow::ErrorDomain::Callable;
     au_flow_result mInherited{};
     std::uint64_t mInheritedOrder = UINT64_MAX;
-    bool mInheritedSkipped = false;
     au_flow_result mScoped{};
     bool mSkipped = false;
     au_flow_result mResult{};
@@ -237,7 +253,7 @@ public:
         }
     }
     ~Core() noexcept { (void)shutdown(); }
-    au::flow::detail::Node* make(au::flow::detail::Kind kind)
+    au::flow::detail::NodeRef make(au::flow::detail::Kind kind)
     {
 #ifdef AURA_FLOW_TESTING
         if (au::flow::detail::fail(au::flow::testing::Failure::Node)) throw std::bad_alloc();
@@ -246,9 +262,8 @@ public:
         do {
             if (id == UINT64_MAX) throw au::flow::detail::CreateFailure{au::err::kErrorOverflow};
         } while (!mNextId.compare_exchange_weak(id, id + 1, std::memory_order_relaxed)); // Saturate; never wrap to a stale ID.
-        au::flow::detail::Node* node = mNodes.create(this, id, kind);
-        try { node->mName = std::to_string(id); } // Cold label creation, no formatting or copies during dispatch.
-        catch (...) { mNodes.destroy(node); throw; }
+        auto node = au::flow::detail::NodeRef::adopt(mNodes.create(this, id, kind));
+        node->mName = std::to_string(id); // Cold label creation; the owner also handles construction rollback.
         return node;
     }
     void recycle(au::flow::detail::Node* node) noexcept
@@ -259,6 +274,12 @@ public:
         mNodes.destroy(node); // Iterative NodeRef reclamation also handles retained diagnostic descendants.
     }
     bool owns(const au::flow::detail::Node* node) const noexcept { return node && node->mOwner == this; }
+    int builderError(au::flow::detail::Node* node, int code) noexcept
+    {
+        if (owns(node) && node->mState.load(std::memory_order_acquire) == au::flow::TaskState::Draft && !node->mBuildError)
+            node->mBuildError = code;
+        return code; // The operation reports its own error; submission preserves the first build failure.
+    }
     void scopedError(int code, au::flow::ErrorDomain domain = au::flow::ErrorDomain::Flow, int native = 0,
                      std::uint64_t cause = 0) noexcept
     {
@@ -427,36 +448,29 @@ public:
     }
     int precede(au::flow::detail::Node* before, au::flow::detail::Node* after) noexcept
     {
-        if (!owns(before) || !owns(after)) {
-            if (owns(after) && after->mState.load(std::memory_order_acquire) == au::flow::TaskState::Draft)
-                after->mBuildError = au::err::kErrorInvalidHandle;
-            return au::err::kErrorInvalidHandle;
-        }
+        if (!owns(before) || !owns(after)) return builderError(after, au::err::kErrorInvalidHandle);
         if (after->mState.load(std::memory_order_acquire) != au::flow::TaskState::Draft)
             return au::err::kErrorStateInvalid;
         try {
-            if (reaches(before, after, false)) return after->mBuildError = au::flow::kErrorCycleDetected;
+            if (reaches(before, after, false)) return builderError(after, au::flow::kErrorCycleDetected);
             for (const auto& pred : after->mPreds) if (pred.get() == before) return 0;
             after->mPreds.emplace_back(before);
             return 0;
-        } catch (...) { return after->mBuildError = au::err::kErrorNoMemory; }
+        } catch (...) { return builderError(after, au::err::kErrorNoMemory); }
     }
     int add(au::flow::detail::Node* group, au::flow::detail::Node* member) noexcept
     {
-        if (!owns(group) || !owns(member)) {
-            if (owns(group)) group->mBuildError = au::err::kErrorInvalidHandle;
-            return au::err::kErrorInvalidHandle;
-        }
+        if (!owns(group) || !owns(member)) return builderError(group, au::err::kErrorInvalidHandle);
         if (group->mKind != au::flow::detail::Kind::Group) return au::err::kErrorInvalidParam;
         if (group->mState.load(std::memory_order_acquire) != au::flow::TaskState::Draft)
             return au::err::kErrorStateInvalid;
         if (member->mState.load(std::memory_order_acquire) != au::flow::TaskState::Draft || member->mGroup)
-            return group->mBuildError = au::err::kErrorStateInvalid;
+            return builderError(group, au::err::kErrorStateInvalid);
         try {
-            if (reaches(member, group, false)) return group->mBuildError = au::flow::kErrorCycleDetected;
+            if (reaches(member, group, false)) return builderError(group, au::flow::kErrorCycleDetected);
             group->mMembers.emplace_back(member); member->mGroup = group;
             return 0;
-        } catch (...) { return group->mBuildError = au::err::kErrorNoMemory; }
+        } catch (...) { return builderError(group, au::err::kErrorNoMemory); }
     }
     void reject(au::flow::detail::Node* top, int error, int native = 0) noexcept
     {
@@ -668,9 +682,10 @@ public:
         if (!source.mCode) return;
         const bool skipped = source.mState == static_cast<std::uint32_t>(au::flow::TaskState::Skipped);
         std::lock_guard<std::mutex> lock(target->mErrorMutex);
-        if (!target->mInherited.mCode || (target->mInheritedSkipped && !skipped) ||
-            (target->mInheritedSkipped == skipped && order < target->mInheritedOrder)) {
-            target->mInherited = source; target->mInheritedOrder = order; target->mInheritedSkipped = skipped;
+        const bool inheritedSkipped = target->mInherited.mState == static_cast<std::uint32_t>(au::flow::TaskState::Skipped);
+        if (!target->mInherited.mCode || (inheritedSkipped && !skipped) ||
+            (inheritedSkipped == skipped && order < target->mInheritedOrder)) {
+            target->mInherited = source; target->mInheritedOrder = order;
         }
     }
     void resolve(au::flow::detail::Node* target, const au_flow_result& source, std::uint64_t order,
@@ -1062,12 +1077,9 @@ public:
                 cpus = mPolicy.empty() ? mAllowed : mPolicy;
             }
             const int code = version == 0 || cpus.empty() ? 0 : au::sys::flow::applyAffinity(cpus);
-            std::vector<std::uint32_t> effective;
-            const int query = au::sys::flow::currentAffinity(effective);
             std::lock_guard<std::mutex> lock(mWorkerMutex);
             mWorkers[id].mAppliedVersion = version;
-            mWorkers[id].mAffinityCode = code ? code : query;
-            mWorkers[id].mEffective = std::move(effective);
+            mWorkers[id].mAffinityCode = code; // Effective affinity is queried on demand, not cached.
         } catch (...) {
             std::lock_guard<std::mutex> lock(mWorkerMutex);
             mWorkers[id].mAffinityCode = au::err::kErrorNoMemory;
@@ -1207,7 +1219,6 @@ private:
         std::uint64_t mThreadId = 0;
         std::uint64_t mAppliedVersion = UINT64_MAX;
         int mAffinityCode = au::err::kErrorNotReady;
-        std::vector<std::uint32_t> mEffective;
     };
     au::flow::detail::PayloadPool mPayloads;
     au::flow::detail::Slab<au::flow::detail::Node, 128> mNodes;
@@ -1352,15 +1363,14 @@ int Core::tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* 
             }
         } call{this, range, tile, invoke, payload};
         try {
-            au::flow::detail::Node* scope = make(Kind::Work);
-            au::flow::detail::NodeRef pin(scope); au::flow::detail::release(scope);
+            auto scope = make(Kind::Work);
             scope->mInline = true;
-            scope->mClosure.mInvoke = &Invocation::run; scope->mClosure.mPayload = &call;
-            const int accepted = submit(scope);
+            scope->mClosure = au::flow::detail::Closure(&Invocation::run, nullptr, &call);
+            const int accepted = submit(scope.get());
             if (accepted) return accepted;
-            run(scope);
+            run(scope.get());
             au_flow_result value = {}; value.mStructSize = sizeof(value);
-            const int ret = wait(scope, UINT64_MAX, &value);
+            const int ret = wait(scope.get(), UINT64_MAX, &value);
             return ret ? ret : value.mCode;
         } catch (const au::flow::detail::CreateFailure& error) { return error.mCode; }
         catch (...) { return au::err::kErrorNoMemory; }
@@ -1372,15 +1382,14 @@ int Core::tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* 
     std::size_t accepted = 0;
     try {
         for (std::size_t i = 1; i < participants; ++i) {
-            au::flow::detail::Node* helper = make(Kind::Work);
-            au::flow::detail::NodeRef pin(helper); au::flow::detail::release(helper);
-            helper->mClosure.mInvoke = &Loop::step; helper->mClosure.mPayload = &loop;
+            auto helper = make(Kind::Work);
+            helper->mClosure = au::flow::detail::Closure(&Loop::step, nullptr, &loop);
             helper->mContinue = &Loop::more;
             // Optional parallelism must not poison the parent's result when
             // no worker/storage is available: the caller can finish all tiles.
-            const int ret = submit(helper, false);
+            const int ret = submit(helper.get(), false);
             if (ret) break;
-            helpers[accepted++] = std::move(pin);
+            helpers[accepted++] = std::move(helper);
         }
     } catch (...) { /* Unaccepted helpers are optional; existing ones still join. */ }
     (void)Loop::run(&loop);
@@ -1490,13 +1499,13 @@ void au_flow_payload_release(void* payload, std::size_t size, std::size_t alignm
 { if (payload) au::flow::detail::core().payloads().release(payload, size, alignment); }
 int au_flow_make(au_flow_invoke invoke, au_flow_destroy destroy, void* payload, au_flow_handle* out) noexcept
 {
-    au::flow::detail::Closure owner; owner.mPayload = payload; owner.mDestroy = destroy;
+    au::flow::detail::Closure owner(invoke, destroy, payload);
+    if (out) *out = nullptr;
     if (!out || !invoke) return au::err::kErrorInvalidParam;
-    *out = nullptr;
     try {
-        au::flow::detail::Node* node = au::flow::detail::core().make(au::flow::detail::Kind::Work);
-        node->mClosure.mInvoke = invoke; node->mClosure.mDestroy = destroy; node->mClosure.mPayload = payload;
-        owner.mPayload = nullptr; *out = node; return 0;
+        auto node = au::flow::detail::core().make(au::flow::detail::Kind::Work);
+        node->mClosure = std::move(owner);
+        *out = node.release(); return 0;
     } catch (const au::flow::detail::CreateFailure& error) { return error.mCode; }
     catch (...) { return au::err::kErrorNoMemory; }
 }
@@ -1505,11 +1514,9 @@ int au_flow_group(au_flow_handle* out) noexcept
     if (!out) return au::err::kErrorNullPointer;
     *out = nullptr;
     try {
-        au::flow::detail::Node* node = au::flow::detail::core().make(au::flow::detail::Kind::Group);
-        au::flow::detail::NodeRef pin(node); au::flow::detail::release(node);
-        au::flow::detail::Node* entry = au::flow::detail::core().make(au::flow::detail::Kind::Entry);
-        node->mEntry = au::flow::detail::NodeRef(entry); au::flow::detail::release(entry);
-        au::flow::detail::retain(node); *out = node;
+        auto node = au::flow::detail::core().make(au::flow::detail::Kind::Group);
+        node->mEntry = au::flow::detail::core().make(au::flow::detail::Kind::Entry);
+        *out = node.release();
         return 0;
     } catch (const au::flow::detail::CreateFailure& error) { return error.mCode; }
     catch (...) { return au::err::kErrorNoMemory; }
@@ -1554,19 +1561,15 @@ int au_flow_name(au_flow_handle handle, const char* name) noexcept
     auto* node = static_cast<au::flow::detail::Node*>(handle);
     if (!au::flow::detail::core().owns(node)) return au::err::kErrorInvalidHandle;
     if (node->mState.load(std::memory_order_acquire) != au::flow::TaskState::Draft) return au::err::kErrorStateInvalid;
-    if (!name) return node->mBuildError = au::err::kErrorNullPointer;
+    if (!name) return au::flow::detail::core().builderError(node, au::err::kErrorNullPointer);
     try { node->mName = name; return 0; }
-    catch (...) { return node->mBuildError = au::err::kErrorNoMemory; }
+    catch (...) { return au::flow::detail::core().builderError(node, au::err::kErrorNoMemory); }
 }
 int au_flow_precede(au_flow_handle before, au_flow_handle after) noexcept
 { return au::flow::detail::core().precede(static_cast<au::flow::detail::Node*>(before), static_cast<au::flow::detail::Node*>(after)); }
 int au_flow_builder_error(au_flow_handle handle, int code) noexcept
 {
-    auto* node = static_cast<au::flow::detail::Node*>(handle);
-    if (au::flow::detail::core().owns(node) &&
-        node->mState.load(std::memory_order_acquire) == au::flow::TaskState::Draft && !node->mBuildError)
-        node->mBuildError = code;
-    return code;
+    return au::flow::detail::core().builderError(static_cast<au::flow::detail::Node*>(handle), code);
 }
 int au_flow_add(au_flow_handle group, au_flow_handle member) noexcept
 { return au::flow::detail::core().add(static_cast<au::flow::detail::Node*>(group), static_cast<au::flow::detail::Node*>(member)); }
