@@ -103,7 +103,6 @@ struct Node {
     std::atomic<au::flow::TaskState> mState{au::flow::TaskState::Draft};
     std::atomic<int> mSubmission{au::err::kErrorNotReady};
     au::flow::detail::Closure mClosure;
-    bool mInline = false; // Private external tiled scope; accepted, but executed by its caller.
     bool (*mContinue)(void*) noexcept = nullptr; // Private tiled helper continuation, never an ordinary Task.
     std::string mName;
     std::vector<au::flow::detail::NodeRef> mPreds;
@@ -159,17 +158,66 @@ struct ExternalToken {
     au::flow::detail::ReadyLink mLink;
     au::flow::detail::ExternalToken* mPendingNext = nullptr;
 };
+// One invocation, owned by the thread currently executing a tile. The loop
+// gathers these records only after every participant has joined.
+struct TileContext {
+    au::flow::detail::ExternalStatus mError;
+    std::atomic<bool>* mStop;
+    bool mException = false;
+    void record(int code, au::flow::ErrorDomain domain, int native, std::uint64_t cause) noexcept
+    {
+        if (!code) return;
+        if (!mError.mCode) mError = {code, native, domain, cause};
+        mStop->store(true, std::memory_order_release); // Stop new tickets, not callbacks already in flight.
+    }
+};
 // Definitions live in this translation unit, never GNU-unique public inline TLS.
 thread_local au::flow::detail::Frame* gFrame = nullptr;
 thread_local int gWorker = -1;
 thread_local unsigned int gDepth = 0;
 thread_local unsigned int gTileDepth = 0;
+thread_local au::flow::detail::TileContext* gTileContext = nullptr;
 thread_local unsigned int gCleanupDepth = 0;
 thread_local au::flow::detail::Node* gFinish = nullptr;
 thread_local bool gFinishing = false;
 thread_local au::flow::detail::Node* gReclaim = nullptr;
 thread_local bool gReclaiming = false;
 thread_local unsigned int gCompletionBurst = 0;
+
+// Cooperative work and cleanup belong to their own task, never to a suspended
+// tile on this thread. Restore after their entire dispatch/cleanup has ended.
+class TileSuspension {
+public:
+    TileSuspension() noexcept : mContext(au::flow::detail::gTileContext), mDepth(au::flow::detail::gTileDepth)
+    { au::flow::detail::gTileContext = nullptr; au::flow::detail::gTileDepth = 0; }
+    ~TileSuspension() noexcept
+    { au::flow::detail::gTileContext = mContext; au::flow::detail::gTileDepth = mDepth; }
+    TileSuspension(const TileSuspension&) = delete;
+    TileSuspension& operator=(const TileSuspension&) = delete;
+private:
+    au::flow::detail::TileContext* mContext;
+    unsigned int mDepth;
+};
+
+class TileExtent {
+public:
+    TileExtent(au::flow::detail::TileContext* context, const au::mm::detail::AccessErrorSink& sink) noexcept
+        : mPrevious(au::flow::detail::gTileContext), mDepth(au::flow::detail::gTileDepth),
+          mSink(au::mm::detail::setAccessErrorSink(sink))
+    { au::flow::detail::gTileContext = context; ++au::flow::detail::gTileDepth; }
+    ~TileExtent() noexcept
+    {
+        au::mm::detail::setAccessErrorSink(mSink);
+        au::flow::detail::gTileContext = mPrevious;
+        au::flow::detail::gTileDepth = mDepth;
+    }
+    TileExtent(const TileExtent&) = delete;
+    TileExtent& operator=(const TileExtent&) = delete;
+private:
+    au::flow::detail::TileContext* mPrevious;
+    unsigned int mDepth;
+    au::mm::detail::AccessErrorSink mSink;
+};
 
 #ifdef AURA_FLOW_TESTING
 std::array<std::atomic<int>, 5> gFailure{{-1, -1, -1, -1, -1}};
@@ -237,6 +285,7 @@ public:
         CleanupExtent(const CleanupExtent&) = delete;
         CleanupExtent& operator=(const CleanupExtent&) = delete;
     private:
+        au::flow::detail::TileSuspension mTileSuspension;
         au::flow::detail::Frame mFrame;
         au::mm::detail::AccessErrorSink mSink;
     };
@@ -283,6 +332,10 @@ public:
     void scopedError(int code, au::flow::ErrorDomain domain = au::flow::ErrorDomain::Flow, int native = 0,
                      std::uint64_t cause = 0) noexcept
     {
+        if (au::flow::detail::gTileContext) {
+            au::flow::detail::gTileContext->record(code, domain, native, cause);
+            return;
+        }
         if (!code || !au::flow::detail::gFrame) return;
         au::flow::detail::Node* node = au::flow::detail::gFrame->mNode;
         std::lock_guard<std::mutex> lock(node->mErrorMutex);
@@ -296,19 +349,12 @@ public:
     {
         if (!out || !ops.mRelease) return au::err::kErrorInvalidParam;
         *out = nullptr;
+        if (au::flow::detail::gTileContext) {
+            scopedError(au::err::kErrorStateInvalid);
+            return au::err::kErrorStateInvalid;
+        }
         if (au::flow::detail::gCleanupDepth) return au::err::kErrorStateInvalid;
         if (!au::flow::detail::gFrame) return 0;
-        if (au::flow::detail::gWorker < 0) {
-            // An inline root can run without any worker. Before accepting an
-            // asynchronous reservation, ensure its completion has a consumer.
-            int native = 0;
-            const int code = ensureWorker(&native);
-            if (code) {
-                scopedError(code, code == au::err::kErrorNoMemory ? au::flow::ErrorDomain::Memory
-                    : au::flow::ErrorDomain::System, native);
-                return code;
-            }
-        }
         au::flow::detail::ExternalToken* token = nullptr;
         try {
             token = mExternal.create();
@@ -517,7 +563,8 @@ public:
     {
         int ret = 0;
         int native = 0;
-        if (au::flow::detail::gCleanupDepth) ret = au::flow::kErrorWouldDeadlock;
+        if (au::flow::detail::gTileContext) ret = au::err::kErrorStateInvalid;
+        else if (au::flow::detail::gCleanupDepth) ret = au::flow::kErrorWouldDeadlock;
         else if (!owns(top)) ret = au::err::kErrorInvalidHandle;
         else if (top->mState.load(std::memory_order_acquire) != au::flow::TaskState::Draft || top->mGroup)
             ret = au::err::kErrorStateInvalid;
@@ -590,7 +637,7 @@ public:
                         registrations.push_back({before, std::move(edge)});
                     }
                 }
-                if (!top->mInline) ret = ensureWorker(&native);
+                ret = ensureWorker(&native);
             }
             if (!ret) {
                 std::lock_guard<std::mutex> lock(mMutex);
@@ -714,7 +761,6 @@ public:
             return;
         }
         trace(node, "ready", 'i');
-        if (node->mInline) return;
         // Only the dispatching worker may retain one immediate successor. No
         // permit was posted for it, and the accepted reference keeps it alive.
         // Older queued work and deferred device polls take precedence; the outer
@@ -865,6 +911,7 @@ public:
     void run(au::flow::detail::Node* node, au::flow::detail::Node** continuation = nullptr) noexcept
     {
         au::flow::detail::CpuSlicePause outerSlice;
+        au::flow::detail::TileSuspension tileSuspension;
         au::flow::detail::NodeRef pin(node);
         node->mState.store(au::flow::TaskState::Running, std::memory_order_release);
         Frame frame{node, au::flow::detail::gFrame};
@@ -874,8 +921,7 @@ public:
         }
         au::flow::detail::gFrame = &frame;
         const auto memorySink = au::mm::detail::setAccessErrorSink(this->memorySink());
-        const unsigned int tileDepth = au::flow::detail::gTileDepth;
-        au::flow::detail::gTileDepth = 0; ++au::flow::detail::gDepth;
+        ++au::flow::detail::gDepth;
         // External tiled callers provide extra capacity, not busy pool workers.
         if (au::flow::detail::gWorker >= 0) mBusy.fetch_add(1, std::memory_order_relaxed); // Scaling hint; cooperative stacks may overlap.
         int code = 0;
@@ -897,11 +943,11 @@ public:
         trace(node, "callable wall", 'E', code);
         au::mm::detail::setAccessErrorSink(memorySink);
         if (au::flow::detail::gWorker >= 0) mBusy.fetch_sub(1, std::memory_order_relaxed);
-        --au::flow::detail::gDepth; au::flow::detail::gTileDepth = tileDepth;
+        --au::flow::detail::gDepth;
         au::flow::detail::gFrame = frame.mPrevious;
         if (node->mContinue && node->mContinue(node->mClosure.mPayload)) {
             node->mState.store(au::flow::TaskState::Ready, std::memory_order_release);
-            mReadyCount.fetch_add(1, std::memory_order_relaxed); // Helper yields after one tile.
+            mReadyCount.fetch_add(1, std::memory_order_relaxed); // Helper yields after a bounded tile batch.
             mReady.push(&node->mReady); mWork.post();
             if (frame.mPrevious) {
                 std::lock_guard<std::mutex> lock(mMutex);
@@ -962,7 +1008,8 @@ public:
     }
     int waitAll() noexcept
     {
-        if (au::flow::detail::gFrame || au::flow::detail::gCleanupDepth) return au::flow::kErrorWouldDeadlock;
+        if (au::flow::detail::gFrame || au::flow::detail::gTileContext || au::flow::detail::gCleanupDepth)
+            return au::flow::kErrorWouldDeadlock;
         try {
             std::uint64_t watermark;
             std::size_t count = 0;
@@ -989,13 +1036,14 @@ public:
 
     int shutdown() noexcept
     {
-        if (au::flow::detail::gFrame || au::flow::detail::gCleanupDepth) return au::flow::kErrorWouldDeadlock;
+        if (au::flow::detail::gFrame || au::flow::detail::gTileContext || au::flow::detail::gCleanupDepth)
+            return au::flow::kErrorWouldDeadlock;
         std::lock_guard<std::mutex> closing(mCloseMutex);
         {
             std::unique_lock<std::mutex> lock(mMutex);
             if (mPhase == Phase::Closed) return 0;
             mPhase = Phase::Stopping;
-            mDrained.wait(lock, [this] { return mAccepted == 0; });
+            mDrained.wait(lock, [this] { return mAccepted == 0 && mJobs == 0; });
         }
         {
             std::unique_lock<std::mutex> lock(mWorkerMutex);
@@ -1187,6 +1235,7 @@ public:
     {
         if (!budget || budget > 8) return au::err::kErrorInvalidParam;
         { std::lock_guard<std::mutex> lock(mMutex);
+          if (mJobs) return au::err::kErrorBusy;
           for (au::flow::detail::Node* node = mActive; node; node = node->mActiveNext)
               if (!au::flow::detail::finalState(node->mState.load(std::memory_order_acquire))) return au::err::kErrorBusy;
           mBudget.store(budget, std::memory_order_release); }
@@ -1202,6 +1251,89 @@ public:
         const std::uint64_t thread = worker < 0 ? au::sys::flow::threadId() : mWorkers[index].mThreadId;
         mDiagnostics.record(index, node->mId, thread, name, phase, code,
             node->mParent.get() ? node->mParent->mId : 0, node->mName.data(), node->mName.size());
+    }
+    class JobScope {
+    public:
+        explicit JobScope(au::flow::detail::Core* core) noexcept : mCore(core) {}
+        int accept() noexcept
+        {
+            std::lock_guard<std::mutex> lock(mCore->mMutex);
+            if (mCore->mPhase == Phase::Closed ||
+                (mCore->mPhase == Phase::Stopping && !au::flow::detail::gFrame))
+                return au::err::kErrorStateInvalid;
+            if (mCore->mJobs == SIZE_MAX) return au::err::kErrorOverflow;
+            ++mCore->mJobs;
+            mAccepted = true;
+            if (mCore->mPhase == Phase::Dormant) mCore->mPhase = Phase::Running;
+            return 0;
+        }
+        ~JobScope() noexcept
+        {
+            if (!mAccepted) return;
+            {
+                std::lock_guard<std::mutex> lock(mCore->mMutex);
+                --mCore->mJobs;
+            }
+            mCore->mDrained.notify_all();
+        }
+        JobScope(const JobScope&) = delete;
+        JobScope& operator=(const JobScope&) = delete;
+    private:
+        au::flow::detail::Core* mCore;
+        bool mAccepted = false;
+    };
+
+    // Only called by an accepted Job. Helpers have no DAG predecessors and do
+    // not form independent waitAll roots. Retain Node identity for wait-cycle
+    // checks and completion, but skip general graph preparation/allocations.
+    std::size_t acceptHelpers(au::flow::detail::NodeRef* helpers, std::size_t count) noexcept
+    {
+        if (!count || ensureWorker()) return 0; // Optional: caller can finish every tile.
+        std::size_t accepted = 0;
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            au::flow::detail::Node* parent = au::flow::detail::gFrame ? au::flow::detail::gFrame->mNode : nullptr;
+            for (; accepted < count; ++accepted) {
+                if (mPhase == Phase::Closed || mOrder == UINT64_MAX || mAccepted == SIZE_MAX) break;
+                if (parent && !au::flow::detail::reserveOutstanding(parent)) break;
+                au::flow::detail::Node* node = helpers[accepted].get();
+                node->mOrder = ++mOrder;
+                node->mParent = au::flow::detail::NodeRef(parent);
+                node->mCommitted.store(true, std::memory_order_relaxed); // Before ready-queue publication.
+                node->mSubmission.store(0, std::memory_order_relaxed);
+                au::flow::detail::retain(node); // Accepted reference, released by finish.
+                node->mActiveNext = mActive;
+                if (mActive) mActive->mActivePrev = node;
+                mActive = node;
+                ++mAccepted;
+                node->mState.store(au::flow::TaskState::Ready, std::memory_order_release);
+            }
+        }
+        for (std::size_t i = 0; i < accepted; ++i) {
+            trace(helpers[i].get(), "Task", 'b');
+            publishReady(helpers[i].get());
+        }
+        grow();
+        return accepted;
+    }
+    void joinHelper(au::flow::detail::Node* node) noexcept
+    {
+        au::flow::detail::CpuSlicePause waiting;
+        // This edge already exists: managed helpers reserve their parent's
+        // completion, and all callbacks still use the normal wait-cycle checks.
+        // Re-validating it through general wait() would allocate and could fail
+        // before join, letting a helper retain a pointer to an expired Loop.
+        while (!au::flow::detail::finalState(node->mState.load(std::memory_order_acquire))) {
+            if (au::flow::detail::gFrame && helpOne(false, std::chrono::steady_clock::time_point::max())) continue;
+            std::unique_lock<std::mutex> lock(node->mWaitMutex);
+            if (au::flow::detail::gFrame) {
+                node->mChanged.wait_for(lock, std::chrono::milliseconds(1));
+            } else {
+                node->mChanged.wait(lock, [node] {
+                    return au::flow::detail::finalState(node->mState.load(std::memory_order_acquire));
+                });
+            }
+        }
     }
     int tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* payload) noexcept;
     void externalProfile(const au::flow::detail::ExternalProfile& profile) noexcept
@@ -1235,6 +1367,7 @@ private:
     Phase mPhase = Phase::Dormant;
     au::flow::detail::Node* mActive = nullptr;
     std::size_t mAccepted = 0;
+    std::size_t mJobs = 0; // Accepted synchronous calls, protected by mMutex with Phase.
     std::uint64_t mOrder = 0;
     std::uint64_t mRootOrder = 0;
     std::mutex mCloseMutex;
@@ -1288,36 +1421,55 @@ struct Loop {
     std::atomic<bool> mFailed{false};
     std::mutex mMutex;
     std::size_t mErrorOffset = SIZE_MAX;
-    int mError = 0;
+    au::flow::detail::ExternalStatus mError;
     bool mErrorException = false;
+    // Bound queue traffic while retaining a scheduling opportunity for other
+    // tasks. This is a measured tuning candidate, not a time/fairness guarantee.
+    static constexpr unsigned int kHelperTileBatch = 8;
     static bool more(void* value) noexcept
     {
-        au::flow::detail::Loop& loop = *static_cast<au::flow::detail::Loop*>(value);
-        return !loop.mFailed.load(std::memory_order_acquire) && loop.mNext.load(std::memory_order_relaxed) < loop.mRange;
+        auto& loop = *static_cast<au::flow::detail::Loop*>(value);
+        return !loop.mFailed.load(std::memory_order_acquire) &&
+            loop.mNext.load(std::memory_order_relaxed) < loop.mRange;
     }
     static int step(void* value) noexcept
     {
-        au::flow::detail::Loop& loop = *static_cast<au::flow::detail::Loop*>(value);
+        auto& loop = *static_cast<au::flow::detail::Loop*>(value);
         if (!more(value)) return 0;
-        ++au::flow::detail::gTileDepth;
-        std::size_t begin = loop.mNext.load(std::memory_order_relaxed); // Ticket only, callback data has separate lifetime.
+        std::size_t begin = loop.mNext.load(std::memory_order_relaxed); // Disjoint tickets, not data publication.
         std::size_t count;
         do {
-            if (begin == loop.mRange) { --au::flow::detail::gTileDepth; return 0; }
+            if (begin == loop.mRange) return 0;
             count = std::min(loop.mTile, loop.mRange - begin);
-        } while (!loop.mNext.compare_exchange_weak(begin, begin + count, std::memory_order_relaxed)); // Disjoint bounded intervals.
-        const int code = loop.mInvoke(loop.mPayload, begin, count);
-        if (code) {
-            bool exception = false;
-            if (code == au::flow::kErrorUnhandledException && au::flow::detail::gFrame) {
-                std::lock_guard<std::mutex> lock(au::flow::detail::gFrame->mNode->mErrorMutex);
-                exception = au::flow::detail::gFrame->mNode->mBodyDomain == au::flow::ErrorDomain::Flow;
-            }
-            { std::lock_guard<std::mutex> lock(loop.mMutex);
-              if (begin < loop.mErrorOffset) { loop.mErrorOffset = begin; loop.mError = code; loop.mErrorException = exception; } }
-            loop.mFailed.store(true, std::memory_order_release); // Publish stop request, not a finished callback.
+        } while (!loop.mNext.compare_exchange_weak(begin, begin + count, std::memory_order_relaxed));
+        au::flow::detail::TileContext context{{}, &loop.mFailed};
+        int code;
+        {
+            au::flow::detail::TileExtent extent(&context, au::flow::detail::core().memorySink());
+            code = loop.mInvoke(loop.mPayload, begin, count);
         }
-        --au::flow::detail::gTileDepth;
+        // A callback's explicit error wins. Forwarding an equal scoped error
+        // retains native provenance; void/zero still reports ignored violations.
+        auto error = context.mError;
+        const bool exception = code == au::flow::kErrorUnhandledException && context.mException;
+        if (code && (code != error.mCode || exception))
+            error = {code, 0, exception ? au::flow::ErrorDomain::Flow : au::flow::ErrorDomain::Callable, 0};
+        if (error.mCode) {
+            {
+                std::lock_guard<std::mutex> lock(loop.mMutex);
+                if (begin < loop.mErrorOffset) {
+                    loop.mErrorOffset = begin;
+                    loop.mError = error;
+                    loop.mErrorException = exception;
+                }
+            }
+            loop.mFailed.store(true, std::memory_order_release); // Stop new tiles; all in-flight tiles still join.
+        }
+        return 0;
+    }
+    static int batch(void* value) noexcept
+    {
+        for (unsigned int i = 0; i < kHelperTileBatch && more(value); ++i) (void)step(value);
         return 0;
     }
     static int run(void* value) noexcept
@@ -1328,75 +1480,38 @@ int Core::tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* 
     if (!tile || !invoke) return au::err::kErrorInvalidParam;
     if (!range) return 0;
     if (au::flow::detail::gCleanupDepth) {
-        scopedError(au::flow::kErrorWouldDeadlock, au::flow::ErrorDomain::Flow);
+        scopedError(au::flow::kErrorWouldDeadlock);
         return au::flow::kErrorWouldDeadlock;
     }
-    if (au::flow::detail::gTileDepth || au::flow::detail::gDepth >= 31) {
-        for (std::size_t offset = 0; offset < range;) {
-            const std::size_t count = std::min(tile, range - offset);
-            const int code = invoke(payload, offset, count);
-            if (code) {
-                au::flow::ErrorDomain domain = au::flow::ErrorDomain::Callable;
-                if (au::flow::detail::gFrame) {
-                    std::lock_guard<std::mutex> lock(au::flow::detail::gFrame->mNode->mErrorMutex);
-                    domain = au::flow::detail::gFrame->mNode->mBodyDomain;
-                }
-                scopedError(code, domain);
-                return code;
-            }
-            offset += count;
-        }
-        return 0;
-    }
-    if (!au::flow::detail::gFrame) {
-        // Keep the caller's work in the accepted-root snapshot and shutdown
-        // barrier. Helpers alone cannot represent the stack borrowed below.
-        struct Invocation {
-            au::flow::detail::Core* mCore;
-            std::size_t mRange, mTile;
-            au_flow_tile mInvoke;
-            void* mPayload;
-            static int run(void* value) noexcept
-            {
-                auto& call = *static_cast<Invocation*>(value);
-                return call.mCore->tiled(call.mRange, call.mTile, call.mInvoke, call.mPayload);
-            }
-        } call{this, range, tile, invoke, payload};
-        try {
-            auto scope = make(Kind::Work);
-            scope->mInline = true;
-            scope->mClosure = au::flow::detail::Closure(&Invocation::run, nullptr, &call);
-            const int accepted = submit(scope.get());
-            if (accepted) return accepted;
-            run(scope.get());
-            au_flow_result value = {}; value.mStructSize = sizeof(value);
-            const int ret = wait(scope.get(), UINT64_MAX, &value);
-            return ret ? ret : value.mCode;
-        } catch (const au::flow::detail::CreateFailure& error) { return error.mCode; }
-        catch (...) { return au::err::kErrorNoMemory; }
+    // Nested tiles borrow their enclosing Job. Job acceptance and Stopping
+    // share mMutex, so shutdown cannot pass a zero counter before a late entry.
+    JobScope job(this);
+    if (!au::flow::detail::gTileContext) {
+        const int code = job.accept();
+        if (code) { scopedError(code); return code; }
     }
     Loop loop{range, tile, invoke, payload};
-    const std::size_t tiles = range / tile + (range % tile != 0);
-    const std::size_t participants = std::min<std::size_t>(4, std::min(tiles, mBudget.load(std::memory_order_acquire)));
     std::array<au::flow::detail::NodeRef, 3> helpers;
-    std::size_t accepted = 0;
-    try {
-        for (std::size_t i = 1; i < participants; ++i) {
-            auto helper = make(Kind::Work);
-            helper->mClosure = au::flow::detail::Closure(&Loop::step, nullptr, &loop);
-            helper->mContinue = &Loop::more;
-            // Optional parallelism must not poison the parent's result when
-            // no worker/storage is available: the caller can finish all tiles.
-            const int ret = submit(helper.get(), false);
-            if (ret) break;
-            helpers[accepted++] = std::move(helper);
-        }
-    } catch (...) { /* Unaccepted helpers are optional; existing ones still join. */ }
-    (void)Loop::run(&loop);
-    for (std::size_t i = 0; i < accepted; ++i) (void)wait(helpers[i].get(), UINT64_MAX, nullptr);
+    std::size_t prepared = 0;
+    if (!au::flow::detail::gTileContext && au::flow::detail::gDepth < 31) {
+        const std::size_t tiles = range / tile + (range % tile != 0);
+        const std::size_t participants = std::min<std::size_t>(4,
+            std::min(tiles, mBudget.load(std::memory_order_acquire)));
+        try {
+            for (std::size_t i = 1; i < participants; ++i) {
+                auto helper = make(Kind::Work);
+                helper->mClosure = au::flow::detail::Closure(&Loop::batch, nullptr, &loop);
+                helper->mContinue = &Loop::more;
+                helpers[prepared++] = std::move(helper);
+            }
+        } catch (...) { /* Optional helpers: caller fallback does not poison the Job. */ }
+    }
+    const std::size_t accepted = acceptHelpers(helpers.data(), prepared);
+    (void)Loop::run(&loop); // Same TileContext for caller, helpers and serial fallbacks.
+    for (std::size_t i = 0; i < accepted; ++i) joinHelper(helpers[i].get());
     if (loop.mErrorException) au_flow_record_exception();
-    scopedError(loop.mError, loop.mErrorException ? au::flow::ErrorDomain::Flow : au::flow::ErrorDomain::Callable);
-    return loop.mError;
+    scopedError(loop.mError.mCode, loop.mError.mDomain, loop.mError.mNativeCode, loop.mError.mCauseTaskId);
+    return loop.mError.mCode;
 }
 
 int prepareExternal(const au::flow::detail::ExternalOps& ops, void* payload,
@@ -1586,6 +1701,11 @@ void au_flow_record_error(int code) noexcept
     ? au::flow::ErrorDomain::Memory : au::flow::ErrorDomain::Flow); }
 void au_flow_record_exception() noexcept
 {
+    if (au::flow::detail::gTileContext) {
+        au::flow::detail::gTileContext->mException = true;
+        au::flow::detail::core().scopedError(au::flow::kErrorUnhandledException, au::flow::ErrorDomain::Flow);
+        return;
+    }
     if (au::flow::detail::gFrame) {
         au::flow::detail::Node* node = au::flow::detail::gFrame->mNode;
         std::lock_guard<std::mutex> lock(node->mErrorMutex);

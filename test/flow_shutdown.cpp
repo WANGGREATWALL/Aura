@@ -48,14 +48,17 @@ int main()
     for (auto& thread : submitters) thread.join();
     release.store(true, std::memory_order_release);
     const int rootCode = root.wait();
+    // The remaining synchronous caller has no helpers or accepted Task root.
+    // Give closing a chance to expose an incorrectly incomplete drain barrier.
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     const bool premature = shutdownReturned.load(std::memory_order_acquire);
     releaseTile.store(true, std::memory_order_release);
     caller.join();
     closing.join();
-    if (closed || rootCode || tiled || premature || rejected.load(std::memory_order_relaxed) != 4 ||
+    if (closed || rootCode || tiled != au::err::kErrorStateInvalid || premature || rejected.load(std::memory_order_relaxed) != 4 ||
         accepted.load(std::memory_order_relaxed) != executed.load(std::memory_order_relaxed)) return 2;
     au::flow::TaskResult result{};
-    if (flow.wait(root, &result) || result.mCode || children.load(std::memory_order_relaxed) != 39) return 3;
+    if (flow.wait(root, &result) || result.mCode || children.load(std::memory_order_relaxed) != 38) return 3;
     if (flow.parallelizeTiledTasks(1, 1, [](std::size_t, std::size_t) {}) != au::err::kErrorStateInvalid) return 4;
     return flow.shutdown();
 }

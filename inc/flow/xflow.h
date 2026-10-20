@@ -304,9 +304,16 @@ public:
     int waitFor(const au::flow::Tasks& tasks, std::uint64_t timeoutMs,
                 au::flow::TaskResult* out = nullptr) noexcept
     { return tasks.waitFor(timeoutMs, out); }
+    // Snapshot of accepted asynchronous roots and their structured descendants.
+    // External synchronous tiled calls are excluded; shutdown drains those Jobs.
     int waitAll() noexcept { return au_flow_wait_all(); }
     // Synchronous: one borrowed callback is shared by all participants until
     // they join. Mutable state inside it must support concurrent invocation.
+    // Pure computation: publishing async Tasks or GPU work from a tile is
+    // rejected with StateInvalid and makes this loop fail, even if ignored.
+    // Draft construction/editing and nested synchronous tiled calls are legal;
+    // nested loops run serially. Already accepted tasks may be waited on subject
+    // to the usual wait-cycle/depth checks. Do not release borrowed data early.
     template <class F>
     int parallelizeTiledTasks(std::size_t range, std::size_t tile, F&& f) noexcept
     {

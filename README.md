@@ -83,6 +83,18 @@ make -j$(sysctl -n hw.ncpu)
 ./aura_test
 ```
 
+`aura` is the production library and is built without fault-injection hooks,
+even when tests are enabled. Tests that need hooks link the separate
+`aura_testing` library; `flow_production_test` exercises the public C API against
+the production archive. Use `-DBUILD_TESTING=OFF` for a production-only top-level
+build. When Aura is embedded with `add_subdirectory`, its own tests default to
+OFF; opt in with `-DAURA_BUILD_TESTS=ON` when the parent permits testing. The
+parent's `BUILD_TESTING` option is preserved. Android thread support is selected
+through `Threads::Threads`, and Android logging links `log`.
+
+The current flow review and staged acceptance checklist is tracked in
+[flow_remediation_plan.md](docs/flow_remediation_plan.md).
+
 ### Design Philosophy
 * **Minimal Dependencies**: Strictly avoids heavy external frameworks.
 * **Performance First**: Prioritizes cache-friendly data structures and zero-copy semantics.
@@ -93,3 +105,5 @@ make -j$(sysctl -n hw.ncpu)
 <p align="center">
   Copyright (c) 2020-2026 WANGGREATWALL. All rights reserved.
 </p>
+
+au::flow 的同步 tiled 迭代及微基准见 [B1/B2 报告](docs/flow_validation/B1-B2-2026-10-20.md)。开启 `ENABLE_FLOW_BENCHMARKS=ON` 可构建 `flow_microbenchmark`；它链接生产库，不启用故障钩子。tile 回调现在禁止异步 Task/GPU 发布，外部同步循环由 shutdown 排空、从 waitAll 的异步根快照中排除，详见报告中的迁移说明。

@@ -602,6 +602,15 @@ TEST(XOpenCL, EmptyKernelAndRejectedCallsRemainObservable)
     EXPECT_EQ(au::gpu::CLWrapper::get().releaseEvent(event), 0);
     EXPECT_EQ(au::gpu::CLWrapper::get().finish(), 0);
     int before = model.mCommands.load(std::memory_order_relaxed);
+    auto& flow = au::flow::XFlow::get();
+    const auto pureTiles = [&]() -> int {
+        return flow.parallelizeTiledTasks(19, 1, [&](std::size_t, std::size_t) {
+            (void)au::gpu::CLWrapper::get().setNDRange({1}).enqueue("empty", nullptr, nullptr);
+        }); // Ignore the native wrapper result: the loop must retain rejection.
+    };
+    EXPECT_EQ(pureTiles(), au::err::kErrorStateInvalid);
+    EXPECT_EQ(flow.enqueue(pureTiles).wait(), au::err::kErrorStateInvalid);
+    EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), before);
     auto rejected = au::flow::XFlow::get().enqueue([&]() -> int {
         (void)au::gpu::CLWrapper::get().setNDRange({0}).enqueue("empty", nullptr, nullptr);
         return 0; // Dropping the synchronous error must not report a successful task.

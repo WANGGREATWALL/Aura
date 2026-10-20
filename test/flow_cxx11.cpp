@@ -46,14 +46,14 @@ int main(int argc, char**)
     int finalized = 0;
     au::flow::detail::ExternalOps ops = {};
     ops.mRelease = [](void* value) noexcept { *static_cast<int*>(value) = 1; };
-    if (flow.parallelizeTiledTasks(1, 1, [&](std::size_t, std::size_t) -> int {
+    if (flow.enqueue([&]() -> int {
         au::flow::detail::ExternalToken* token = nullptr;
         const int ret = au::flow::detail::prepareExternal(ops, &finalized, &token);
         if (ret || !token) return ret ? ret : 1;
         au::flow::detail::notifyExternal(token, {});
         au::flow::detail::leaveExternalRegistrar(token);
         return 0;
-    }) || finalized != 1) return 13; // First inline root must have asynchronous completion progress.
+    }).wait() || finalized != 1) return 13; // First managed task must have asynchronous completion progress.
     int result = 0;
     au::flow::TaskResult status{};
     au::flow::Task a = flow.enqueue(ordinary, std::ref(result));

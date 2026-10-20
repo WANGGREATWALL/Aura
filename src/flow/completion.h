@@ -53,7 +53,8 @@ struct ExternalOps {
 
 // Prepare BEFORE native enqueue. A null token means there is no managed task;
 // the provider must use its standalone pending registry instead. On prepare
-// failure payload ownership stays with the caller. On non-null success it moves
+// failure payload ownership stays with the caller. Pure tile callbacks reject
+// preparation (before native enqueue), even on an unmanaged caller. On non-null success it moves
 // to the token until the provider's normal-thread release callback.
 int prepareExternal(const au::flow::detail::ExternalOps& ops, void* payload,
                     au::flow::detail::ExternalToken** out) noexcept;

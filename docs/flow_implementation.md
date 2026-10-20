@@ -1,8 +1,10 @@
 # au::flow 实现进度与验证
 
+后续整改与逐项验收见 [flow_remediation_plan.md](flow_remediation_plan.md)。正常 `aura` 已与故障注入变体 `aura_testing` 分离；下文早期测试条数是历史记录，不代替整改后的新结果。
+
 ## 0 范围
 
-权威设计为 [Obsidian 设计文档](</srv/data/file/code/Obsidian/7 项目/7 taskflow/3 设计文档.md>). 本文件记录代码交付与验收边界, 不缩减或替换该设计. CPU 调度, mm 访问协议, 两套 OpenCL wrapper, cache 与设备资源生命周期均已接入同一完成契约. 接入新 wrapper 的异步 GPU 提交现在由 Task reservation 跟踪至设备和主机清理完成. 绕过 wrapper 的原生调用仍须自行接入协议.
+权威设计为 [Obsidian 设计文档](<../../Obsidian/7 项目/7 taskflow/3 设计文档.md>). 本文件记录代码交付与验收边界, 不缩减或替换该设计. CPU 调度, mm 访问协议, 两套 OpenCL wrapper, cache 与设备资源生命周期均已接入同一完成契约. 接入新 wrapper 的异步 GPU 提交现在由 Task reservation 跟踪至设备和主机清理完成. 绕过 wrapper 的原生调用仍须自行接入协议.
 
 实现起点为 dev 的 `4438d46`, 后续改动在此之上继续实现. 新代码从公开 `inc/flow/xflow.h` 进入, `inc/flow/xthread_flow.h` 提供历史 include 路径. 未参与新调度器构建的旧双线程池实现和照片归档 TaskFlow 已从源码树移除, 已提交版本可从 Git 历史查阅.
 
@@ -39,7 +41,8 @@
 - 前驱后继链只入不出, 最终结果发布后原子关闭链表. 注册者与关闭者竞争时, 每条边只解析一次.
 - 主体 reservation 覆盖嵌套 enqueue 和外部完成记录. 主体先返回时进入 Waiting, 已开始工作全部清理后才最终完成. 子提交失败可登记到父作用域.
 - worker 的 wait 协作推进其他就绪工作, 检测自身, 祖先, 簇包含, 已知等待环与协作栈依赖. waitAll 建立根接受序号快照并覆盖后续结构化后代. worker 内拒绝 waitAll/shutdown.
-- tiled 最多 4 个参与者, 包含调用线程. 外部调用建立受跟踪的内联根作用域, 调用者参与计算, helper 最多 3 个; 快照和 shutdown 覆盖调用者及其后代. helper 每次完成一个 tile 后重新排队, 不逐 tile 建 Task/future. helper 准备或提交失败时退化为调用者计算, 不污染父任务结果; 必要根记录失败仍返回真实错误. 内层 tiled 和过深协作栈串行退化, 返回前等待所有 helper.
+- tiled 最多 4 个参与者，包含 caller。同步 Job 在同一关闭协议下登记，覆盖 caller/helper/错误与收尾，不建 inline Task 根；外部 Job 不进入 waitAll 的异步根快照，shutdown 仍排空它。helper 使用固定大小数组和专用接受路径，不走通用 DAG 容器准备，每批最多执行 8 个 tile 再让出。helper 准备/创建失败退化为 caller 计算，不污染父任务结果。嵌套与深协作栈串行退化，所有路径共享 TileContext，返回前等待 helper。
+- **tile 契约变更**：回调只做同步计算，不得发布异步 Task 或 GPU 工作。submit/外部 token 准备返回 StateInvalid，同时记录到循环；void/忽略结果也不能使循环成功。允许创建 Draft、编辑图、嵌套同步 tiled、按通常等待规则等待已接受任务。协作执行的无关任务与清理临时隔离 tile 上下文。不要用禁止发布前“创建成功的 Draft”推断任务已经运行。
 - 结果保留状态, 来源, 原始 int/native code 和根因 Task ID. 主体返回值与已登记访问/外部错误相同时保留其详细来源; 不同业务返回值仍优先. 返回业务值 -5004 与实际未处理异常的来源可以区分. 失败依赖跳过节点, 独立兄弟继续收尾.
 - shutdown 拒绝新的外部根, 允许已接受作用域继续提交后代, 排空后 join. 已完成句柄在实例存活期间继续可查询, 不支持关闭后重启.
 - DOT 输出结构; 主机 trace 输出 Perfetto 可读 JSON. trace 默认关闭且不分配记录存储, 开启后固定容量记录, 满时统计丢失轨迹而不丢任务. GPU profiling 已接入独立设备时钟字段; 主机 callable wall 包含等待, 不冒充 CPU 利用率.
@@ -171,12 +174,12 @@ DMA 协议依据: [Linux DMA-BUF CPU access](https://docs.kernel.org/driver-api/
 参考 Claude/Sonnet 方案的设计思想, 保留原有完成与资源契约, 采用以下三项改进:
 
 - `Task/Tasks` 增加 `ready()/code()/wait()/waitFor()`. `code()` 不阻塞, 未完成返回 NotReady; 句柄 `wait*` 在等待成功后返回任务的原始错误码, 可同时取得 TaskResult. 等待超时/非法等待不改变 out. 后续第 8 节将 XFlow 的 C++ 等待语义一并统一. Draft、空句柄与拒绝结果各自保留原有错误语义.
-- 外部 tiled 调用者参与计算, 每次仍最多 4 个参与者, 包含 caller. caller 不套用 worker 的亲核性策略. 内联根记录保证只用 caller 的循环也参与 waitAll 快照、shutdown 和结构化后代完成; 不把调用者执行藏在仅统计 helper 的屏障外. 关闭后不接受新的外部循环.
+- 外部 tiled 调用者参与计算，每次最多 4 个参与者；caller 不套用 worker 亲核性。早期 inline root 的 waitAll 语义已由 B2 轻量 Job 取代：waitAll 只快照异步根，shutdown 同时排空外部同步 Job。关闭后不接受新的外部循环；停止中的已接受 managed Task 仍可完成其同步计算。排空不代替 SDK 使用方在 dlclose 前确认全部外部调用已返回。
 - worker 在完成任务并仅释放一个就绪后继时, 可迭代直接续跑该工作, 避免一次入队和许可通知. 每次 dispatch 最多连续 8 个任务; 已排队工作、挂起设备查询、tiled helper 均不进入该快路径. fan-out 保持正常排队, 每个直接后继仍遵循亲核性预算、完整清理和错误传播. 未引入工作窃取或 GPU DAG 提前提交.
 
-空闲 worker 退休暂不采用: 现有 worker ID/TID、亲核性查询与 trace 使用稳定槽位. 引入退休需要独立处理接受提交与最后 worker 退出的竞争, 锁外 join、代际及查询 pin; 应先测量 Android 驻留与首帧收益. 同样不移植原生 GPU callback、`.gpu()` 提前提交或方向式 cache hook.
+该历史阶段尚未实现空闲 worker 退休；当前整改已在 B3 确定默认 2 秒退休到 0。现有 worker ID/TID、亲核性查询与 trace 使用稳定槽位，须处理接受提交与最后退出竞争、锁外 join、代际及查询 pin；Android 驻留与首帧收益由用户后续验证。 同样不移植原生 GPU callback、`.gpu()` 提前提交或方向式 cache hook.
 
-新增验证覆盖句柄结果/超时、外部 caller 实际参与、首 helper 分配/建线程失败、managed 父任务串行退化、无 helper 的快照/关闭、关闭期间内联根后代提交, 以及连续后继让出队列和失败传播. 首次内联根登记异步完成前确保存在完成消费者, 不因尚无 worker 而停滞; 外部 caller 不计入忙碌 worker 的扩容估计.
+该历史版本的新增验证覆盖句柄结果/超时、外部 caller 实际参与、首 helper 分配/建线程失败、managed 父任务串行退化、无 helper 的快照/关闭、关闭期间内联根后代提交, 以及连续后继让出队列和失败传播. 首次内联根登记异步完成前确保存在完成消费者, 不因尚无 worker 而停滞; 外部 caller 不计入忙碌 worker 的扩容估计.
 
 最终版本验证 (2026-10-20 | 14:53): 全量 162/162 单测, 17 个 suite; CPU-only CTest 8/8; OpenCL CTest 11 项通过、1 项真实 GPU skipped; TSan 11/11; ASan/LSan 11/11, 未关闭泄漏扫描. 另通过 C/C++11 消费端、首次 worker 失败、关闭及双 .so 隔离. git diff --check 通过. 当前功能验证使用 Linux 主机与模型环境, 没有目标 GPU platform 或 Android 真机验收, 不据此声称设备性能提升.
 
@@ -217,7 +220,7 @@ return tailCode ? tailCode : groupCode;
 本轮基于 fbf15ff 继续整理, 没有新增生产文件、运行库依赖或调度状态机. 完成、结构化后代、GPU 查询、资源租约和 cache 访问契约继续沿用前文.
 
 - 删除自定义 PayloadStorage, 使用标准 unique_ptr 配合无状态、编译期尺寸/对齐的 deleter 管理未构造的闭包存储. 构造抛异常只归还字节, 不对未构造对象调用析构; make 仍在所有路径消费已经构造的 payload.
-- Node 工厂直接返回拥有初始引用的 NodeRef. 节点命名、簇入口构建、inline root 和 tiled helper 统一通过 RAII 回滚, 移除调用点手工 retain/release 配对. 只在 C ABI 输出时转交拥有引用.
+- Node 工厂直接返回拥有初始引用的 NodeRef. 节点命名、簇入口构建和 tiled helper 统一通过 RAII 回滚, 移除调用点手工 retain/release 配对. 只在 C ABI 输出时转交拥有引用.
 - Closure 明确只能移动, 防止误复制造成重复析构. Task 复制/移动赋值共用交换逻辑, 先更新自身句柄状态, 再释放旧引用; 覆盖自复制、自移动、共享引用及过对齐 move-only 闭包的恰好一次析构.
 - add/precede/setName 与 C ABI builder_error 共用首错登记逻辑. 当前操作返回自己的错误, 提交结果保留 Draft 的最早根因; 后续非法操作不写入已接受节点的构建状态. make 在参数非法时也清空有效 out, 并恰好消费 payload 一次.
 - worker 删除无人读取的有效 CPU 集合副本. 应用策略只保存应用版本/结果, 实际集合由 getWorkerAffinity 按需查询系统. 省去应用后的额外查询与容器分配, 不将查询错误混入策略应用结果.
@@ -266,3 +269,19 @@ return tailCode ? tailCode : aCode ? aCode : bCode;
 本轮审查继续保留 waitAll 的根快照向量. 它在锁外准备存储, 避免把每次完成都扫描活动图的开销引入锁内. 完成 reservation、资源租约、协作等待环检测、查询完成及 worker 稳定身份也继续保留; 这些机制对应已有的正确性要求. 进一步调整空闲退休、工作窃取或任务切分阈值, 应先取得目标 Android 负载的排队、执行、建线程和功耗数据.
 
 本轮验收 (2026-10-20 | 16:02): 全量 167/167 单测, 17 个 suite; CPU-only CTest 8/8; OpenCL CTest 11 项通过、1 项真实 GPU skipped; TSan 11/11; ASan/LSan 11/11, 保留泄漏扫描. 严格 C++11/C11 的 -Wall -Wextra -Werror -pedantic 检查通过. 新增测试覆盖不可复制/不可移动回调、const/普通函数/函数指针、过对齐槽位复用、构造失败回滚、并发分配回收与恰好一次析构. 未新增运行性能对测或 Android/真实 GPU 验收.
+
+## 11 整改 B0：生产与故障测试构建隔离
+
+正常 `aura` 与 `aura_testing` 分离，Android 链接使用 Threads target、动态库配置和 android/log，子工程测试默认关闭。当前主机 CPU-only 154/154 单测、10/10 CTest 通过；OpenCL 167/167 单测、13 项 CTest 通过、1 项真实 GPU skipped。生产与测试库的编译标志和符号已分别检查，生产 C API 消费者与父工程集成通过。严格 C11/C++11 语法检查通过。本轮不改调度语义，未新跑 sanitizer 或 Android 构建。完整证据与用户后续设备验收见 [B0 报告](flow_validation/B0-2026-10-20.md)。
+
+
+## 12. 2026-10-20 B1/B2：主机参考与同步 tiled 改造
+
+实施和原始结果见 [B1/B2 验证报告](flow_validation/B1-B2-2026-10-20.md)。整改总表继续在 [flow_remediation_plan.md](flow_remediation_plan.md) 维护。
+
+- `flow_microbenchmark` 是生产库的可选 CPU 测量入口，提供 101 样本的 p50/p95/max，分开测量 C++ new 次数/请求字节。空回调、1080p 行循环及合成三路扇出/汇合均验证返回码和图像结果。它不是 FlashPE 算子或业务帧测量；context switch 也不是 wakeup 次数。
+- 外部同步 Job 的接受/计数与 Stopping 共用 mMutex 裁定；Job RAII 在 helper 引用、循环及错误收尾后退出。无 helper 时也纳入 shutdown，不需要 worker 才能被管理。
+- helper 保留内部 Node 身份，以维持等待环与结构化父任务关系，但不再独立走 submit。池冷扩容仍可能分配；“预热无 C++ 分配”的测量不能推成任意调用无分配。
+- 每个 tile 的错误先在其执行线程上收集，然后按最小已执行失败 offset 合并。回调返回非零优先；转发相同错误保留 native/domain/cause，捕获异常与返回同值业务码区分。已开始的回调仍须结束。
+- tile 内需要异步 fan-out/GPU 的旧用法须移到外层普通 Task 中，再调用同步 tiled 处理纯计算；这是显式契约变化。单 Task 内的 GPU 连续 enqueue 及普通 DAG 完整完成边没有改变。
+- 8 tile 批量是当前测量候选，不承诺毫秒级抢占公平性。B3 的等待/查询者/线程退休尚未实施，不能从本批推断功耗或驻留改善。

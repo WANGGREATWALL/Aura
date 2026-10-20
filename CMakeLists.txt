@@ -9,7 +9,20 @@ set(AURA_VERSION_PATCH 0)
 set(AURA_VERSION "${AURA_VERSION_MAJOR}.${AURA_VERSION_MINOR}.${AURA_VERSION_PATCH}")
 
 project(Aura VERSION ${AURA_VERSION} LANGUAGES C CXX)
-include(CTest)
+# Do not create or overwrite a parent's BUILD_TESTING option when embedded.
+set(AURA_BUILD_TESTS_DEFAULT OFF)
+if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
+    include(CTest)
+    set(AURA_BUILD_TESTS_DEFAULT ${BUILD_TESTING})
+endif()
+option(AURA_BUILD_TESTS "Build Aura's own tests" ${AURA_BUILD_TESTS_DEFAULT})
+set(AURA_TESTS_ENABLED ${AURA_BUILD_TESTS})
+if(DEFINED BUILD_TESTING AND NOT BUILD_TESTING)
+    set(AURA_TESTS_ENABLED OFF)
+endif()
+if(AURA_TESTS_ENABLED)
+    enable_testing()
+endif()
 
 message(STATUS "***********************************************************")
 message(STATUS "*")
@@ -63,33 +76,42 @@ set(AURA_SOURCES
 # ============================================================================
 # Library
 # ============================================================================
-add_library(aura STATIC ${AURA_SOURCES})
-target_compile_definitions(aura PUBLIC AURA_STATIC)
-target_compile_features(aura PRIVATE cxx_std_17 INTERFACE cxx_std_11)
-set_target_properties(aura PROPERTIES POSITION_INDEPENDENT_CODE ON
-    CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
-find_package(Threads REQUIRED)
-target_link_libraries(aura PRIVATE Threads::Threads)
-target_include_directories(aura PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/inc
-    ${CMAKE_CURRENT_BINARY_DIR}/inc
-)
-target_include_directories(aura PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cJSON
-)
-
 option(ENABLE_OPENCL "Build optional dynamically loaded OpenCL 1.2 support" OFF)
 option(ENABLE_OPENCL_HARDWARE_TESTS "Run optional GPU hardware integration tests" OFF)
-if(ENABLE_OPENCL)
-    target_sources(aura PRIVATE src/gpu_helper/cl_symbols.cpp src/sys/opencl_runtime.cpp src/sys/opencl_memory.cpp src/sys/atomic_file.cpp src/gpu/program_cache.cpp src/gpu/opencl.cpp)
-    target_include_directories(aura PRIVATE src/gpu_helper)
-    target_compile_definitions(aura PRIVATE CL_TARGET_OPENCL_VERSION=120
-        CL_HPP_TARGET_OPENCL_VERSION=120 CL_HPP_MINIMUM_OPENCL_VERSION=120
-        CL_USE_DEPRECATED_OPENCL_1_1_APIS=1 CL_USE_DEPRECATED_OPENCL_1_2_APIS=1)
-else()
-    target_sources(aura PRIVATE src/gpu/opencl_unavailable.cpp)
-endif()
+find_package(Threads REQUIRED)
+
+# Production and fault-injection variants share all non-testing configuration.
+# A test-enabled build must never add fault hooks to the consumer-facing aura.
+function(aura_add_library target)
+    add_library(${target} STATIC ${AURA_SOURCES})
+    target_compile_definitions(${target} PUBLIC AURA_STATIC)
+    target_compile_features(${target} PRIVATE cxx_std_17 INTERFACE cxx_std_11)
+    set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON
+        CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+    target_include_directories(${target} PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/inc
+        ${CMAKE_CURRENT_BINARY_DIR}/inc
+    )
+    target_include_directories(${target} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cJSON
+    )
+    target_link_libraries(${target} PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    if(ANDROID)
+        target_link_libraries(${target} PRIVATE android log)
+    endif()
+    if(ENABLE_OPENCL)
+        target_sources(${target} PRIVATE src/gpu_helper/cl_symbols.cpp src/sys/opencl_runtime.cpp src/sys/opencl_memory.cpp src/sys/atomic_file.cpp src/gpu/program_cache.cpp src/gpu/opencl.cpp)
+        target_include_directories(${target} PRIVATE src/gpu_helper)
+        target_compile_definitions(${target} PRIVATE CL_TARGET_OPENCL_VERSION=120
+            CL_HPP_TARGET_OPENCL_VERSION=120 CL_HPP_MINIMUM_OPENCL_VERSION=120
+            CL_USE_DEPRECATED_OPENCL_1_1_APIS=1 CL_USE_DEPRECATED_OPENCL_1_2_APIS=1)
+    else()
+        target_sources(${target} PRIVATE src/gpu/opencl_unavailable.cpp)
+    endif()
+endfunction()
+
+aura_add_library(aura)
 
 # ============================================================================
 # Test options (set to OFF to disable individual unit tests)
@@ -108,20 +130,23 @@ option(ENABLE_TEST_XERROR    "Enable xerror unit test"    ON)
 option(ENABLE_TEST_XFILE     "Enable xfile unit test"     ON)
 option(ENABLE_TEST_XIMAGE    "Enable ximage unit test"    ON)
 option(ENABLE_TEST_XFLOW     "Enable xflow unit test"     ON)
-if(BUILD_TESTING AND ENABLE_TEST_XFLOW)
-    target_compile_definitions(aura PRIVATE AURA_FLOW_TESTING=1)
-endif()
-if(BUILD_TESTING AND ENABLE_OPENCL)
-    target_compile_definitions(aura PRIVATE AURA_GPU_TESTING=1)
-endif()
-if(BUILD_TESTING AND ENABLE_TEST_XMEMORY)
-    target_compile_definitions(aura PRIVATE AURA_MM_TESTING=1)
+if(AURA_TESTS_ENABLED)
+    aura_add_library(aura_testing)
+    if(ENABLE_TEST_XFLOW)
+        target_compile_definitions(aura_testing PRIVATE AURA_FLOW_TESTING=1)
+    endif()
+    if(ENABLE_OPENCL)
+        target_compile_definitions(aura_testing PRIVATE AURA_GPU_TESTING=1)
+    endif()
+    if(ENABLE_TEST_XMEMORY)
+        target_compile_definitions(aura_testing PRIVATE AURA_MM_TESTING=1)
+    endif()
 endif()
 
 # ============================================================================
 # Tests
 # ============================================================================
-if(BUILD_TESTING)
+if(AURA_TESTS_ENABLED)
 set(GTEST_SOURCES
     third_party/gtest/src/gtest-assertion-result.cpp
     third_party/gtest/src/gtest-death-test.cpp
@@ -187,7 +212,7 @@ target_include_directories(aura_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/gtest/include
 )
 
-target_link_libraries(aura_test PRIVATE aura)
+target_link_libraries(aura_test PRIVATE aura_testing)
 if(ENABLE_OPENCL)
     if(ENABLE_TEST_XFLOW AND ENABLE_TEST_XMEMORY)
         target_sources(aura_test PRIVATE test/test_xopencl.cpp)
@@ -199,7 +224,7 @@ if(ENABLE_OPENCL)
         target_compile_features(opencl_teardown_test PRIVATE cxx_std_17)
         target_include_directories(opencl_teardown_test PRIVATE src src/gpu_helper)
         target_compile_definitions(opencl_teardown_test PRIVATE AURA_GPU_TESTING=1 CL_TARGET_OPENCL_VERSION=120)
-        target_link_libraries(opencl_teardown_test PRIVATE aura)
+        target_link_libraries(opencl_teardown_test PRIVATE aura_testing)
         add_test(NAME flow_opencl_teardown COMMAND opencl_teardown_test)
         set_tests_properties(flow_opencl_teardown PROPERTIES TIMEOUT 60)
         if(ENABLE_OPENCL_HARDWARE_TESTS)
@@ -219,7 +244,7 @@ if(ENABLE_OPENCL)
     add_test(NAME opencl_loader COMMAND opencl_loader_test)
 endif()
 
-if(BUILD_TESTING AND ENABLE_TEST_XFLOW)
+if(ENABLE_TEST_XFLOW)
     add_test(NAME flow_unit COMMAND aura_test --gtest_filter=XFlow.*)
     if(ENABLE_TEST_XMEMORY)
         add_test(NAME flow_gpu_pending COMMAND aura_test --gtest_filter=XGpu.*)
@@ -233,15 +258,25 @@ if(BUILD_TESTING AND ENABLE_TEST_XFLOW)
     add_executable(flow_cxx11_test test/flow_cxx11.cpp)
     target_include_directories(flow_cxx11_test PRIVATE src)
     set_target_properties(flow_cxx11_test PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
-    target_link_libraries(flow_cxx11_test PRIVATE aura)
+    target_link_libraries(flow_cxx11_test PRIVATE aura_testing)
     add_test(NAME flow_cxx11 COMMAND flow_cxx11_test)
     add_test(NAME flow_worker_failure COMMAND flow_cxx11_test worker-failure)
     add_executable(flow_c_api_test test/flow_c_api.c)
     set_target_properties(flow_c_api_test PROPERTIES LINKER_LANGUAGE CXX)
-    target_link_libraries(flow_c_api_test PRIVATE aura)
+    target_link_libraries(flow_c_api_test PRIVATE aura_testing)
     add_test(NAME flow_c_api COMMAND flow_c_api_test)
+    # Exercise the same public C consumer against the actual production archive.
+    add_executable(flow_production_test test/flow_c_api.c)
+    set_target_properties(flow_production_test PROPERTIES LINKER_LANGUAGE CXX)
+    target_link_libraries(flow_production_test PRIVATE aura)
+    add_test(NAME flow_production COMMAND flow_production_test)
+    if(CMAKE_NM AND NOT MSVC)
+        add_test(NAME flow_production_symbols COMMAND ${CMAKE_COMMAND}
+            "-DAURA_NM=${CMAKE_NM}" "-DAURA_LIBRARY=$<TARGET_FILE:aura>"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/test/flow_production_symbols.cmake)
+    endif()
     add_executable(flow_shutdown_test test/flow_shutdown.cpp)
-    target_link_libraries(flow_shutdown_test PRIVATE aura)
+    target_link_libraries(flow_shutdown_test PRIVATE aura_testing)
     target_compile_features(flow_shutdown_test PRIVATE cxx_std_17)
     add_test(NAME flow_shutdown COMMAND flow_shutdown_test)
     set_tests_properties(flow_shutdown PROPERTIES TIMEOUT 30)
@@ -255,7 +290,7 @@ if(BUILD_TESTING AND ENABLE_TEST_XFLOW)
                 target_include_directories(${plugin} PRIVATE src/gpu_helper)
                 target_compile_definitions(${plugin} PRIVATE AURA_GPU_TESTING=1 CL_TARGET_OPENCL_VERSION=120)
             endif()
-            target_link_libraries(${plugin} PRIVATE aura)
+            target_link_libraries(${plugin} PRIVATE aura_testing)
         endforeach()
         add_executable(flow_isolation_test test/flow_isolation.cpp)
         target_include_directories(flow_isolation_test PRIVATE inc)
@@ -264,27 +299,16 @@ if(BUILD_TESTING AND ENABLE_TEST_XFLOW)
             $<TARGET_FILE:flow_plugin_a> $<TARGET_FILE:flow_plugin_b>)
     endif()
 endif()
-endif() # BUILD_TESTING
+endif() # AURA_TESTS_ENABLED
 
 option(ENABLE_FLOW_BENCHMARKS "Build optional host flow measurement executable" OFF)
 if(ENABLE_FLOW_BENCHMARKS)
     add_executable(flow_benchmark test/flow_benchmark.cpp)
     target_link_libraries(flow_benchmark PRIVATE aura)
     target_compile_features(flow_benchmark PRIVATE cxx_std_17)
-endif()
-
-# Platform-specific link libraries
-if(ANDROID)
-    target_link_libraries(aura PRIVATE android)
-endif()
-if(UNIX AND NOT APPLE)
-    target_link_libraries(aura PRIVATE dl pthread)
-    if(TARGET aura_test)
-        target_link_libraries(aura_test PRIVATE pthread)
-    endif()
-endif()
-if(APPLE)
-    target_link_libraries(aura PRIVATE dl)
+    add_executable(flow_microbenchmark test/flow_microbenchmark.cpp)
+    target_link_libraries(flow_microbenchmark PRIVATE aura)
+    target_compile_features(flow_microbenchmark PRIVATE cxx_std_17)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -299,7 +323,7 @@ if(ENABLE_ASAN AND ENABLE_TSAN)
 endif()
 
 if(ENABLE_ASAN)
-    foreach(target IN ITEMS aura aura_test flow_cxx11_test flow_c_api_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_benchmark)
+    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_benchmark flow_microbenchmark)
         if(TARGET ${target})
             target_compile_options(${target} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
             target_link_options(${target} PRIVATE -fsanitize=address)
@@ -309,7 +333,7 @@ if(ENABLE_ASAN)
 endif()
 
 if(ENABLE_TSAN)
-    foreach(target IN ITEMS aura aura_test flow_cxx11_test flow_c_api_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_benchmark)
+    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_benchmark flow_microbenchmark)
         if(TARGET ${target})
             target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer -g)
             target_link_options(${target} PRIVATE -fsanitize=thread)

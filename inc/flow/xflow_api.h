@@ -77,7 +77,12 @@ void au_flow_record_exception(void) AU_FLOW_NOEXCEPT;
  * Inspect out->mCode for the task result. C++ wait methods combine both codes. */
 int au_flow_wait(au_flow_handle handle, uint64_t timeoutMs,
                  au_flow_result* out) AU_FLOW_NOEXCEPT;
+/* Snapshot of asynchronous roots/descendants, excluding external synchronous
+ * tiled Jobs. shutdown drains both. wait_all/shutdown from a tile are invalid. */
 int au_flow_wait_all(void) AU_FLOW_NOEXCEPT;
+/* Synchronous borrowed callback. Async task/GPU publication inside a tile is
+ * rejected and recorded by the loop, including on the caller/serial paths.
+ * Draft editing and nested synchronous tiled calls remain legal. */
 int au_flow_tiled(size_t range, size_t tile, au_flow_tile invoke,
                   void* payload) AU_FLOW_NOEXCEPT;
 int au_flow_affinity(uint32_t mode, const uint32_t* cpus, size_t count) AU_FLOW_NOEXCEPT;
