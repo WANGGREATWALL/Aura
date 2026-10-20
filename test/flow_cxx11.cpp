@@ -1,6 +1,8 @@
 #include "flow/xflow.h"
 #include "flow/testing.h"
 #include <memory>
+#include "cv/ximage_access.h"
+#include "gpu/xopencl.h"
 
 namespace {
 int ordinary(int& result) { result = 11; return 0; }
@@ -11,6 +13,16 @@ struct Module {
 int main(int argc, char**)
 {
     au::flow::XFlow& flow = au::flow::XFlow::get();
+    if (::au_gpu_opencl_version() != AURA_GPU_OPENCL_ABI_VERSION) return 10;
+    const au::gpu::Launch launch = au::gpu::CLWrapper::get().setNDRange({32, 16}, {8, 4});
+    (void)launch;
+    unsigned char storage[128] = {};
+    au::mm::ExternalMemory registration;
+    ::au_mm_external_memory memory = {};
+    memory.mStructSize = sizeof(memory); memory.mData = storage; memory.mSize = sizeof(storage); memory.mFd = -1;
+    if (registration.registerMemory(memory)) return 9;
+    au::mm::CpuAccessScope access;
+    if (access.begin({au::mm::writeAccess(storage, sizeof(storage))}) || access.finish()) return 9;
     if (argc > 1) {
         au::flow::testing::failAfter(au::flow::testing::Failure::Worker, 0);
         au::flow::Task rejected = flow.enqueue([]() -> int { return 0; });

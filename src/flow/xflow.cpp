@@ -21,15 +21,18 @@
 #include "flow/trace_buffer.h"
 #include "flow/testing.h"
 #include "flow/completion.h"
+#include "flow/payload_pool.h"
+#include "mm/access_context.h"
+#include "mm/registry.h"
 #include "log/xlogger.h"
 #include "perf/xperf.h"
 #include "sys/flow_runtime.h"
 
 namespace au {
-namespace flow {
+namespace flow AU_LOCAL {
 namespace detail {
 
-class Core;
+class AU_LOCAL Core;
 struct Node;
 void retain(au::flow::detail::Node*) noexcept;
 void release(au::flow::detail::Node*) noexcept;
@@ -75,7 +78,7 @@ enum class Kind { Work, Group, Entry };
 struct CreateFailure { int mCode; };
 
 struct Node {
-    Node(au::flow::detail::Core* owner, std::uint64_t id, au::flow::detail::Kind kind) noexcept
+    Node(au::flow::detail::Core* owner, std::uint64_t id, au::flow::detail::Kind kind)
         : mOwner(owner), mId(id), mKind(kind)
     { mReady.mValue = this; }
     std::atomic<std::size_t> mRefs{1};
@@ -92,6 +95,9 @@ struct Node {
     au::flow::detail::NodeRef mEntry;
     au::flow::detail::NodeRef mGate;
     au::flow::detail::NodeRef mParent;
+    au::flow::detail::Edge* mDynamicChildren = nullptr; // Diagnostic edges only, protected for prepend by Core::mMutex.
+    bool mGraphCaptured = false; // Immutable after acceptance; tracing opt-in is inherited by structured descendants.
+    std::atomic<std::size_t> mGraphDropped{0};
     au::flow::detail::Node* mGroup = nullptr; // Borrowed; group owns its draft members.
     int mBuildError = 0;
     std::atomic<au::flow::detail::Edge*> mSuccessors{nullptr};
@@ -123,6 +129,7 @@ struct Node {
 struct Frame {
     au::flow::detail::Node* mNode;
     au::flow::detail::Frame* mPrevious;
+    bool mCpuActive = false; // Logical callable slice, suspended at known scheduler/device waits.
 };
 struct ExternalToken {
     au::flow::detail::Core* mCore = nullptr;
@@ -144,6 +151,7 @@ thread_local au::flow::detail::Frame* gFrame = nullptr;
 thread_local int gWorker = -1;
 thread_local unsigned int gDepth = 0;
 thread_local unsigned int gTileDepth = 0;
+thread_local unsigned int gCleanupDepth = 0;
 thread_local au::flow::detail::Node* gFinish = nullptr;
 thread_local bool gFinishing = false;
 thread_local au::flow::detail::Node* gReclaim = nullptr;
@@ -151,7 +159,8 @@ thread_local bool gReclaiming = false;
 thread_local unsigned int gCompletionBurst = 0;
 
 #ifdef AURA_FLOW_TESTING
-std::array<std::atomic<int>, 3> gFailure{{-1, -1, -1}};
+std::array<std::atomic<int>, 5> gFailure{{-1, -1, -1, -1, -1}};
+std::atomic<std::size_t> gOutstandingLimit{SIZE_MAX};
 std::atomic<au::flow::testing::SnapshotHook*> gSnapshotHook{nullptr};
 bool fail(au::flow::testing::Failure failure) noexcept
 {
@@ -164,13 +173,65 @@ bool fail(au::flow::testing::Failure failure) noexcept
 }
 #endif
 
+bool reserveOutstanding(au::flow::detail::Node* node) noexcept
+{
+    std::size_t limit = SIZE_MAX;
+#ifdef AURA_FLOW_TESTING
+    limit = au::flow::detail::gOutstandingLimit.load(std::memory_order_relaxed); // Fault-model ceiling only.
+#endif
+    std::size_t current = node->mOutstanding.load(std::memory_order_relaxed);
+    do {
+        if (current >= limit) return false;
+    } while (!node->mOutstanding.compare_exchange_weak(current, current + 1, std::memory_order_relaxed));
+    // Reservation only: the accepting body keeps the parent alive. Last release
+    // is acq_rel and gathers each child's/event's independently published writes.
+    return true;
+}
 bool finalState(au::flow::TaskState state) noexcept
 { return state >= au::flow::TaskState::Succeeded; }
 
-class Core {
+namespace {
+// Internal linkage also localizes libstdc++'s generated thread-state vtable.
+// A member lambda can leave that vtable preemptible across RTLD_GLOBAL plugins
+// even when the worker function itself has hidden visibility.
+struct WorkerEntry {
+    au::flow::detail::Core* mCore;
+    std::size_t mId;
+    void operator()() const noexcept;
+};
+}
+
+class AU_LOCAL Core {
 public:
+    au::flow::detail::PayloadPool& payloads() noexcept { return mPayloads; }
+    au::mm::detail::AccessErrorSink memorySink(bool mayWait = true) noexcept
+    {
+        return {[](void* payload, int code, int native, std::uint64_t cause, bool device) noexcept {
+            static_cast<au::flow::detail::Core*>(payload)->scopedError(code,
+                device ? au::flow::ErrorDomain::OpenCL : au::flow::ErrorDomain::Memory, native, cause);
+        }, this, mayWait};
+    }
+    class CleanupExtent {
+    public:
+        CleanupExtent(au::flow::detail::Core* core, au::flow::detail::Node* node) noexcept
+            : mFrame{node, au::flow::detail::gFrame}, mSink(au::mm::detail::setAccessErrorSink(core->memorySink(false)))
+        { au::flow::detail::gFrame = node ? &mFrame : nullptr; ++au::flow::detail::gCleanupDepth; }
+        ~CleanupExtent() noexcept
+        {
+            --au::flow::detail::gCleanupDepth; au::flow::detail::gFrame = mFrame.mPrevious;
+            au::mm::detail::setAccessErrorSink(mSink);
+        }
+        CleanupExtent(const CleanupExtent&) = delete;
+        CleanupExtent& operator=(const CleanupExtent&) = delete;
+    private:
+        au::flow::detail::Frame mFrame;
+        au::mm::detail::AccessErrorSink mSink;
+    };
     Core() noexcept
     {
+        // Construct mm first so structured cleanup during static shutdown never
+        // discovers an already destroyed owner registry. No workers are created.
+        (void)au::mm::Registry::instance();
         if (au::sys::flow::allowedCpus(mAllowed) != 0) {
             // A query failure must not turn a usable CPU scheduler into an error.
             mBudget.store(1, std::memory_order_relaxed); // Not shared during construction.
@@ -193,20 +254,31 @@ public:
         catch (...) { mNodes.destroy(node); throw; }
         return node;
     }
-    void recycle(au::flow::detail::Node* node) noexcept { mNodes.destroy(node); }
+    void recycle(au::flow::detail::Node* node) noexcept
+    {
+        while (node->mDynamicChildren) {
+            auto* edge = node->mDynamicChildren; node->mDynamicChildren = edge->mNext; mEdges.destroy(edge);
+        }
+        mNodes.destroy(node); // Iterative NodeRef reclamation also handles retained diagnostic descendants.
+    }
     bool owns(const au::flow::detail::Node* node) const noexcept { return node && node->mOwner == this; }
-    void scopedError(int code, au::flow::ErrorDomain domain = au::flow::ErrorDomain::Flow) noexcept
+    void scopedError(int code, au::flow::ErrorDomain domain = au::flow::ErrorDomain::Flow, int native = 0,
+                     std::uint64_t cause = 0) noexcept
     {
         if (!code || !au::flow::detail::gFrame) return;
         au::flow::detail::Node* node = au::flow::detail::gFrame->mNode;
         std::lock_guard<std::mutex> lock(node->mErrorMutex);
-        if (!node->mScoped.mCode) node->mScoped = result(node, code, domain);
+        if (!node->mScoped.mCode) {
+            node->mScoped = result(node, code, domain); node->mScoped.mNativeCode = native;
+            if (cause) node->mScoped.mCauseTaskId = cause;
+        }
     }
     int prepareExternal(const au::flow::detail::ExternalOps& ops, void* payload,
                         au::flow::detail::ExternalToken** out) noexcept
     {
         if (!out || !ops.mRelease) return au::err::kErrorInvalidParam;
         *out = nullptr;
+        if (au::flow::detail::gCleanupDepth) return au::err::kErrorStateInvalid;
         if (!au::flow::detail::gFrame) return 0;
         au::flow::detail::ExternalToken* token = nullptr;
         try {
@@ -216,10 +288,11 @@ public:
             token->mOps = ops; token->mPayload = payload; token->mLink.mValue = token;
             {
                 std::lock_guard<std::mutex> lock(mMutex);
-                if (mOrder == UINT64_MAX) { mExternal.destroy(token); return au::err::kErrorOverflow; }
+                if (mOrder == UINT64_MAX || !au::flow::detail::reserveOutstanding(token->mParent.get())) {
+                    mExternal.destroy(token); return au::err::kErrorOverflow;
+                }
                 token->mOrder = ++mOrder;
             }
-            token->mParent->mOutstanding.fetch_add(1, std::memory_order_relaxed); // Body reservation pins this scope.
             *out = token;
             return 0;
         } catch (...) {
@@ -246,6 +319,7 @@ public:
     bool consumeExternal(au::flow::detail::ExternalToken* token) noexcept
     {
         if (token->mRegistrar.load(std::memory_order_acquire)) return false; // Registration may still touch payload/event.
+        au::flow::detail::Core::CleanupExtent extent(this, token->mParent.get());
         if (token->mNotification.load(std::memory_order_acquire) != 2 &&
             token->mPolling.load(std::memory_order_acquire) && token->mOps.mPoll) {
             bool done = false;
@@ -256,8 +330,10 @@ public:
                 {
                     std::lock_guard<std::mutex> lock(token->mParent->mErrorMutex);
                     if (!token->mParent->mScoped.mCode) {
-                        token->mParent->mScoped = result(token->mParent.get(), query, au::flow::ErrorDomain::OpenCL);
+                        token->mParent->mScoped = result(token->mParent.get(), query, status.mDomain == au::flow::ErrorDomain::None
+                            ? au::flow::ErrorDomain::OpenCL : status.mDomain);
                         token->mParent->mScoped.mNativeCode = status.mNativeCode;
+                        if (status.mCauseTaskId) token->mParent->mScoped.mCauseTaskId = status.mCauseTaskId;
                         first = true;
                     }
                 }
@@ -281,6 +357,7 @@ public:
         if (status.mCode) {
             au_flow_result failure = result(parent.get(), status.mCode, status.mDomain);
             failure.mNativeCode = status.mNativeCode;
+            if (status.mCauseTaskId) failure.mCauseTaskId = status.mCauseTaskId;
             inherit(parent.get(), failure, token->mOrder);
         }
         mExternal.destroy(token);
@@ -420,12 +497,21 @@ public:
     {
         int ret = 0;
         int native = 0;
-        if (!owns(top)) ret = au::err::kErrorInvalidHandle;
+        if (au::flow::detail::gCleanupDepth) ret = au::flow::kErrorWouldDeadlock;
+        else if (!owns(top)) ret = au::err::kErrorInvalidHandle;
         else if (top->mState.load(std::memory_order_acquire) != au::flow::TaskState::Draft || top->mGroup)
             ret = au::err::kErrorStateInvalid;
         if (ret) { scopedError(ret); return ret; }
         std::vector<Prepared> batch;
         std::vector<Registration> registrations;
+        std::unique_ptr<au::flow::detail::Edge, EdgeOwner> diagnostic(nullptr, EdgeOwner{this});
+        const auto* dynamicParent = au::flow::detail::gFrame ? au::flow::detail::gFrame->mNode : nullptr;
+        const bool captureGraph = mTracing.load(std::memory_order_relaxed) || (dynamicParent && dynamicParent->mGraphCaptured);
+        bool diagnosticDropped = false;
+        if (captureGraph && dynamicParent) {
+            try { diagnostic.reset(mEdges.create()); diagnostic->mTarget = au::flow::detail::NodeRef(top); }
+            catch (...) { diagnosticDropped = true; } // Losing diagnostics cannot reject work.
+        }
         try {
             batch.push_back({top, au::flow::detail::gFrame ? au::flow::detail::gFrame->mNode : nullptr, nullptr, {}});
             for (std::size_t i = 0; i < batch.size(); ++i) {
@@ -435,6 +521,7 @@ public:
                     ret = au::err::kErrorStateInvalid; break;
                 }
                 if (node->mKind == au::flow::detail::Kind::Group) {
+                    if (node->mMembers.size() == SIZE_MAX) { ret = au::err::kErrorOverflow; break; }
                     au::flow::detail::Node* entry = node->mEntry.get();
                     Prepared gate{entry, node, batch[i].mGate, {}};
                     for (const auto& pred : node->mPreds) gate.mPreds.push_back(pred.get());
@@ -500,21 +587,31 @@ public:
                 }
                 if (mPhase == Phase::Closed || (mPhase == Phase::Stopping && !batch[0].mParent))
                     ret = au::err::kErrorStateInvalid;
-                else if (mOrder > UINT64_MAX - batch.size() || (!batch[0].mParent && mRootOrder == UINT64_MAX))
+                else if (mOrder > UINT64_MAX - batch.size() || (!batch[0].mParent && mRootOrder == UINT64_MAX) ||
+                         mAccepted > SIZE_MAX - batch.size())
                     ret = au::err::kErrorOverflow;
-                else if (!ret) {
+#ifdef AURA_FLOW_TESTING
+                else if (au::flow::detail::fail(au::flow::testing::Failure::Order)) ret = au::err::kErrorOverflow;
+#endif
+                if (!ret && batch[0].mParent && !au::flow::detail::reserveOutstanding(batch[0].mParent))
+                    ret = au::err::kErrorOverflow;
+                if (!ret) {
                     const std::uint64_t rootOrder = batch[0].mParent ? 0 : ++mRootOrder;
+                    if (diagnostic) {
+                        diagnostic->mNext = batch[0].mParent->mDynamicChildren;
+                        batch[0].mParent->mDynamicChildren = diagnostic.release();
+                    }
+                    if (diagnosticDropped) batch[0].mParent->mGraphDropped.fetch_add(1, std::memory_order_relaxed); // Diagnostic only.
+
                     for (const Prepared& p : batch) {
                         au::flow::detail::Node* node = p.mNode;
-                        node->mOrder = ++mOrder;
+                        node->mOrder = ++mOrder; node->mGraphCaptured = captureGraph;
                         node->mRootOrder = node == top ? rootOrder : 0;
                         node->mParent = au::flow::detail::NodeRef(p.mParent);
                         node->mGate = au::flow::detail::NodeRef(p.mGate);
                         node->mUnresolved.store(p.mPreds.size(), std::memory_order_relaxed); // Before commit release.
                         node->mOutstanding.store(node->mKind == Kind::Group ? node->mMembers.size() + 1 : 1,
                                                  std::memory_order_relaxed); // Children + entry, or body reservation.
-                        if (node == top && p.mParent)
-                            p.mParent->mOutstanding.fetch_add(1, std::memory_order_relaxed); // Parent body pins the scope.
                         au::flow::detail::retain(node); // Accepted reference; released after final propagation.
                         node->mActiveNext = mActive;
                         if (mActive) mActive->mActivePrev = node;
@@ -606,12 +703,23 @@ public:
         au::flow::detail::gFinishing = true;
         while (au::flow::detail::gFinish) {
             node = au::flow::detail::gFinish; au::flow::detail::gFinish = node->mFinishNext;
-            node->mClosure.clear(); // User destructors run without scheduler/error locks.
+            {
+                au::flow::detail::Core::CleanupExtent extent(this, node);
+                node->mClosure.clear(); // No locks; cleanup cannot extend a closed body reservation.
+            }
             {
                 std::lock_guard<std::mutex> lock(node->mErrorMutex);
                 node->mResult = node->mBodyCode ? result(node, node->mBodyCode, node->mBodyDomain)
                     : node->mScoped.mCode ? node->mScoped : node->mInherited.mCode ? node->mInherited
                     : result(node, 0, au::flow::ErrorDomain::None);
+                // Preserve the callable's chosen int. When it forwards the
+                // same reported failure, retain native provenance instead of
+                // erasing it merely because it crossed an int-returning API.
+                if (node->mBodyCode && node->mBodyDomain == au::flow::ErrorDomain::Callable) {
+                    if (node->mScoped.mCode == node->mBodyCode) node->mResult = node->mScoped;
+                    else if (node->mInherited.mCode == node->mBodyCode && node->mInherited.mCauseTaskId == node->mId)
+                        node->mResult = node->mInherited;
+                }
                 node->mResult.mState = static_cast<std::uint32_t>(node->mSkipped ? au::flow::TaskState::Skipped
                     : node->mResult.mCode ? au::flow::TaskState::Failed : au::flow::TaskState::Succeeded);
             }
@@ -669,11 +777,20 @@ public:
         au::flow::detail::ReadyLink* link = nullptr;
         bool overflowFirst = false;
         bool completion = false;
+        unsigned int attempts = 0;
         for (;;) {
             if (au::flow::detail::gCompletionBurst < 8 && mCompletions.pop(link, overflowFirst)) { completion = true; break; }
             if (mReady.pop(link, overflowFirst)) break;
             if (mCompletions.pop(link, overflowFirst)) { completion = true; break; }
             if (mStop.load(std::memory_order_acquire)) return false; // Shutdown control permits have no queue item.
+            if (++attempts == 8) {
+                if (!blocking || (deadline != std::chrono::steady_clock::time_point::max() &&
+                    std::chrono::steady_clock::now() >= deadline)) {
+                    mWork.post(); // Return the permit, never lose it. A paused publisher cannot trap a timed/cooperative wait here.
+                    return false;
+                }
+                attempts = 0;
+            }
             overflowFirst = !overflowFirst;
             std::this_thread::yield(); // Keep the acquired permit across transient publication gaps.
         }
@@ -691,6 +808,7 @@ public:
     }
     void run(au::flow::detail::Node* node) noexcept
     {
+        au::flow::detail::CpuSlicePause outerSlice;
         au::flow::detail::NodeRef pin(node);
         node->mState.store(au::flow::TaskState::Running, std::memory_order_release);
         Frame frame{node, au::flow::detail::gFrame};
@@ -699,11 +817,13 @@ public:
             frame.mPrevious->mNode->mExecutingChild = node;
         }
         au::flow::detail::gFrame = &frame;
+        const auto memorySink = au::mm::detail::setAccessErrorSink(this->memorySink());
         const unsigned int tileDepth = au::flow::detail::gTileDepth;
         au::flow::detail::gTileDepth = 0; ++au::flow::detail::gDepth;
         mBusy.fetch_add(1, std::memory_order_relaxed); // May count cooperative stacks, bounded by worker count when scaling.
         int code = 0;
-        trace(node, "CPU", 'B');
+        trace(node, "callable wall", 'B'); // Includes all waits inside the function.
+        frame.mCpuActive = true; trace(node, "CPU slice", 'B'); // Excludes known waits; not OS scheduled CPU time.
         if (node->mClosure.mInvoke) {
             try {
                 if (mTracing.load(std::memory_order_relaxed)) {
@@ -716,7 +836,9 @@ public:
                 node->mBodyDomain = au::flow::ErrorDomain::Flow;
             }
         }
-        trace(node, "CPU", 'E', code);
+        if (frame.mCpuActive) { trace(node, "CPU slice", 'E', code); frame.mCpuActive = false; }
+        trace(node, "callable wall", 'E', code);
+        au::mm::detail::setAccessErrorSink(memorySink);
         mBusy.fetch_sub(1, std::memory_order_relaxed);
         --au::flow::detail::gDepth; au::flow::detail::gTileDepth = tileDepth;
         au::flow::detail::gFrame = frame.mPrevious;
@@ -739,10 +861,13 @@ public:
 
     int wait(au::flow::detail::Node* node, std::uint64_t timeout, au_flow_result* out) noexcept
     {
+        au::flow::detail::CpuSlicePause waiting;
         if (!owns(node)) return au::err::kErrorInvalidHandle;
         au::flow::detail::NodeRef pin(node);
         if (node->mState.load(std::memory_order_acquire) == au::flow::TaskState::Draft) return au::err::kErrorNotReady;
         if (out && out->mStructSize != sizeof(au_flow_result)) return au::err::kErrorVersionMismatch;
+        if (au::flow::detail::gCleanupDepth && !au::flow::detail::finalState(node->mState.load(std::memory_order_acquire)))
+            return au::flow::kErrorWouldDeadlock;
         const auto now = std::chrono::steady_clock::now();
         const auto maxMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::time_point::max() - now).count();
@@ -780,7 +905,7 @@ public:
     }
     int waitAll() noexcept
     {
-        if (au::flow::detail::gFrame) return au::flow::kErrorWouldDeadlock;
+        if (au::flow::detail::gFrame || au::flow::detail::gCleanupDepth) return au::flow::kErrorWouldDeadlock;
         try {
             std::uint64_t watermark;
             std::size_t count = 0;
@@ -807,7 +932,7 @@ public:
 
     int shutdown() noexcept
     {
-        if (au::flow::detail::gFrame) return au::flow::kErrorWouldDeadlock;
+        if (au::flow::detail::gFrame || au::flow::detail::gCleanupDepth) return au::flow::kErrorWouldDeadlock;
         std::lock_guard<std::mutex> closing(mCloseMutex);
         {
             std::unique_lock<std::mutex> lock(mMutex);
@@ -854,7 +979,7 @@ public:
         if (mWorkerCount == mWorkers.size()) return 0;
         const std::size_t id = mWorkerCount;
         try {
-            mWorkers[id].mThread = std::thread([this, id] { workerLoop(id); });
+            mWorkers[id].mThread = std::thread(au::flow::detail::WorkerEntry{this, id});
             ++mWorkerCount;
             return 0;
         } catch (const std::system_error& error) {
@@ -920,6 +1045,7 @@ public:
             {
                 std::lock_guard<std::mutex> lock(mWorkerMutex);
                 if (mClosingQueries) return au::err::kErrorStateInvalid;
+                if (mPolicyVersion == UINT64_MAX) return au::err::kErrorOverflow;
                 mPolicy = std::move(selected); ++mPolicyVersion;
                 mBudget.store(std::max<std::size_t>(1, std::min<std::size_t>(8,
                     mode ? mPolicy.size() : mAllowed.size())), std::memory_order_release); // New dispatch budget.
@@ -968,21 +1094,76 @@ public:
         if (!owns(top)) return au::err::kErrorInvalidHandle;
         if (!path) return au::err::kErrorNullPointer;
         try {
-            std::ostringstream text;
-            text << "digraph AuraFlow {\n";
-            std::vector<au::flow::detail::Node*> todo{top};
-            std::unordered_set<au::flow::detail::Node*> seen;
+            struct Snapshot {
+                NodeRef mNode;
+                std::vector<std::uint64_t> mChildren;
+                std::vector<std::uint64_t> mMembers;
+                au::flow::TaskState mState;
+            };
+            std::vector<NodeRef> todo{NodeRef(top)};
+            std::vector<Snapshot> snapshots;
+            std::unordered_map<std::uint64_t, std::size_t> seen;
+            std::size_t dropped = 0;
             while (!todo.empty()) {
-                au::flow::detail::Node* n = todo.back(); todo.pop_back();
-                if (!seen.insert(n).second) continue;
-                text << "  n" << n->mId << " [label=\"";
-                for (char c : n->mName) {
-                    if (c == '"' || c == '\\') text << '\\';
-                    if (c == '\n' || c == '\r') text << "\\n"; else text << c;
+                NodeRef pin = std::move(todo.back()); todo.pop_back();
+                auto* node = pin.get();
+                if (!seen.emplace(node->mId, snapshots.size()).second) continue;
+                Snapshot item{std::move(pin), {}, {}, node->mState.load(std::memory_order_acquire)};
+                // The parent pin retains the immutable list tail. Only prepend
+                // needs the short lock; traversal, strings and I/O stay outside.
+                Edge* children;
+                { std::lock_guard<std::mutex> lock(mMutex); children = node->mDynamicChildren; }
+                for (auto* edge = children; edge; edge = edge->mNext) {
+                    item.mChildren.push_back(edge->mTarget->mId); todo.emplace_back(edge->mTarget);
                 }
-                text << " #" << n->mId << "\"];\n";
-                for (const auto& p : n->mPreds) { text << "  n" << p->mId << " -> n" << n->mId << ";\n"; todo.push_back(p.get()); }
-                for (const auto& c : n->mMembers) { text << "  n" << n->mId << " -> n" << c->mId << " [style=dashed];\n"; todo.push_back(c.get()); }
+                for (const auto& member : node->mMembers) {
+                    item.mMembers.push_back(member->mId); todo.emplace_back(member);
+                }
+                for (const auto& pred : node->mPreds) todo.emplace_back(pred);
+                dropped += node->mGraphDropped.load(std::memory_order_relaxed);
+                snapshots.push_back(std::move(item));
+            }
+            auto quote = [](std::ostream& output, const std::string& name) {
+                for (char c : name) {
+                    if (c == '\"' || c == '\\') output << '\\';
+                    if (c == '\n' || c == '\r') output << "\\n"; else output << c;
+                }
+            };
+            std::ostringstream text;
+            text << "digraph AuraFlow {\n  graph [label=\"dynamic capture=" << (top->mGraphCaptured ? "enabled" : "disabled")
+                << "; per-node snapshot; dropped=" << dropped << "\"];\n";
+            std::unordered_set<std::uint64_t> nested;
+            for (const auto& item : snapshots) {
+                const auto* node = item.mNode.get();
+                text << "  n" << node->mId << " [label=\""; quote(text, node->mName);
+                text << " #" << node->mId << "\",state=" << static_cast<unsigned int>(item.mState);
+                if (node->mKind == Kind::Group) text << ",shape=box";
+                if (au::flow::detail::finalState(item.mState) && node->mResult.mCode)
+                    text << ",color=red,error=" << node->mResult.mCode << ",cause=\"" << node->mResult.mCauseTaskId << '\"';
+                text << "];\n";
+                for (const auto& pred : node->mPreds) text << "  n" << pred->mId << " -> n" << node->mId << ";\n";
+                for (auto member : item.mMembers) {
+                    text << "  n" << node->mId << " -> n" << member << " [style=dashed,label=\"member\"];\n";
+                    if (snapshots[seen.at(member)].mNode->mKind == Kind::Group) nested.insert(member);
+                }
+                for (auto child : item.mChildren)
+                    text << "  n" << node->mId << " -> n" << child << " [style=dotted,label=\"structured child\"];\n";
+            }
+            struct Cluster { std::size_t mIndex; bool mClose; };
+            std::vector<Cluster> stack;
+            for (std::size_t i = 0; i < snapshots.size(); ++i)
+                if (snapshots[i].mNode->mKind == Kind::Group && !nested.count(snapshots[i].mNode->mId)) stack.push_back({i, false});
+            while (!stack.empty()) {
+                const auto event = stack.back(); stack.pop_back();
+                if (event.mClose) { text << "  }\n"; continue; }
+                const auto& item = snapshots[event.mIndex];
+                text << "  subgraph cluster_" << item.mNode->mId << " { label=\""; quote(text, item.mNode->mName); text << "\";\n";
+                text << "    n" << item.mNode->mId << ";\n"; stack.push_back({event.mIndex, true});
+                for (auto member : item.mMembers) {
+                    const auto index = seen.at(member);
+                    if (snapshots[index].mNode->mKind == Kind::Group) stack.push_back({index, false});
+                    else text << "    n" << member << ";\n";
+                }
             }
             text << "}\n";
             return au::file::write(text.str(), path);
@@ -1026,13 +1207,23 @@ public:
         const int worker = au::flow::detail::gWorker;
         const std::size_t index = worker < 0 ? 8 : static_cast<std::size_t>(worker);
         const std::uint64_t thread = worker < 0 ? au::sys::flow::threadId() : mWorkers[index].mThreadId;
-        storage->mBuffers[index].record(node->mId, thread, name, phase, code);
+        storage->mBuffers[index].record(node->mId, thread, name, phase, code, nullptr,
+            node->mParent.get() ? node->mParent->mId : 0, node->mName.data(), node->mName.size());
     }
     int dumpTrace(const char* path) noexcept
     {
         if (!path) return au::err::kErrorNullPointer;
         try {
             std::ostringstream out;
+            auto jsonString = [](std::ostream& stream, const char* value) {
+                stream << '\"';
+                for (const auto* c = reinterpret_cast<const unsigned char*>(value); *c; ++c) {
+                    if (*c == '\"' || *c == '\\') stream << '\\' << static_cast<char>(*c);
+                    else if (*c < 32) { const char hex[] = "0123456789abcdef"; stream << "\\u00" << hex[*c >> 4] << hex[*c & 15]; }
+                    else stream << static_cast<char>(*c);
+                }
+                stream << '\"';
+            };
             out << "{\"traceEvents\":[";
             bool first = true;
             std::size_t dropped = 0;
@@ -1047,7 +1238,20 @@ public:
                         << slot.mPhase << "\",\"pid\":1,\"tid\":" << slot.mThread << ",\"ts\":" << slot.mTime;
                     if (slot.mPhase == 'b' || slot.mPhase == 'e') out << ",\"id\":\"" << slot.mTask << '"';
                     if (slot.mPhase == 'i') out << ",\"s\":\"t\"";
-                    out << ",\"args\":{\"task\":\"" << slot.mTask << "\",\"code\":" << slot.mCode << "}}";
+                    out << ",\"args\":{\"task\":\"" << slot.mTask << "\",\"code\":" << slot.mCode;
+                    out << ",\"parent\":\"" << slot.mParent << "\",\"taskName\":"; jsonString(out, slot.mLabel);
+                    out << ",\"taskNameTruncated\":" << (slot.mLabelTruncated ? "true" : "false");
+                    if (slot.mHasProfile) {
+                        const auto& profile = slot.mProfile;
+                        out << ",\"profileAvailable\":" << (profile.mAvailable ? "true" : "false")
+                            << ",\"profileNativeCode\":" << profile.mNativeCode
+                            << ",\"clockDomain\":\"opencl-device\",\"hostSubmitUs\":" << profile.mHostSubmitUs
+                            << ",\"hostObservedUs\":" << profile.mHostObservedUs;
+                        if (profile.mAvailable) out << ",\"gpuQueuedNs\":" << profile.mQueuedNs
+                            << ",\"gpuSubmitNs\":" << profile.mSubmitNs << ",\"gpuStartNs\":" << profile.mStartNs
+                            << ",\"gpuEndNs\":" << profile.mEndNs << ",\"gpuDurationNs\":" << profile.mEndNs - profile.mStartNs;
+                    }
+                    out << "}}";
                 }
             }
             out << "],\"displayTimeUnit\":\"ms\",\"auraDroppedRecords\":" << dropped << "}\n";
@@ -1055,6 +1259,16 @@ public:
         } catch (...) { return au::err::kErrorNoMemory; }
     }
     int tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* payload) noexcept;
+    void externalProfile(const au::flow::detail::ExternalProfile& profile) noexcept
+    {
+        if (!mTracing.load(std::memory_order_relaxed)) return; // Observation only; never affects task completion.
+        auto* storage = mTraceStorage.load(std::memory_order_acquire);
+        if (!storage) return;
+        const int worker = au::flow::detail::gWorker;
+        const std::size_t index = worker < 0 ? 8 : static_cast<std::size_t>(worker);
+        const auto thread = worker < 0 ? au::sys::flow::threadId() : mWorkers[index].mThreadId;
+        storage->mBuffers[index].record(profile.mTask, thread, "GPU profile", 'i', 0, &profile);
+    }
 private:
     enum class Phase { Dormant, Running, Stopping, Closed };
     struct Worker {
@@ -1064,6 +1278,7 @@ private:
         int mAffinityCode = au::err::kErrorNotReady;
         std::vector<std::uint32_t> mEffective;
     };
+    au::flow::detail::PayloadPool mPayloads;
     au::flow::detail::Slab<au::flow::detail::Node, 128> mNodes;
     au::flow::detail::Slab<au::flow::detail::Edge, 256> mEdges;
     au::flow::detail::Slab<au::flow::detail::ExternalToken, 64> mExternal;
@@ -1102,6 +1317,7 @@ private:
     std::atomic<TraceStorage*> mTraceStorage{nullptr};
 };
 
+void WorkerEntry::operator()() const noexcept { mCore->workerLoop(mId); }
 au::flow::detail::Core& core() noexcept { static au::flow::detail::Core instance; return instance; }
 void retain(au::flow::detail::Node* node) noexcept
 {
@@ -1171,6 +1387,10 @@ int Core::tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* 
 {
     if (!tile || !invoke) return au::err::kErrorInvalidParam;
     if (!range) return 0;
+    if (au::flow::detail::gCleanupDepth) {
+        scopedError(au::flow::kErrorWouldDeadlock, au::flow::ErrorDomain::Flow);
+        return au::flow::kErrorWouldDeadlock;
+    }
     if (au::flow::detail::gTileDepth || au::flow::detail::gDepth >= 31) {
         for (std::size_t offset = 0; offset < range;) {
             const std::size_t count = std::min(tile, range - offset);
@@ -1219,6 +1439,39 @@ int Core::tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* 
 int prepareExternal(const au::flow::detail::ExternalOps& ops, void* payload,
                     au::flow::detail::ExternalToken** out) noexcept
 { return au::flow::detail::core().prepareExternal(ops, payload, out); }
+std::uint64_t currentTaskId() noexcept
+{ return au::flow::detail::gFrame ? au::flow::detail::gFrame->mNode->mId : 0; }
+bool tracingEnabled() noexcept { return au::flow::detail::core().mTracing.load(std::memory_order_relaxed); }
+bool cleanupActive() noexcept { return au::flow::detail::gCleanupDepth != 0; }
+void* pauseCpuSlice() noexcept
+{
+    auto* frame = au::flow::detail::gFrame;
+    if (!frame || !frame->mCpuActive) return nullptr;
+    au::flow::detail::core().trace(frame->mNode, "CPU slice", 'E'); frame->mCpuActive = false;
+    return frame;
+}
+void resumeCpuSlice(void* cookie) noexcept
+{
+    auto* frame = static_cast<au::flow::detail::Frame*>(cookie);
+    if (!frame || frame != au::flow::detail::gFrame || frame->mCpuActive) return;
+    frame->mCpuActive = true; au::flow::detail::core().trace(frame->mNode, "CPU slice", 'B');
+}
+bool assistExternalWait() noexcept
+{
+    if (!au::flow::detail::gFrame || au::flow::detail::gWorker < 0 || au::flow::detail::gCleanupDepth) return false;
+    return au::flow::detail::core().helpOne(false, std::chrono::steady_clock::now());
+}
+void cleanupExternal(au::flow::detail::ExternalToken* token, void (*fn)(void*) noexcept, void* payload) noexcept
+{
+    auto* owner = token ? token->mCore : &au::flow::detail::core();
+    au::flow::detail::NodeRef pin(token ? token->mParent.get() : nullptr);
+    au::flow::detail::Core::CleanupExtent extent(owner, pin.get());
+    if (fn) fn(payload);
+}
+void recordExternalProfile(const au::flow::detail::ExternalProfile& profile) noexcept
+{ au::flow::detail::core().externalProfile(profile); }
+void recordExternalError(const au::flow::detail::ExternalStatus& status) noexcept
+{ au::flow::detail::core().scopedError(status.mCode, status.mDomain, status.mNativeCode, status.mCauseTaskId); }
 void armExternalCallback(au::flow::detail::ExternalToken* token) noexcept
 { if (token) token->mCallbacks.fetch_add(1, std::memory_order_relaxed); /* Registrar pins the token before registration. */ }
 void leaveExternalCallback(au::flow::detail::ExternalToken* token) noexcept
@@ -1242,6 +1495,8 @@ void leaveExternalRegistrar(au::flow::detail::ExternalToken* token) noexcept
 #ifdef AURA_FLOW_TESTING
 void au::flow::testing::failAfter(au::flow::testing::Failure failure, int count) noexcept
 { au::flow::detail::gFailure[static_cast<unsigned int>(failure)].store(count, std::memory_order_relaxed); }
+void au::flow::testing::setOutstandingLimit(std::size_t limit) noexcept
+{ au::flow::detail::gOutstandingLimit.store(limit, std::memory_order_relaxed); }
 void au::flow::testing::snapshotHook(au::flow::testing::SnapshotHook* hook) noexcept
 { au::flow::detail::gSnapshotHook.store(hook, std::memory_order_release); }
 std::size_t au::flow::testing::budget() noexcept { return au::flow::detail::core().testBudget(); }
@@ -1272,6 +1527,22 @@ int au::flow::XFlow::getWorkers(au::flow::WorkerInfo* out, std::size_t capacity,
 }
 
 uint32_t au_flow_version() noexcept { return AURA_FLOW_ABI_VERSION; }
+int au_flow_payload_allocate(std::size_t size, std::size_t alignment, void** out) noexcept
+{
+    if (!out) return au::err::kErrorNullPointer;
+    *out = nullptr;
+    if (!size || !alignment || (alignment & (alignment - 1))) return au::err::kErrorInvalidParam;
+    if (size > SIZE_MAX - alignment) return au::err::kErrorOverflow;
+    try {
+#ifdef AURA_FLOW_TESTING
+        if (au::flow::detail::fail(au::flow::testing::Failure::Payload)) return au::err::kErrorNoMemory;
+#endif
+        *out = au::flow::detail::core().payloads().allocate(size, alignment);
+        return 0;
+    } catch (...) { return au::err::kErrorNoMemory; }
+}
+void au_flow_payload_release(void* payload, std::size_t size, std::size_t alignment) noexcept
+{ if (payload) au::flow::detail::core().payloads().release(payload, size, alignment); }
 int au_flow_make(au_flow_invoke invoke, au_flow_destroy destroy, void* payload, au_flow_handle* out) noexcept
 {
     au::flow::detail::Closure owner; owner.mPayload = payload; owner.mDestroy = destroy;
@@ -1298,8 +1569,16 @@ int au_flow_group(au_flow_handle* out) noexcept
     } catch (const au::flow::detail::CreateFailure& error) { return error.mCode; }
     catch (...) { return au::err::kErrorNoMemory; }
 }
-void au_flow_retain(au_flow_handle handle) noexcept { au::flow::detail::retain(static_cast<au::flow::detail::Node*>(handle)); }
-void au_flow_release(au_flow_handle handle) noexcept { au::flow::detail::release(static_cast<au::flow::detail::Node*>(handle)); }
+void au_flow_retain(au_flow_handle handle) noexcept
+{
+    auto* node = static_cast<au::flow::detail::Node*>(handle);
+    if (node && au::flow::detail::core().owns(node)) au::flow::detail::retain(node);
+}
+void au_flow_release(au_flow_handle handle) noexcept
+{
+    auto* node = static_cast<au::flow::detail::Node*>(handle);
+    if (node && au::flow::detail::core().owns(node)) au::flow::detail::release(node);
+}
 uint64_t au_flow_id(au_flow_handle handle) noexcept
 {
     auto* node = static_cast<au::flow::detail::Node*>(handle);

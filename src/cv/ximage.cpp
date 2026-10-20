@@ -11,7 +11,7 @@
  *     inter-plane padding; every plane therefore shares the block's fd and
  *     carries its real byte offset in fdOffset[i] (plane[0] is always 0).
  *   - Cache sync                   : a single dma-buf sync covers the whole
- *     block, Pss and DmaUncached are no-ops in the backend.
+ *     block. New CPU operators use ximage_access.h for paired access sessions.
  */
 
 #include <cstdint>
@@ -21,6 +21,7 @@
 #include <string>
 
 #include "cv/ximage_api.h"
+#include "cv/ximage_access.h"
 #include "log/xerror.h"
 #include "mm/xmemory.h"
 
@@ -409,6 +410,21 @@ bool isValid(const Image& img) noexcept
 }
 
 bool isFormat(const Image& img, int format) noexcept { return img.format == format; }
+
+au::mm::Access imageAccess(const au::cv::Image& img, au::mm::AccessMode mode) noexcept
+{
+    au::mm::Access access{};
+    access.mStructSize = sizeof(access);
+    if (!au::cv::isValid(img)) { access.mCode = au::err::kErrorInvalidParam; return access; }
+    const auto* descriptor = lookupDescriptor(img.format);
+    access.mCount = static_cast<unsigned int>(descriptor->numPlanes);
+    for (unsigned int p = 0; p < access.mCount; ++p) {
+        access.mRanges[p].mData = img.data[p];
+        access.mRanges[p].mSize = static_cast<std::size_t>(img.dataSize[p]);
+        access.mRanges[p].mMode = static_cast<unsigned int>(mode);
+    }
+    return access;
+}
 
 bool isFormatIn(const Image& img, std::initializer_list<int> formats) noexcept
 {

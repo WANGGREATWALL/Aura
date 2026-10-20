@@ -1,171 +1,48 @@
-#include <iostream>
-#include <vector>
-#include <memory>
-#include <algorithm>
+// Optional OpenCL 1.2 hardware integration executable. Exit 77 means unavailable.
+#include "gpu/xopencl.h"
+#include "flow/xflow.h"
+#include "mm/xmemory.h"
+#include "mm/xaccess.h"
+#include <cstdio>
+#include <cstring>
 
-#define CL_HPP_ENABLE_EXCEPTIONS
-#define CL_HPP_TARGET_OPENCL_VERSION 200
-#define CL_HPP_MINIMUM_OPENCL_VERSION 200
-#include "CL/opencl.hpp"
-#include "cl_symbols.h"
-#include "cl_wrapper.h"
-
-#include "log/xlogger.h"
-#include "gtest/gtest.h"
-
-
-TEST(OpenCL, CLHPP)
+int main()
 {
-    const int numElements = 32;
-
-    // Filter for a 2.0 or newer platform and set it as the default
-    std::vector<cl::Platform> platforms;
-    cl::Platform::get(&platforms);
-    cl::Platform plat;
-    for (auto &p : platforms) {
-        std::string platver = p.getInfo<CL_PLATFORM_VERSION>();
-        if (platver.find("OpenCL 2.") != std::string::npos ||
-            platver.find("OpenCL 3.") != std::string::npos) {
-            // Note: an OpenCL 3.x platform may not support all required features!
-            plat = p;
-        }
+    const auto& gpu = au::gpu::CLWrapper::get();
+    const int initialized = gpu.init();
+    if (initialized) {
+        std::fprintf(stderr, "OpenCL GPU initialization code=%d\n", initialized);
+        return initialized == au::err::kErrorNotSupported ? 77 : 1;
     }
-    EXPECT_TRUE(plat() != 0);
-
-    cl::Platform newP = cl::Platform::setDefault(plat);
-    EXPECT_TRUE(newP == plat);
-
-    // C++11 raw string literal for the first kernel
-    std::string kernel1{R"CLC(
-        global int globalA;
-        kernel void updateGlobal()
-        {
-          globalA = 75;
+    struct Cleanup {
+        void* mPointer = nullptr;
+        ~Cleanup() {
+            (void)au::flow::XFlow::get().shutdown();
+            (void)au::gpu::CLWrapper::get().deinit();
+            if (mPointer) (void)au::mm::free(mPointer);
         }
-    )CLC"};
-
-    // Raw string literal for the second kernel
-    std::string kernel2{R"CLC(
-        typedef struct { global int *bar; } Foo;
-        kernel void vectorAdd(global const Foo* aNum, global const int *inputA, global const int *inputB,
-                              global int *output, int val, write_only pipe int outPipe, queue_t childQueue)
-        {
-          output[get_global_id(0)] = inputA[get_global_id(0)] + inputB[get_global_id(0)] + val + *(aNum->bar);
-          write_pipe(outPipe, &val);
-          queue_t default_queue = get_default_queue();
-          ndrange_t ndrange = ndrange_1D(get_global_size(0)/2, get_global_size(0)/2);
-
-          // Have a child kernel write into third quarter of output
-          enqueue_kernel(default_queue, CLK_ENQUEUE_FLAGS_WAIT_KERNEL, ndrange,
-            ^{
-                output[get_global_size(0)*2 + get_global_id(0)] =
-                  inputA[get_global_size(0)*2 + get_global_id(0)] + inputB[get_global_size(0)*2 + get_global_id(0)] + globalA;
-            });
-
-          // Have a child kernel write into last quarter of output
-          enqueue_kernel(childQueue, CLK_ENQUEUE_FLAGS_WAIT_KERNEL, ndrange,
-            ^{
-                output[get_global_size(0)*3 + get_global_id(0)] =
-                  inputA[get_global_size(0)*3 + get_global_id(0)] + inputB[get_global_size(0)*3 + get_global_id(0)] + globalA + 2;
-            });
-        }
-    )CLC"};
-
-    std::vector<std::string> programStrings;
-    programStrings.push_back(kernel1);
-    programStrings.push_back(kernel2);
-
-    cl::Program vectorAddProgram(programStrings);
-    try {
-        vectorAddProgram.build("-cl-std=CL2.0");
+    } cleanup;
+    au::mm::MemBlock memory;
+    if (au::mm::alloc(64, au::mm::MemType::Pss, memory)) return 2;
+    cleanup.mPointer = memory.ptr;
+    std::memset(memory.ptr, 3, memory.size);
+    const char* source = "__kernel void add(__global uchar* value, uchar delta) { value[get_global_id(0)] += delta; }";
+    auto task = au::flow::XFlow::get().enqueue([&]() -> int {
+        int code = gpu.setNDRange({64}).enqueue("add", source, nullptr,
+            au::gpu::buffer(au::mm::readWriteAccess(memory.ptr, memory.size)), static_cast<unsigned char>(7));
+        if (code) return code;
+        au::mm::CpuAccessScope cpu;
+        code = cpu.begin({au::mm::readAccess(memory.ptr, memory.size)});
+        if (code) return code;
+        for (std::size_t i = 0; i < memory.size; ++i)
+            if (static_cast<unsigned char*>(memory.ptr)[i] != 10) return cpu.finish(91);
+        return cpu.finish();
+    });
+    au::flow::TaskResult result{};
+    const int wait = au::flow::XFlow::get().wait(task, &result);
+    if (wait || result.mCode) {
+        std::fprintf(stderr, "OpenCL hardware test wait=%d code=%d native=%d\n", wait, result.mCode, result.mNativeCode);
+        return 3;
     }
-    catch (...) {
-        // Print build info for all devices
-        cl_int buildErr = CL_SUCCESS;
-        auto buildInfo = vectorAddProgram.getBuildInfo<CL_PROGRAM_BUILD_LOG>(&buildErr);
-        for (auto &pair : buildInfo) {
-            std::cerr << pair.second << std::endl << std::endl;
-        }
-
-        EXPECT_TRUE(buildErr == CL_SUCCESS);
-    }
-
-    typedef struct { int *bar; } Foo;
-
-    // Get and run kernel that initializes the program-scope global
-    // A test for kernels that take no arguments
-    auto program2Kernel =
-        cl::KernelFunctor<>(vectorAddProgram, "updateGlobal");
-    program2Kernel(
-        cl::EnqueueArgs(
-        cl::NDRange(1)));
-
-    //////////////////
-    // SVM allocations
-
-    auto anSVMInt = cl::allocate_svm<int, cl::SVMTraitCoarse<>>();
-    *anSVMInt = 5;
-    cl::SVMAllocator<Foo, cl::SVMTraitCoarse<cl::SVMTraitReadOnly<>>> svmAllocReadOnly;
-    auto fooPointer = cl::allocate_pointer<Foo>(svmAllocReadOnly);
-    fooPointer->bar = anSVMInt.get();
-    cl::SVMAllocator<int, cl::SVMTraitCoarse<>> svmAlloc;
-    std::vector<int, cl::SVMAllocator<int, cl::SVMTraitCoarse<>>> inputA(numElements, 1, svmAlloc);
-    cl::coarse_svm_vector<int> inputB(numElements, 2, svmAlloc);
-
-    //////////////
-    // Traditional cl_mem allocations
-
-    std::vector<int> output(numElements, 0xdeadbeef);
-    cl::Buffer outputBuffer(output.begin(), output.end(), false);
-    cl::Pipe aPipe(sizeof(cl_int), numElements / 2);
-
-    // Default command queue, also passed in as a parameter
-    cl::DeviceCommandQueue defaultDeviceQueue = cl::DeviceCommandQueue::makeDefault(
-        cl::Context::getDefault(), cl::Device::getDefault());
-
-    auto vectorAddKernel =
-        cl::KernelFunctor<
-            decltype(fooPointer)&,
-            int*,
-            cl::coarse_svm_vector<int>&,
-            cl::Buffer,
-            int,
-            cl::Pipe&,
-            cl::DeviceCommandQueue
-            >(vectorAddProgram, "vectorAdd");
-
-    // Ensure that the additional SVM pointer is available to the kernel
-    // This one was not passed as a parameter
-    vectorAddKernel.setSVMPointers(anSVMInt);
-
-    cl_int error;
-    vectorAddKernel(
-        cl::EnqueueArgs(
-            cl::NDRange(numElements/2),
-            cl::NDRange(numElements/2)),
-        fooPointer,
-        inputA.data(),
-        inputB,
-        outputBuffer,
-        3,
-        aPipe,
-        defaultDeviceQueue,
-        error
-        );
-
-    cl::copy(outputBuffer, output.begin(), output.end());
-
-    cl::Device d = cl::Device::getDefault();
-
-    std::cout << "Output:\n";
-    for (int i = 1; i < numElements; ++i) {
-        std::cout << "\t" << output[i] << "\n";
-    }
-    std::cout << "\n\n";
-}
-
-TEST(OpenCL, CLWrapper)
-{
-    gpu::CLWrapper ocl("./", "cl_wrapper_test");
-    EXPECT_TRUE(ocl.init() == err::kSuccess);
+    return 0;
 }

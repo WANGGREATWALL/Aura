@@ -12,9 +12,10 @@
 
 #include "flow/xflow_api.h"
 #include "log/xerror.h"
+#include "sys/xvisibility.h"
 
 namespace au {
-namespace flow {
+namespace flow AU_LOCAL {
 
 constexpr int kErrorDependencyFailed = -5001;
 constexpr int kErrorCycleDetected = -5002;
@@ -108,9 +109,35 @@ template <class F, class... A> struct Bound {
     }
     static void destroy(void* p) noexcept
     {
-        std::unique_ptr<au::flow::detail::Bound<F, A...>> owner(
-            static_cast<au::flow::detail::Bound<F, A...>*>(p));
+        static_cast<au::flow::detail::Bound<F, A...>*>(p)->~Bound();
+        au_flow_payload_release(p, sizeof(au::flow::detail::Bound<F, A...>), alignof(au::flow::detail::Bound<F, A...>));
     }
+};
+class PayloadStorage final {
+public:
+    PayloadStorage(std::size_t size, std::size_t alignment) noexcept : mSize(size), mAlignment(alignment)
+    { mCode = au_flow_payload_allocate(size, alignment, &mData); }
+    ~PayloadStorage() noexcept { au_flow_payload_release(mData, mSize, mAlignment); }
+    PayloadStorage(const au::flow::detail::PayloadStorage&) = delete;
+    au::flow::detail::PayloadStorage& operator=(const au::flow::detail::PayloadStorage&) = delete;
+    PayloadStorage(au::flow::detail::PayloadStorage&& other) noexcept
+        : mData(other.release()), mSize(other.mSize), mAlignment(other.mAlignment), mCode(other.mCode) {}
+    au::flow::detail::PayloadStorage& operator=(au::flow::detail::PayloadStorage&& other) noexcept
+    {
+        if (this != &other) {
+            au_flow_payload_release(mData, mSize, mAlignment);
+            mData = other.release(); mSize = other.mSize; mAlignment = other.mAlignment; mCode = other.mCode;
+        }
+        return *this;
+    }
+    void* data() const noexcept { return mData; }
+    int code() const noexcept { return mCode; }
+    void* release() noexcept { void* data = mData; mData = nullptr; return data; }
+private:
+    void* mData = nullptr;
+    std::size_t mSize;
+    std::size_t mAlignment;
+    int mCode = 0;
 };
 
 template <class R> struct TileResult {
@@ -253,7 +280,9 @@ public:
         try {
             typedef au::flow::detail::Bound<typename std::decay<F>::type,
                 typename std::decay<Args>::type...> Payload;
-            std::unique_ptr<Payload> payload(new Payload(std::forward<F>(f), std::forward<Args>(args)...));
+            au::flow::detail::PayloadStorage payload(sizeof(Payload), alignof(Payload));
+            if (payload.code()) return au::flow::Task(nullptr, payload.code());
+            new (payload.data()) Payload(std::forward<F>(f), std::forward<Args>(args)...);
             au_flow_handle h = nullptr;
             const int ret = au_flow_make(&Payload::run, &Payload::destroy, payload.release(), &h);
             return au::flow::Task(h, ret);
@@ -306,6 +335,11 @@ public:
     int getWorkerAffinity(std::uint32_t workerId, std::uint32_t* cpus, std::size_t capacity,
                           std::size_t& count) const noexcept
     { return au_flow_worker_affinity(workerId, cpus, capacity, &count); }
+    // Opt-in bounded host records and retained dynamic-child metadata. Capture
+    // names are copied (64-byte trace labels can be marked truncated). DOT keeps
+    // static groups independently; dynamic structure is a per-node snapshot.
+    // CPU slices exclude known scheduler/device waits, not arbitrary user I/O
+    // or OS preemption. Toggle boundaries may leave partial trace slices.
     int setTracing(bool enabled) noexcept { return au_flow_tracing(enabled ? 1 : 0); }
     int dumpDot(const au::flow::Task& task, const char* path) const noexcept
     { return au_flow_dot(task.mHandle, path); }

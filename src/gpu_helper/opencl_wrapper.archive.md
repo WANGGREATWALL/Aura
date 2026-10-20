@@ -1,5 +1,7 @@
 # OpenCLWrapper 照片归档说明
 
+> 迁移说明 (2026-10-20): 本页是历史照片恢复记录, 接口/行号对应迁移前源码. 当前入口已转为 `inc/gpu/xopencl.h` 的兼容 include, 实现在 `src/gpu/`; 不再使用旧 fd-only registry, 共享 NDRange/kernel 或 CL 完成回调. 实现进度见 `docs/flow_implementation.md`.
+
 已将 `opencl-wrapper1.jpg` 至 `opencl-wrapper10.jpg` 中的代码恢复为 `opencl_wrapper.h`（162 行）与 `opencl_wrapper.cpp`（255 行）。文件存放在此次明确指定的 `src/gpu-helper` 目录；此前的 `CLWrapper` 与 `CLSymbols` 仍位于 `src/gpu_helper`。两个目录未合并，已有文件未修改。
 
 保留照片中的 `au::gpu::OpenCLWrapper` 单例、原始接口与实现：Buffer 参数派发、完成事件绑定的共享句柄持有、平台／设备／上下文／队列初始化、内核缓存、设备与源码哈希二进制缓存，以及二进制 build 失败后的源码 JIT 回退。`clErrorInfo()` 仅声明，按照片复用 `src/gpu_helper/cl_wrapper.cpp` 中已有的定义。

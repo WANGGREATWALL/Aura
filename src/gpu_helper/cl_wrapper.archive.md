@@ -1,5 +1,7 @@
 # CLWrapper 照片恢复说明
 
+> 迁移说明 (2026-10-20): 本页是历史照片恢复记录, 接口/行号对应迁移前源码. 当前入口已转为 `inc/gpu/xopencl.h` 的兼容 include, 实现在 `src/gpu/`; 不再使用旧 fd-only registry, 共享 NDRange/kernel 或 CL 完成回调. 实现进度见 `docs/flow_implementation.md`.
+
 来源为 `cl-wrapper1.jpg` 至 `cl-wrapper35.jpg`（`/Users/wangchen/Downloads/aura_code_images/`）。已完整替换本目录的 `cl_wrapper.h`、`cl_wrapper.cpp`，保持照片的接口、命名空间、依赖、默认值及实现逻辑，仅整理空格与对齐。头文件 272 行、实现 1244 行；关键函数行号保留，便于与照片核对。
 
 照片版位于 `au::gpu`，通过 `CLWrapper::get()` 获取单例，使用 `init(folderBinary, enableProfiling)` / `deinit()` 管理状态。原仓库的带参数构造、`build()`、`createKernels()` 和 `.key` 缓存流程已由照片中的源码按需编译、内核缓存、设备与源码哈希二进制缓存取代。DMA 导入、基于 Buffer 创建 Image2D、行距查询、工作尺寸向上取整、两个 `enqueue()` 重载及性能事件查询均已恢复。

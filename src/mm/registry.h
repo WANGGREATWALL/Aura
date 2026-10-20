@@ -23,6 +23,8 @@ public:
     int find(void* ptr, MemBlock& out) const noexcept;
     int retire(void* ptr) noexcept;
     int acquire(const void* ptr, std::size_t size, au::mm::detail::MemoryLease& out) const noexcept;
+    int registerExternal(const ::au_mm_external_memory& memory, void** out) noexcept;
+    int unregisterExternal(void* handle) noexcept;
 
 private:
     Registry() = default;
@@ -30,8 +32,17 @@ private:
     Registry& operator=(const Registry&) = delete;
 
     mutable std::mutex mMutex;
-    std::map<std::uintptr_t, std::shared_ptr<au::mm::detail::MemoryControl>> mTable;
+    struct View {
+        std::shared_ptr<au::mm::detail::MemoryControl> mControl;
+        std::shared_ptr<au::mm::detail::ExternalOwner> mOwner;
+        std::size_t mSize = 0;
+        std::uint64_t mRegistration = 0; // Zero is an Aura-owned allocation.
+    };
+    std::map<std::uintptr_t, au::mm::Registry::View> mTable;
+    std::map<au::sys::memory::FdIdentity, std::weak_ptr<au::mm::detail::MemoryControl>> mFds;
     std::atomic<std::uint64_t> mNextId{1};
+    int nextId(std::uint64_t& out) noexcept;
+    bool overlaps(std::uintptr_t begin, std::size_t size) const noexcept; // mMutex held.
 };
 
 }  // namespace mm

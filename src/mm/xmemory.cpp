@@ -8,6 +8,7 @@
 #include "mm/backend.h"
 #include "mm/pool_backend.h"
 #include "mm/registry.h"
+#include "mm/access.h"
 
 namespace au {
 namespace mm {
@@ -47,20 +48,12 @@ int free(void* ptr) noexcept
 
 int syncCpuToDevice(void* ptr) noexcept
 {
-    au::mm::detail::MemoryLease lease;
-    int retFind = Registry::instance().acquire(ptr, 1, lease);
-    if (retFind != au::err::kSuccess)
-        return retFind;
-    return forBackend(lease.block().backend).syncCpuToDevice(lease.block());
+    return au::mm::detail::legacySync(ptr, false);
 }
 
 int syncDeviceToCpu(void* ptr) noexcept
 {
-    au::mm::detail::MemoryLease lease;
-    int retFind = Registry::instance().acquire(ptr, 1, lease);
-    if (retFind != au::err::kSuccess)
-        return retFind;
-    return forBackend(lease.block().backend).syncDeviceToCpu(lease.block());
+    return au::mm::detail::legacySync(ptr, true);
 }
 
 int query(void* ptr, MemBlock& out) noexcept

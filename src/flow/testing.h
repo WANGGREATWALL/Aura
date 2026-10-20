@@ -7,12 +7,14 @@
 namespace au {
 namespace flow {
 namespace testing {
-enum class Failure { Node, Edge, Worker };
+enum class Failure { Node, Edge, Worker, Payload, Order };
 struct SnapshotHook { void (*mInvoke)(void*); void* mPayload; };
 void failAfter(au::flow::testing::Failure failure, int successfulOperations) noexcept;
 void snapshotHook(au::flow::testing::SnapshotHook* hook) noexcept;
 std::size_t budget() noexcept;
 int setBudget(std::size_t budget) noexcept;
+// Limits only structured reservations for counter-boundary models; SIZE_MAX restores production behavior.
+void setOutstandingLimit(std::size_t limit) noexcept;
 } // namespace testing
 } // namespace flow
 } // namespace au

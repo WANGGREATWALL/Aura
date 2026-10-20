@@ -50,9 +50,15 @@ typedef struct au_flow_worker {
 
 /* make consumes payload on every path, including rejection. */
 uint32_t au_flow_version(void) AU_FLOW_NOEXCEPT;
+/* Binding storage: release with the same instance, size and alignment. The C++11
+ * facade constructs/destructs the concrete callable; the waist only owns bytes. */
+int au_flow_payload_allocate(size_t size, size_t alignment, void** out) AU_FLOW_NOEXCEPT;
+void au_flow_payload_release(void* payload, size_t size, size_t alignment) AU_FLOW_NOEXCEPT;
 int au_flow_make(au_flow_invoke invoke, au_flow_destroy destroy, void* payload,
                  au_flow_handle* out) AU_FLOW_NOEXCEPT;
 int au_flow_group(au_flow_handle* out) AU_FLOW_NOEXCEPT;
+/* Only live handles of this instance participate; null/foreign retain and
+ * release are no-ops. This does not make a stale/dangling handle valid. */
 void au_flow_retain(au_flow_handle handle) AU_FLOW_NOEXCEPT;
 void au_flow_release(au_flow_handle handle) AU_FLOW_NOEXCEPT;
 uint64_t au_flow_id(au_flow_handle handle) AU_FLOW_NOEXCEPT;

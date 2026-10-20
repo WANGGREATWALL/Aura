@@ -417,13 +417,55 @@ TEST(XFlow, DotAndTraceSnapshots)
     ASSERT_EQ(au::file::read("flow-test.json", trace), 0);
     EXPECT_NE(dot.find("digraph AuraFlow"), std::string::npos);
     EXPECT_NE(trace.find("traceEvents"), std::string::npos);
-    EXPECT_NE(trace.find("CPU"), std::string::npos);
+    EXPECT_NE(trace.find("callable wall"), std::string::npos);
     au::json::XJson parsed = au::json::XJson::parse(trace);
     ASSERT_TRUE(parsed.isValid());
     EXPECT_TRUE(parsed["traceEvents"].isArray());
     EXPECT_GT(parsed["traceEvents"].getArraySize(), 0u);
     EXPECT_EQ(au::file::removeFile("flow-test.dot"), 0);
     EXPECT_EQ(au::file::removeFile("flow-test.json"), 0);
+}
+
+TEST(XFlow, CapturedStructuredChildrenAndNestedClustersRemainExportable)
+{
+    auto& flow = au::flow::XFlow::get(); ASSERT_EQ(flow.setTracing(true), 0);
+    au::flow::Tasks outer, inner;
+    ASSERT_EQ(outer.handle().setName("outer"), 0); ASSERT_EQ(inner.handle().setName("inner"), 0);
+    auto parent = flow.makeTask([&]() -> int {
+        auto child = flow.makeTask([]() -> int { return 0; });
+        std::string name = "dynamic \"child\"\nline";
+        for (unsigned int i = 0; i < 40; ++i) name += u8"界";
+        const int named = child.setName(name.c_str()); if (named) return named;
+        const auto submitted = flow.enqueue(child); if (submitted.submissionCode()) return submitted.submissionCode();
+        return flow.wait(submitted);
+    });
+    ASSERT_EQ(parent.setName("parent \"label\""), 0); ASSERT_EQ(inner.add(parent), 0); ASSERT_EQ(outer.add(std::move(inner)), 0);
+    auto group = flow.enqueue(outer); EXPECT_EQ(code(group), 0);
+    EXPECT_EQ(flow.setTracing(false), 0);
+    ASSERT_EQ(flow.dumpDot(group, "flow-nested.dot"), 0); ASSERT_EQ(flow.dumpTrace("flow-nested.json"), 0);
+    std::string dot, trace; ASSERT_EQ(au::file::read("flow-nested.dot", dot), 0); ASSERT_EQ(au::file::read("flow-nested.json", trace), 0);
+    EXPECT_NE(dot.find("subgraph cluster_" + std::to_string(group.id())), std::string::npos);
+    EXPECT_NE(dot.find("label=\"inner\""), std::string::npos); EXPECT_NE(dot.find("structured child"), std::string::npos);
+    EXPECT_NE(dot.find("dynamic \\\"child\\\"\\nline"), std::string::npos);
+    const auto json = au::json::XJson::parse(trace); ASSERT_TRUE(json.isValid());
+    const auto events = json["traceEvents"];
+    int begins = 0, ends = 0; bool sawName = false, sawTruncation = false;
+    for (std::size_t i = 0; i < events.getArraySize(); ++i) {
+        const auto event = events[i];
+        const auto label = event["args"]["taskName"].getString();
+        if (label.find("dynamic \"child\"\nline") == 0) {
+            EXPECT_TRUE(event["args"]["taskNameTruncated"].getBool());
+            EXPECT_GE(label.size(), 3u); EXPECT_EQ(label.substr(label.size() - 3), u8"界"); sawTruncation = true;
+        }
+        if (event["args"]["task"].getString() != std::to_string(parent.id())) continue;
+        if (event["args"]["taskName"].getString() == "parent \"label\"") sawName = true;
+        if (event["name"].getString() == "CPU slice") {
+            if (event["ph"].getString() == "B") ++begins;
+            if (event["ph"].getString() == "E") ++ends;
+        }
+    }
+    EXPECT_TRUE(sawName); EXPECT_TRUE(sawTruncation); EXPECT_GE(begins, 2); EXPECT_EQ(begins, ends); // Explicit wait splits the parent slice even if child already finished.
+    EXPECT_EQ(au::file::removeFile("flow-nested.dot"), 0); EXPECT_EQ(au::file::removeFile("flow-nested.json"), 0);
 }
 
 namespace {
@@ -531,6 +573,15 @@ TEST(XFlow, ExternalCallbackExitAndFallbackErrors)
     EXPECT_EQ(result.mNativeCode, -7);
     EXPECT_EQ(result.mCauseTaskId, fallback.id());
     EXPECT_EQ(released.load(std::memory_order_relaxed), 2);
+    EXPECT_EQ(au::flow::detail::currentTaskId(), 0u);
+    au::flow::Task immediate = flow.enqueue([]() -> int {
+        EXPECT_NE(au::flow::detail::currentTaskId(), 0u);
+        au::flow::detail::recordExternalError({au::err::kErrorPlatformAPI, -5, au::flow::ErrorDomain::OpenCL});
+        return au::err::kErrorPlatformAPI;
+    });
+    EXPECT_EQ(flow.waitFor(immediate, 10000, &result), 0);
+    EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mNativeCode, -5);
+    EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL); EXPECT_EQ(result.mCauseTaskId, immediate.id());
 }
 
 TEST(XFlow, BodyFailureStillWaitsForExternalMemoryLease)
@@ -621,5 +672,110 @@ TEST(XFlow, AffinityAppliesBeforeTheNextCallableAndCanBeQueried)
     EXPECT_EQ(count, 1u); EXPECT_EQ(actual, selected);
     const au::flow::AffinityPolicy restore{au::flow::AffinityMode::SystemDefault, nullptr, 0};
     EXPECT_EQ(flow.setAffinity(restore), 0);
+}
+
+TEST(XFlow, CleanupCannotWaitOnItselfOrCreateNewWork)
+{
+    struct Payload { au::flow::Task mSelf; int* mWait; int* mSubmit; };
+    int waited = 0, submitted = 0;
+    auto destroy = [](Payload* payload) {
+        *payload->mWait = au::flow::XFlow::get().wait(payload->mSelf);
+        *payload->mSubmit = au::flow::XFlow::get().enqueue([]() -> int { return 0; }).submissionCode();
+        delete payload;
+    };
+    std::unique_ptr<Payload, decltype(destroy)> capture(new Payload{{}, &waited, &submitted}, destroy);
+    Payload* pointer = capture.get();
+    au::flow::Task task = au::flow::XFlow::get().makeTask([value = std::move(capture)]() -> int { return 0; });
+    pointer->mSelf = task;
+    ASSERT_EQ(au::flow::XFlow::get().enqueue(task).submissionCode(), 0);
+    EXPECT_EQ(code(task), au::flow::kErrorWouldDeadlock); // Ignored child acceptance failure still reported.
+    EXPECT_EQ(waited, au::flow::kErrorWouldDeadlock);
+    EXPECT_EQ(submitted, au::flow::kErrorWouldDeadlock);
+}
+
+TEST(XFlow, ElasticCallableStorageAlignmentAndConstructionRollback)
+{
+    struct alignas(128) LargeCallable {
+        std::array<unsigned char, 16384> mData{};
+        std::unique_ptr<int> mOwner;
+        std::atomic<int>* mDestroyed;
+        explicit LargeCallable(std::atomic<int>& count) : mOwner(new int(27)), mDestroyed(&count) { mData.back() = 91; }
+        LargeCallable(LargeCallable&&) noexcept = default;
+        ~LargeCallable() { if (mOwner) mDestroyed->fetch_add(1, std::memory_order_relaxed); }
+        int operator()() &&
+        {
+            return reinterpret_cast<std::uintptr_t>(this) % 128 == 0 && mData.back() == 91 && *mOwner == 27
+                ? 0 : au::err::kErrorAlignmentFault;
+        }
+    };
+    std::atomic<int> destroyed{0};
+    EXPECT_EQ(code(au::flow::XFlow::get().enqueue(LargeCallable(destroyed))), 0);
+    EXPECT_EQ(destroyed.load(std::memory_order_relaxed), 1);
+    struct ThrowOnCopy {
+        int mFailure;
+        explicit ThrowOnCopy(int failure) : mFailure(failure) {}
+        ThrowOnCopy(const ThrowOnCopy& other) : mFailure(other.mFailure)
+        { if (mFailure == 1) throw std::bad_alloc(); if (mFailure == 2) throw std::runtime_error("copy"); }
+        int operator()() && { return 0; }
+    };
+    ThrowOnCopy function(1);
+    EXPECT_EQ(au::flow::XFlow::get().makeTask(function).submissionCode(), au::err::kErrorNoMemory);
+    function.mFailure = 2;
+    EXPECT_EQ(au::flow::XFlow::get().makeTask(function).submissionCode(), au::flow::kErrorUnhandledException);
+    au::flow::testing::failAfter(au::flow::testing::Failure::Payload, 0);
+    EXPECT_EQ(au::flow::XFlow::get().makeTask([]() -> int { return 0; }).submissionCode(), au::err::kErrorNoMemory);
+    function.mFailure = 0;
+    EXPECT_EQ(code(au::flow::XFlow::get().enqueue(function)), 0);
+}
+
+TEST(XFlow, StructuredReservationAndOrderOverflowDoNotPartiallyAccept)
+{
+    auto& flow = au::flow::XFlow::get();
+    au::flow::testing::setOutstandingLimit(1);
+    const auto parent = flow.enqueue([&]() -> int {
+        const auto child = flow.enqueue([]() -> int { return 71; });
+        if (child.submissionCode() != au::err::kErrorOverflow || child.state() != au::flow::TaskState::Rejected) return 1;
+        au::flow::detail::ExternalToken* token = nullptr;
+        const au::flow::detail::ExternalOps ops{nullptr, nullptr, [](void*) noexcept {}};
+        const int external = au::flow::detail::prepareExternal(ops, nullptr, &token);
+        return external == au::err::kErrorOverflow && !token ? 0 : 2;
+    });
+    const int status = code(parent);
+    au::flow::testing::setOutstandingLimit(SIZE_MAX);
+    EXPECT_EQ(status, au::err::kErrorOverflow); // Ignored failed child acceptance is latched on its parent.
+    au::flow::testing::failAfter(au::flow::testing::Failure::Order, 0);
+    au::flow::Tasks group; std::atomic<unsigned int> calls{0};
+    ASSERT_EQ(group.add(flow.makeTask([&]() -> int { calls.fetch_add(1, std::memory_order_relaxed); return 0; })), 0);
+    const auto rejected = flow.enqueue(group);
+    EXPECT_EQ(rejected.submissionCode(), au::err::kErrorOverflow); EXPECT_EQ(calls.load(std::memory_order_relaxed), 0u);
+    EXPECT_EQ(code(flow.enqueue([]() -> int { return 0; })), 0);
+}
+
+TEST(XFlow, CrossWaitAndDeepGraphUseBoundedStacks)
+{
+    auto& flow = au::flow::XFlow::get();
+    std::array<au::flow::Task, 2> peers;
+    std::atomic<unsigned int> entered{0}, cycles{0};
+    for (std::size_t i = 0; i < peers.size(); ++i) peers[i] = flow.makeTask([&, i]() -> int {
+        entered.fetch_add(1, std::memory_order_acq_rel);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (entered.load(std::memory_order_acquire) < peers.size()) {
+            if (std::chrono::steady_clock::now() >= deadline) return au::err::kErrorTimeout;
+            std::this_thread::yield();
+        }
+        const int wait = flow.waitFor(peers[1 - i], 2000);
+        if (wait == au::flow::kErrorWouldDeadlock) cycles.fetch_add(1, std::memory_order_relaxed);
+        return wait && wait != au::flow::kErrorWouldDeadlock ? wait : 0;
+    });
+    for (auto& peer : peers) ASSERT_EQ(flow.enqueue(peer).submissionCode(), 0);
+    for (auto& peer : peers) EXPECT_EQ(code(peer), 0);
+    EXPECT_GE(cycles.load(std::memory_order_relaxed), 1u);
+    // Link in reverse construction order so draft validation remains linear
+    // per insertion while acceptance/completion/reclamation cover a deep chain.
+    au::flow::Tasks graph; std::vector<au::flow::Task> chain; chain.reserve(4096);
+    for (unsigned int i = 0; i < 4096; ++i) chain.push_back(flow.makeTask([]() -> int { return 0; }));
+    for (std::size_t i = chain.size() - 1; i; --i) ASSERT_EQ(chain[i - 1].precede(chain[i]), 0);
+    for (const auto& node : chain) ASSERT_EQ(graph.add(node), 0);
+    EXPECT_EQ(code(flow.enqueue(graph)), 0);
 }
 #endif

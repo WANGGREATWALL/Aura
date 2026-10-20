@@ -56,8 +56,6 @@ TEST(XMemory, BackendSelection)
     EXPECT_STREQ(au::mm::backendName(static_cast<au::mm::BackendId>(99)), "unknown");
 }
 
-#if defined(__linux__) || defined(__ANDROID__)
-
 TEST(XMemory, NativeAllocationAndRegistry)
 {
     ASSERT_EQ(au::mm::setBackend(au::mm::BackendId::Auto), au::err::kSuccess);
@@ -85,6 +83,14 @@ TEST(XMemory, NativeAllocationAndRegistry)
     EXPECT_EQ(au::mm::query(block.ptr, queried), au::err::kErrorInvalidAddr);
     EXPECT_EQ(au::mm::free(block.ptr), au::err::kErrorInvalidAddr);
     EXPECT_EQ(au::mm::setBackend(au::mm::BackendId::Auto), au::err::kSuccess);
+    for (std::size_t size : {std::size_t(1), std::size_t(64), std::size_t(1024 * 1024), std::size_t(1024 * 1024 + 1)}) {
+        au::mm::MemBlock sample;
+        ASSERT_EQ(au::mm::alloc(size, au::mm::MemType::Pss, sample), 0);
+        EXPECT_EQ(reinterpret_cast<std::uintptr_t>(sample.ptr) % 64, 0u);
+        static_cast<unsigned char*>(sample.ptr)[size - 1] = 79;
+        EXPECT_EQ(static_cast<unsigned char*>(sample.ptr)[size - 1], 79);
+        EXPECT_EQ(au::mm::free(sample.ptr), 0);
+    }
 }
 
 TEST(XMemory, StableIdentityInteriorViewsAndDeferredRelease)
@@ -97,6 +103,7 @@ TEST(XMemory, StableIdentityInteriorViewsAndDeferredRelease)
     const au::mm::detail::MemoryIdentity identity = whole.identity();
     EXPECT_NE(identity.mOwner, 0u); EXPECT_NE(identity.mAllocationId, 0u);
     EXPECT_TRUE(identity == alias.identity());
+    EXPECT_EQ(alias.offset(), 96u); EXPECT_EQ(alias.size(), 32u);
     EXPECT_EQ(au::mm::Registry::instance().acquire(static_cast<unsigned char*>(block.ptr) + 96, 33, alias),
               au::err::kErrorOutOfRange);
     EXPECT_EQ(au::mm::Registry::instance().acquire(nullptr, 1, alias), au::err::kErrorNullPointer);
@@ -190,19 +197,5 @@ TEST(XMemory, OptionalDmaAllocation)
         EXPECT_EQ(block.ptr, nullptr);
     }
 }
-
-#else
-
-TEST(XMemory, NativeBackendUnavailable)
-{
-    ASSERT_EQ(au::mm::setBackend(au::mm::BackendId::Auto), au::err::kSuccess);
-    au::mm::MemBlock block;
-    EXPECT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, block), au::err::kErrorNotSupported);
-    EXPECT_EQ(block.ptr, nullptr);
-    au::mm::XMemory memory(64, au::mm::MemType::Pss);
-    EXPECT_FALSE(memory.valid());
-}
-
-#endif
 
 #endif  // ENABLE_TEST_XMEMORY

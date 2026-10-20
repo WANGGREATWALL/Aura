@@ -1,15 +1,24 @@
 #include "mm/memory_control.h"
 #include "mm/backend.h"
+#include "mm/access_context.h"
 #include "log/xlogger.h"
+#include "log/xerror.h"
 
 au::mm::detail::MemoryControl::~MemoryControl() noexcept
 {
-    if (!mOwnsStorage) return;
-    const int code = au::mm::forBackend(mBlock.backend).release(mBlock);
+    mFence.reset();
+    mExternalOwner.reset();
+    const int code = mOwnsStorage ? au::mm::forBackend(mBlock.backend).release(mBlock) : 0;
+    au::sys::memory::closeFd(mOwnedFd);
     mReport->mCode = code;
     mReport->mDone.store(true, std::memory_order_release); // Publish cleanup outcome after backing storage release.
-    if (code) XLOG_E("au::mm deferred release failed allocation=%llu code=%d\n",
-                    static_cast<unsigned long long>(mIdentity.mAllocationId), code);
+    au::mm::detail::reportAccessError(code);
+}
+au::mm::detail::ExternalOwner::~ExternalOwner() noexcept
+{
+    if (!mRelease) return;
+    try { mRelease(mPayload); }
+    catch (...) { XLOG_E("au::mm external owner release threw; SDK boundary contained it\n"); }
 }
 const au::mm::MemBlock& au::mm::detail::MemoryLease::block() const noexcept
 {
