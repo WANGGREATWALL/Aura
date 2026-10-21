@@ -8,14 +8,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 
 #include "flow/completion.h"
 
 namespace au {
 namespace flow AU_LOCAL {
 namespace detail {
-// Current per-lane capture bound. Retention/configurability is tracked in B6.
-constexpr std::size_t kTraceEventCapacity = 8192;
+// Configured in the implementation, so private consumers share one layout.
+std::size_t configuredTraceCapacity() noexcept;
 
 struct TraceSlot
 {
@@ -35,13 +36,17 @@ struct TraceSlot
 class TraceBuffer
 {
 public:
+    explicit TraceBuffer(std::size_t capacity = configuredTraceCapacity())
+        : mSlots(new TraceSlot[capacity]), mCapacity(capacity)
+    {
+    }
     void record(std::uint64_t task, std::uint64_t thread, const char* name, char phase, int code,
                 const au::flow::detail::ExternalProfile* profile = nullptr, std::uint64_t parent = 0,
                 const char* label = nullptr, std::size_t labelSize = 0) noexcept
     {
         std::size_t index = mNext.load(std::memory_order_relaxed);  // Slot reservation only.
         do {
-            if (index >= mSlots.size()) {
+            if (index >= mCapacity) {
                 mDropped.fetch_add(1, std::memory_order_relaxed);  // Diagnostic count, not a scheduling predicate.
                 return;
             }
@@ -73,16 +78,15 @@ public:
         }
         slot.mPublished.store(true, std::memory_order_release);  // Export reads complete immutable records only.
     }
-    const std::array<au::flow::detail::TraceSlot, au::flow::detail::kTraceEventCapacity>& slots() const noexcept
-    {
-        return mSlots;
-    }
-    std::size_t dropped() const noexcept { return mDropped.load(std::memory_order_relaxed); }
+    const TraceSlot* slots() const noexcept { return mSlots.get(); }
+    std::size_t      capacity() const noexcept { return mCapacity; }
+    std::size_t      dropped() const noexcept { return mDropped.load(std::memory_order_relaxed); }
 
 private:
-    std::array<au::flow::detail::TraceSlot, au::flow::detail::kTraceEventCapacity> mSlots;
-    std::atomic<std::size_t>                                                       mNext{0};
-    std::atomic<std::size_t>                                                       mDropped{0};
+    std::unique_ptr<TraceSlot[]> mSlots;
+    const std::size_t            mCapacity;
+    std::atomic<std::size_t>     mNext{0};
+    std::atomic<std::size_t>     mDropped{0};
 };
 
 }  // namespace detail

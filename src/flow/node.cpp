@@ -64,12 +64,7 @@ NodeRef Core::make(Kind kind)
 
 void Core::recycle(Node* node) noexcept
 {
-    while (node->mDynamicChildren) {
-        auto* edge             = node->mDynamicChildren;
-        node->mDynamicChildren = edge->mNext;
-        mEdges.destroy(edge);
-    }
-    mNodes.destroy(node);  // Iterative NodeRef reclamation also handles retained diagnostic descendants.
+    mNodes.destroy(node);  // Diagnostic history contains values, never executable descendants.
 }
 void retain(Node* node) noexcept
 {

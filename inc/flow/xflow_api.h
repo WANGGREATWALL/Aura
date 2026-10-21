@@ -115,6 +115,14 @@ int au_flow_affinity(uint32_t mode, const uint32_t* cpus, size_t count) AU_FLOW_
 int au_flow_workers(au_flow_worker* out, size_t capacity, size_t* count) AU_FLOW_NOEXCEPT;
 int au_flow_worker_affinity(uint32_t worker, uint32_t* cpus, size_t capacity, size_t* count) AU_FLOW_NOEXCEPT;
 int au_flow_tracing(int enabled) AU_FLOW_NOEXCEPT;
+/* Independent DOT history (values, no execution-node owners). Legacy tracing
+ * also toggles graph capture. Enable before root submission; descendants inherit
+ * the accepted scope's choice. Toggling does not retrofit old roots or discard
+ * already captured history. */
+int au_flow_graph_capture(int enabled) AU_FLOW_NOEXCEPT;
+/* Requires tracing disabled; detaches stored timeline. Concurrent readers or
+ * writers safely finish on their pinned old window. Does not clear DOT history. */
+int au_flow_trace_reset(void) AU_FLOW_NOEXCEPT;
 int au_flow_dot(au_flow_handle handle, const char* path) AU_FLOW_NOEXCEPT;
 int au_flow_trace(const char* path) AU_FLOW_NOEXCEPT;
 int au_flow_shutdown(void) AU_FLOW_NOEXCEPT;

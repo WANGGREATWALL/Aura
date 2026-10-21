@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "flow/diagnostics.h"
 #include "flow/ready_queue.h"
 #include "flow/task_errors.h"
 #include "flow/xflow.h"
@@ -110,13 +111,13 @@ struct Node
     std::atomic<int>                 mSubmission{au::err::kErrorNotReady};
     Closure                          mClosure;
     bool (*mContinue)(void*) noexcept = nullptr;  // Private tiled helper continuation, never an ordinary Task.
-    std::string          mName;
-    std::vector<NodeRef> mPreds;
-    std::vector<NodeRef> mMembers;
-    NodeRef              mEntry;
-    NodeRef              mGate;
-    NodeRef              mParent;
-    Edge*                mDynamicChildren = nullptr;  // Diagnostic edges only, protected for prepend by Core::mMutex.
+    std::string                   mName;
+    std::vector<NodeRef>          mPreds;
+    std::vector<NodeRef>          mMembers;
+    NodeRef                       mEntry;
+    NodeRef                       mGate;
+    NodeRef                       mParent;
+    std::unique_ptr<CapturedNode> mDiagnostic;  // Value history only; never keeps a child Node alive.
     bool mGraphCaptured = false;  // Immutable after acceptance; tracing opt-in is inherited by structured descendants.
     std::atomic<std::size_t> mGraphDropped{0};
     Node*                    mGroup      = nullptr;  // Borrowed; group owns its draft members.

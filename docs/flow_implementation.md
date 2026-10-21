@@ -16,16 +16,16 @@
 | `inc/flow/xflow.h` | C++11 Task/Tasks/XFlow 外观, callable 绑定与旧宏 |
 | `inc/flow/xflow_types.h` | 轻量状态/结果/策略类型, 完成桥不引入公开任务模板 |
 | `src/flow/xflow.cpp` | C ABI 转发；实现已拆分到 graph/executor/tiled/task_completion 等私有单元 |
-| `src/flow/diagnostics.*` | 无调度器指针的图快照, DOT/trace 格式化与文件导出, 可选 trace 存储 |
+| `src/flow/diagnostics.*`、`graph_history.cpp` | 值历史与快照、DOT/trace 导出、独立 DOT 开关和可释放的时间线窗口 |
 | `src/flow/ready_queue.h` | 256 槽 MPMC 快路径和侵入式 MPSC 溢出 |
 | `src/flow/slab.h` | 稳定地址页, Task/edge/external 初始页分别为 128/256/64 |
 | `src/flow/completion.h` | 外部完成与 GPU profiling 协议, 无 OpenCL 类型 |
-| `src/flow/payload_pool.h` | 64/256/1024/4096 字节闭包复用槽, 大对象及过对齐慢路径 |
+| `src/flow/payload_pool.h` | 仅 64 字节小闭包复用槽；较大闭包精确尺寸分配，保留过对齐路径（B6 决策） |
 | `inc/gpu/xopencl*`, `ximage_args.h` | 两套 C++11 wrapper/独立 Launch 和 C 窄腰 |
 | `src/gpu/pending.*`, `opencl.cpp` | 查询完成, standalone registry, 稳定资源缓存, program/kernel 复用与传输 |
 | `src/gpu/program_cache.*`, `src/sys/atomic_file.*` | 可选设备 binary 缓存, 完整 metadata 校验, 原子替换 |
 | `src/sys/opencl_memory.*` | 能力探测及 ARM DMA-BUF 导入, 不猜测厂商 |
-| `src/flow/trace_buffer.h` | 按需初始化的固定 trace 存储, 导出时不覆盖正在写入的记录 |
+| `src/flow/trace_buffer.h` | 按需初始化的可配置有界窗口；不可覆盖槽位，支持停止/导出/reset，时间线可编译裁剪 |
 | `src/sys/flow_runtime.*` | 工作许可, CPU 集合, 原生线程 ID 和亲核性 |
 | `inc/mm/xaccess*`, `inc/cv/ximage_access.h` | C/C++11 访问守卫, 外部内存注册与图像描述适配 |
 | `src/mm/access.*`, `memory_control.*`, `registry.*` | 分配身份, 集合 reservation, 别名合并, fence 快照, 租约与延迟释放 |
@@ -120,11 +120,11 @@ GPU trace 在终结后查询 kernel event 的 queued/submit/start/end, 记录独
 
 公开接口以 `inc/` 的实际声明为准. 设计中的 GPU read/write 草案在 v1 落为 `au::gpu::buffer(au::mm::readAccess(...))`, `writeAccess/readWriteAccess` 同理; Image 显式提供 format/尺寸/stride, `au::gpu::buf(Image/XImage, AccessMode)` 是便捷适配. Buffer 视图 offset 显式通过 `bufferOffset` 传给对应 kernel. 不把设计示例的任意 kernel 签名标成已经编译的业务算子.
 
-trace 默认关闭. 开启时保留动态子节点诊断边, 后代继承该结构捕获选择; 不由诊断分配失败拒绝计算, 丢失数体现在 DOT. 已完成子节点清除 parent 引用后由汇总句柄保留必要图/结果, 闭包先释放. DOT 为逐节点截取的快照, 不承诺整个动态图的单一线性化时刻.
+时间线默认关闭；DOT-only 可独立开启。根接受时固定动态捕获选择，后代继承；中途开启不补录旧根。B6 将诊断子边改为值历史，不含 NodeRef/闭包/资源租约；最后一个相关捕获句柄释放后回收历史。诊断分配失败不拒绝计算，丢失数体现在 DOT。DOT 为逐节点快照，不承诺整个动态图的单一线性化时刻。
 
 轨迹中的 `callable wall` 包含函数等待; `CPU slice` 在已知 flow wait, GPU fence 等待和协作执行边界分段, 无法识别任意用户 I/O/锁等待或 OS 抢占. 这不是 OS on-CPU 利用率测量. 标签最多复制 63 字节, 不截断有效 UTF-8 码点, 导出标记 truncated; DOT 保留完整名称. 切换采集的边界可能形成部分片段.
 
-本机 x86_64 实测 `sizeof(TraceSlot)=192`, 9 个 8192 记录 buffer 合计 14,155,920 字节, 仅首次启用 trace 时分配并保持到 scheduler 销毁. 满时丢记录而不丢任务. pool 扩页/闭包绑定, GPU pending 与 staging 准备, 导入/编译/磁盘缓存, 建线程, cache ioctl 与 native 提交均有实际成本, 不宣称整个 enqueue 稳态零分配或固定延迟.
+B6 的 x86_64 实测 `sizeof(TraceSlot)=192`，默认 9×1024 条窗口加容器为 1,769,760 字节（不含分配器元数据）；旧版 9×8192 固定存储约 14,155,920 字节。`ENABLE_FLOW_TRACE=OFF` 裁剪时间线，DOT 仍可用；容量可用 FLOW_TRACE_EVENTS_PER_LANE 配置。停止采集保留窗口，resetTrace 在关闭时摘下窗口，最后一个并发 reader/writer pin 释放后回收。满时丢记录而不丢任务。 pool 扩页/闭包绑定, GPU pending 与 staging 准备, 导入/编译/磁盘缓存, 建线程, cache ioctl 与 native 提交均有实际成本, 不宣称整个 enqueue 稳态零分配或固定延迟.
 
 ## 5 验证入口
 
@@ -300,10 +300,19 @@ return tailCode ? tailCode : aCode ? aCode : bCode;
 
 TaskErrors 封装错误候选与优先级，ExecutionErrors 统一 mm 的初始化/错误路由和 TLS 恢复，公开结果与默认语义不变。公开 flow 头文件无改动，严格 C11/C++11 消费检查通过。CPU 175/175、OpenCL 模型 188/188、ASan/LSan、TSan 主机回归通过，真实硬件尚待用户验证。
 
-图锁内检查时间显著下降，但 Node 增加 40 字节，部分生产 CPU 指标仍退化；完整保留正反数据，R01/X13 继续由 B6 收口，不宣称整体性能或设备验收完成。
+图锁内检查时间显著下降，但 Node 增加 40 字节，部分生产 CPU 指标仍退化；完整保留正反数据；B6 继续回测，但延迟仍有退化，R01/X13 未收口，后续主机定位与设备验收继续追踪。
 
 ## 15 B5 公共接口与迁移
 
 新增 C++11 `parallelFor(range, tile, f)` 薄别名；旧方法、旧宏和历史 include 保留，C ABI v1 与结果布局不变。完整语义、状态矩阵、XImage 拥有/借用、raw handle 和平台边界见 [迁移文档](flow_migration.md)。不新增 void async，不变更结构化默认或错误来源；本轮明确不纳入 `>>`/Chain，常见依赖用 enqueueAfter，Draft 图显式检查建边错误。此文档补充权威设计中的接口说明，不将最初设计的快照当作当前验证结果。
 
 B5 主机验证记录见 [B5 报告](flow_validation/B5-2026-10-21.md)。FlashPE 源码实查与设备验证仍由用户在目标环境验收；没有确认调用点数量。
+
+
+## 16 B6 机制取舍与诊断生命周期
+
+以已推送 B5 `e343789` 固定比较 ring/MPSC 与 mutex 侵入式 FIFO、三类记录池与普通分配、闭包四档/单档/普通分配。生产保留 ring/MPSC 和 Node/Edge/External 池，PayloadPool 缩减为 64 字节一档；高水位记录页仍保留到实例销毁，没有实现空闲页回收。普通提交仍有冷路径容器分配，不能由 tiled 零分配推导所有 enqueue 零分配。
+
+DOT 与时间线分离；GraphHistory 只存值，预备批次在执行前无分配发布。状态更新使用自身 mutex，不在 graph 锁内导出或分配快照；发布的结构不可变，短锁只读取可变完成字段。开启后的动态历史不再额外增加已完成子任务引用。timeline 可编译裁剪，容量可配，显式 reset 支持重复窗口。
+
+本版明确不增加设备依赖边和自动大小核分类；普通 GPU Task 边仍完整完成。合成 FIFO 链演示 host gap，未冒充真实 OpenCL 时间。完整数据、复现步骤、正反性能结果及主机测试见 [B6 报告](flow_validation/B6-2026-10-21.md)。R03/R09/R13 主机工作及机制决策完成；R01/X13 的部分延迟退化和 B7/真实设备验收仍未完成。

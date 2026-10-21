@@ -444,12 +444,20 @@ public:
     {
         return au_flow_worker_affinity(workerId, cpus, capacity, &count);
     }
-    // Opt-in bounded host records and retained dynamic-child metadata. Capture
+    // Opt-in bounded host records and value-only dynamic-child metadata. Capture
     // names are copied (64-byte trace labels can be marked truncated). DOT keeps
     // static groups independently; dynamic structure is a per-node snapshot.
     // CPU slices exclude known scheduler/device waits, not arbitrary user I/O
     // or OS preemption. Toggle boundaries may leave partial trace slices.
     int setTracing(bool enabled) noexcept { return au_flow_tracing(enabled ? 1 : 0); }
+    // DOT-only capture allocates no timeline. setTracing retains its historical
+    // combined toggle; use this switch separately to control graph capture.
+    // Enable before root submission. Descendants inherit that root's choice;
+    // toggling later neither retrofits old roots nor discards captured history.
+    int setGraphCapture(bool enabled) noexcept { return au_flow_graph_capture(enabled ? 1 : 0); }
+    // Stop tracing before resetting a window; stop/export/reset/restart supports
+    // repeated bounded captures. Concurrent old readers/writers stay pinned.
+    int resetTrace() noexcept { return au_flow_trace_reset(); }
     int dumpDot(const au::flow::Task& task, const char* path) const noexcept { return au_flow_dot(task.mHandle, path); }
     int dumpDot(const au::flow::Tasks& tasks, const char* path) const noexcept { return dumpDot(tasks.mTask, path); }
     int dumpTrace(const char* path) noexcept { return au_flow_trace(path); }

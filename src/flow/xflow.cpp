@@ -213,6 +213,8 @@ int au_flow_worker_affinity(uint32_t id, uint32_t* cpus, size_t capacity, size_t
     return au::flow::detail::core().workerAffinity(id, cpus, capacity, count);
 }
 int au_flow_tracing(int enabled) noexcept { return au::flow::detail::core().tracing(enabled != 0); }
+int au_flow_graph_capture(int enabled) noexcept { return au::flow::detail::core().captureGraph(enabled != 0); }
+int au_flow_trace_reset() noexcept { return au::flow::detail::core().resetTrace(); }
 int au_flow_dot(au_flow_handle handle, const char* path) noexcept
 {
     return au::flow::detail::core().dot(static_cast<au::flow::detail::Node*>(handle), path);

@@ -573,7 +573,10 @@ TEST(XOpenCL, ConcurrentLaunchesKeepArgumentsAndRangesIndependent)
 
 TEST(XOpenCL, ProfilingKeepsClockDomainsAndUnavailableExplicit)
 {
-    ASSERT_EQ(au::flow::XFlow::get().setTracing(true), 0);
+    const int tracing = au::flow::XFlow::get().setTracing(true);
+    if (tracing == au::err::kErrorNotSupported)
+        GTEST_SKIP() << "Timeline profiling compiled out";
+    ASSERT_EQ(tracing, 0);
     struct Reset { ~Reset() { (void)au::flow::XFlow::get().setTracing(false); } } reset;
     for (int scenario = 0; scenario < 3; ++scenario) {
         NativeModel model(false, scenario != 1);

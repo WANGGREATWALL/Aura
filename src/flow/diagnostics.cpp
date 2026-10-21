@@ -88,44 +88,89 @@ int writeDot(const au::flow::detail::GraphSnapshot& graph, const char* path) noe
     }
 }
 
+#ifndef AURA_FLOW_TRACE_ENABLED
+#define AURA_FLOW_TRACE_ENABLED 1
+#endif
+#ifndef AURA_FLOW_TRACE_CAPACITY
+#define AURA_FLOW_TRACE_CAPACITY 1024
+#endif
+std::size_t configuredTraceCapacity() noexcept { return AURA_FLOW_TRACE_CAPACITY; }
 struct Diagnostics::Storage
 {
-    std::array<au::flow::detail::TraceBuffer, au::flow::detail::kMaxWorkers + 1> mBuffers;
+#if AURA_FLOW_TRACE_ENABLED
+    std::array<TraceBuffer, kMaxWorkers + 1> mBuffers;
+#endif
 };
 Diagnostics::Diagnostics() noexcept  = default;
 Diagnostics::~Diagnostics() noexcept = default;
 int Diagnostics::setEnabled(bool enabled) noexcept
 {
-    if (enabled && !mStorage.load(std::memory_order_acquire)) {
-        try {
-            std::unique_ptr<Storage>    prepared(new Storage());
-            std::lock_guard<std::mutex> lock(mMutex);
-            if (!mOwner) {
-                mOwner = std::move(prepared);
-                mStorage.store(mOwner.get(), std::memory_order_release);
-            }
-        } catch (...) {
-            return au::err::kErrorNoMemory;
-        }
+#if AURA_FLOW_TRACE_ENABLED
+    try {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (enabled && !std::atomic_load_explicit(&mStorage, std::memory_order_acquire))
+            std::atomic_store_explicit(&mStorage, std::make_shared<Storage>(), std::memory_order_release);
+        mEnabled.store(enabled, std::memory_order_release);
+        return 0;
+    } catch (...) {
+        return au::err::kErrorNoMemory;
     }
-    mEnabled.store(enabled, std::memory_order_release);
+#else
+    return enabled ? au::err::kErrorNotSupported : 0;
+#endif
+}
+int Diagnostics::reset() noexcept
+{
+    std::shared_ptr<Storage> retired;
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (mEnabled.load(std::memory_order_acquire))
+            return au::err::kErrorStateInvalid;
+        retired = std::atomic_exchange_explicit(&mStorage, std::shared_ptr<Storage>(), std::memory_order_acq_rel);
+    }
+    return 0;  // Retired readers/writers pin their own old capture; destructor is outside control lock.
+}
+std::size_t Diagnostics::retainedBytes() const noexcept
+{
+#if AURA_FLOW_TRACE_ENABLED
+    return std::atomic_load_explicit(&mStorage, std::memory_order_acquire)
+               ? sizeof(Storage) + (kMaxWorkers + 1) * configuredTraceCapacity() * sizeof(TraceSlot)
+               : 0;
+#else
     return 0;
+#endif
 }
 void Diagnostics::record(std::size_t buffer, std::uint64_t task, std::uint64_t thread, const char* name, char phase,
                          int code, std::uint64_t parent, const char* label, std::size_t labelSize,
-                         const au::flow::detail::ExternalProfile* profile) noexcept
+                         const ExternalProfile* profile) noexcept
 {
+#if AURA_FLOW_TRACE_ENABLED
     if (!enabled())
         return;
-    Storage* storage = mStorage.load(std::memory_order_acquire);
+    const auto storage = std::atomic_load_explicit(&mStorage, std::memory_order_acquire);
     if (storage && buffer < storage->mBuffers.size())
         storage->mBuffers[buffer].record(task, thread, name, phase, code, profile, parent, label, labelSize);
+#else
+    (void)buffer;
+    (void)task;
+    (void)thread;
+    (void)name;
+    (void)phase;
+    (void)code;
+    (void)parent;
+    (void)label;
+    (void)labelSize;
+    (void)profile;
+#endif
 }
 
 int Diagnostics::dumpTrace(const char* path) const noexcept
 {
     if (!path)
         return au::err::kErrorNullPointer;
+#if !AURA_FLOW_TRACE_ENABLED
+    return au::err::kErrorNotSupported;
+#else
     try {
         std::ostringstream out;
         auto               jsonString = [](std::ostream& stream, const char* value) {
@@ -144,11 +189,12 @@ int Diagnostics::dumpTrace(const char* path) const noexcept
         out << "{\"traceEvents\":[";
         bool        first   = true;
         std::size_t dropped = 0;
-        Storage*    storage = mStorage.load(std::memory_order_acquire);
+        const auto  storage = std::atomic_load_explicit(&mStorage, std::memory_order_acquire);
         if (storage)
             for (const auto& buffer : storage->mBuffers) {
                 dropped += buffer.dropped();
-                for (const auto& slot : buffer.slots()) {
+                for (std::size_t i = 0; i < buffer.capacity(); ++i) {
+                    const auto& slot = buffer.slots()[i];
                     if (!slot.mPublished.load(std::memory_order_acquire))
                         continue;  // Safe concurrent export.
                     if (!first)
@@ -183,6 +229,7 @@ int Diagnostics::dumpTrace(const char* path) const noexcept
     } catch (...) {
         return au::err::kErrorNoMemory;
     }
+#endif
 }
 
 }  // namespace detail

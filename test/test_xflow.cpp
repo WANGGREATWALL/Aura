@@ -887,7 +887,10 @@ TEST(XFlow, SingleWorkerAndAllParticipantsMakeProgress)
 TEST(XFlow, DotAndTraceSnapshots)
 {
     au::flow::XFlow& flow = au::flow::XFlow::get();
-    ASSERT_EQ(flow.setTracing(true), 0);
+    const int tracing = flow.setTracing(true);
+    if (tracing == au::err::kErrorNotSupported)
+        GTEST_SKIP() << "Timeline compiled out; DOT-only covered separately";
+    ASSERT_EQ(tracing, 0);
     au::flow::Task work = flow.makeTask([]() -> int { return 0; });
     ASSERT_EQ(work.setName("quoted\\\"name"), 0);
     EXPECT_EQ(code(flow.enqueue(work)), 0);
@@ -910,7 +913,11 @@ TEST(XFlow, DotAndTraceSnapshots)
 
 TEST(XFlow, CapturedStructuredChildrenAndNestedClustersRemainExportable)
 {
-    auto& flow = au::flow::XFlow::get(); ASSERT_EQ(flow.setTracing(true), 0);
+    auto& flow = au::flow::XFlow::get();
+    const int tracing = flow.setTracing(true);
+    if (tracing == au::err::kErrorNotSupported)
+        GTEST_SKIP() << "Timeline compiled out; DOT-only covered separately";
+    ASSERT_EQ(tracing, 0);
     au::flow::Tasks outer, inner;
     ASSERT_EQ(outer.setName("outer"), 0); ASSERT_EQ(inner.setName("inner"), 0);
     auto parent = flow.makeTask([&]() -> int {

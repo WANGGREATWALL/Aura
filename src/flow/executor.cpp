@@ -184,6 +184,8 @@ void Core::run(Node* node, Node** continuation) noexcept
     CpuSlicePause  outerSlice;
     TileSuspension tileSuspension;
     NodeRef        pin(node);
+    if (node->mDiagnostic)
+        node->mDiagnostic->mHistory->state(node->mDiagnostic->mRecord, au::flow::TaskState::Running);
     node->mState.store(au::flow::TaskState::Running, std::memory_order_release);
     Frame frame{node, gFrame};
     if (frame.mPrevious) {

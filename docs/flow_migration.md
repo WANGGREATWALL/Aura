@@ -141,7 +141,7 @@ flow 专属错误段保持原数值与名字，不迁移进通用错误枚举：
 
 优先 Android ARM64/Linux；不删除 sys 的 Apple/Windows 分支或擅自缩小 Aura 目标。当前本轮只在 Linux x86_64 验证；Android NDK/真机、Apple、Windows 未运行。Android CMake 已使用 Threads::Threads 和 log，无 pthread 桩；`std::thread` 不免除工具链的链接配置。亲核性保留显式 CPU 集合，未承诺自动 Big/Mid/Little 分类。
 
-GPU 普通 Task 依赖等待完整完成。因此跨 GPU Task 的 DAG 边存在从 A 设备完成到查询观察、主机清理、B 调度并入队的 host gap；不把 A 自身执行时长计入这段开销。把连续提交放入一个任务可减少任务边间隙，但 native 链仅在具体 context/导入/fence 协议允许时走设备事件链；staging/Image/跨 context 可能仍需主机桥接。没有 `.gpu()` 提示来偷偷改变普通 Task 的完成语义。设备依赖及大小核的最终取舍留 B6/B7 的明确决策与用户设备验收。
+GPU 普通 Task 依赖等待完整完成。因此跨 GPU Task 的 DAG 边存在从 A 设备完成到查询观察、主机清理、B 调度并入队的 host gap；不把 A 自身执行时长计入这段开销。把连续提交放入一个任务可减少任务边间隙，但 native 链仅在具体 context/导入/fence 协议允许时走设备事件链；staging/Image/跨 context 可能仍需主机桥接。没有 `.gpu()` 提示来偷偷改变普通 Task 的完成语义。B6 明确本版不增加设备依赖边或自动 Big/Mid/Little 分类：保留普通完整完成边、受约束的 wrapper 原生链和显式 CPU 集合。设备边还需定义 context、资源别名、清理/失败传播及 enqueue/完成双状态，不能用一个布尔提示替代。当前主机可用核的 cpu_capacity 均为 1024，不能代表手机拓扑；缺失/均匀容量时保持 SystemDefault，不按 CPU 编号猜大小核。主机合成 GPU 链只验证 host gap 的存在，不是设备性能数据；真实 GPU/异构核和 FlashPE 仍由用户验收，见 [B6 报告](flow_validation/B6-2026-10-21.md)。
 
 ## 8 FlashPE 整合验收
 
@@ -155,3 +155,34 @@ rg -n 'XImage|enqueue|std::move|decoderedA0' <相关算法目录>
 ```
 
 对每个 addPipeline/get 核对旧 future 的返回/异常/生命周期语义，再选择 enqueue/wait；`get()` 也可能属于完全不同的类型。对每个 tiled 宏核对 `_i/_ti`、异步发布、共享状态与错误处理。Aura flow 与 mm/gpu 完成协议有关，不能仅拷贝 flow 文件就假设仍是同一内存路径。候选接入后需测业务输出、错误路径、帧耗时 p50/p95；这不由主机例子或微基准替代。
+
+
+## 9 DOT 与可裁剪的时间线
+
+`setGraphCapture(true)` / C `au_flow_graph_capture(1)` 独立启用 DOT 动态历史，不分配时间线。**在提交根任务前启用**：根接受时固定选择，后代继承；中途启用不会补录旧根的后代，中途关闭不会中断已捕获作用域或抹掉历史。静态依赖/簇仍可导出；动态图为逐节点快照，不承诺一个全图线性化时刻。诊断 OOM 只增加 dropped，不拒绝本来有效的计算。
+
+历史保存 ID、完整名称、结构、状态、错误和根因，不保存 NodeRef、闭包或资源租约。它仍占用内存，直到最后一个相关捕获句柄释放；没有无界常驻全局历史。正常静态任务依赖与结构化执行引用继续按原契约保活任务。
+
+`setTracing(bool)` / C `au_flow_tracing` 保留时间线与新根图捕获的组合开关；需要独立控制时随后设置 `setGraphCapture`。跨线程切换、导出和 reset 有内存安全保证；应用若依赖多个配置调用的先后效果，应自行串行化这些调用。
+
+| 构建选项 | 默认 | 行为 |
+| --- | --- | --- |
+| ENABLE_FLOW_TRACE | ON | 保留可选时间线实现；运行时仍默认关闭 |
+| FLOW_TRACE_EVENTS_PER_LANE | 1024 | 每 lane 1–65536 条，9 个 lane；仅配置存储容量，不限制任务数 |
+
+默认 x86_64 存储约 1.69 MiB（旧版约 13.50 MiB），首次启用才分配；未启用时无 slot 存储。使用有界、不可覆盖的采集窗口，满后增加 dropped。**不采用环形覆盖**，避免导出读取正在覆写的槽位，也不承诺长会话自动保留最新事件。需要连续长时分析时使用 Perfetto 等外部工具，或按以下顺序分窗口捕获：
+
+```cpp
+int code = flow.setTracing(true);
+if (code) return code;
+// 提交并等待本次希望捕获的工作。
+code = flow.setTracing(false);  // 停止记录，保留窗口以供导出。
+if (code) return code;
+code = flow.dumpTrace("capture.json");
+if (code) return code;
+return flow.resetTrace();       // 下次 enable 创建新窗口；不清除 DOT。
+```
+
+reset（C `au_flow_trace_reset`）要求采集已关闭，否则返回 StateInvalid；关闭本身不释放窗口。reset 摘下当前存储，已进入的记录/导出在自己的旧窗口 pin 上安全完成，最后一个 pin 释放后回收；不保证 OS PSS 同步降到零。采集切换可能留下部分片段。trace 关闭的热路径只检查开关，opt-in 记录会取得存储 pin。
+
+`ENABLE_FLOW_TRACE=OFF` 时，启用时间线和 dumpTrace 返回 NotSupported，关闭与 reset 成功，DOT-only 仍可用；不要忽略启用失败而当作已开始记录。两项新增 C 函数是 ABI v1 的增量符号，原结果/句柄布局未改。旧消费者可链接新库；使用新函数的消费者需配套新库。

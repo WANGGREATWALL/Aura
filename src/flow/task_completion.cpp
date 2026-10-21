@@ -58,6 +58,8 @@ void Core::activate(Node* node, Node** continuation) noexcept
 void Core::bodyEnd(Node* node, int code, Node** continuation) noexcept
 {
     node->mErrors.body(code);
+    if (node->mDiagnostic)
+        node->mDiagnostic->mHistory->state(node->mDiagnostic->mRecord, au::flow::TaskState::Waiting);
     node->mState.store(au::flow::TaskState::Waiting, std::memory_order_release);  // Body cannot run again.
     if (node->mOutstanding.fetch_sub(1, std::memory_order_acq_rel) == 1)
         finish(node, continuation);  // Gather child/event writes.
@@ -78,6 +80,8 @@ void Core::finish(Node* node, Node** continuation) noexcept
             node->mClosure.clear();  // No locks; cleanup cannot extend a closed body reservation.
         }
         node->mResult = node->mErrors.complete(node->mId);
+        if (node->mDiagnostic)
+            node->mDiagnostic->mHistory->complete(node->mDiagnostic->mRecord, node->mResult);
         trace(node, "Task", 'e', node->mResult.mCode);
         bool cooperative;
         {
