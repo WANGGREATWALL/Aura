@@ -8,6 +8,7 @@
 #include "mm/backend.h"
 #include "mm/pool_backend.h"
 #include "mm/registry.h"
+#include "mm/access.h"
 
 namespace au {
 namespace mm {
@@ -42,30 +43,17 @@ int free(void* ptr) noexcept
     if (ptr == nullptr)
         return au::err::kErrorNullPointer;
 
-    MemBlock block;
-    int retTake = Registry::instance().take(ptr, block);
-    if (retTake != au::err::kSuccess)
-        return retTake;
-
-    return forBackend(block.backend).release(block);
+    return Registry::instance().retire(ptr);
 }
 
 int syncCpuToDevice(void* ptr) noexcept
 {
-    MemBlock block;
-    int retFind = Registry::instance().find(ptr, block);
-    if (retFind != au::err::kSuccess)
-        return retFind;
-    return forBackend(block.backend).syncCpuToDevice(block);
+    return au::mm::detail::legacySync(ptr, false);
 }
 
 int syncDeviceToCpu(void* ptr) noexcept
 {
-    MemBlock block;
-    int retFind = Registry::instance().find(ptr, block);
-    if (retFind != au::err::kSuccess)
-        return retFind;
-    return forBackend(block.backend).syncDeviceToCpu(block);
+    return au::mm::detail::legacySync(ptr, true);
 }
 
 int query(void* ptr, MemBlock& out) noexcept

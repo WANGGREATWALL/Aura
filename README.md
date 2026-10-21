@@ -54,11 +54,10 @@ Aura is a curated collection of high-performance C++17 components designed to st
 | `au::sys` | `xplatform` | Hardware topology (CPU cores, memory), environment variables, and OS detection. | ![stable](https://img.shields.io/badge/stable-31A843?style=flat) |
 | | `xdlib` | Unified cross-platform dynamic library loading (dlopen / LoadLibrary). | ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) |
 | `au::cv` | `ximage` | Multi-plane image descriptors, explicit formats and color spaces, single-block allocation, borrowed copies, and ownership-transferring `XImage` moves. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
-| `au::flow` | `xthread_flow` | Directed acyclic graph of tasks with parallel scheduling across thread-pool workers. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
-| | `xthreadpool` | Low-latency work-stealing thread pool with priority-aware task dispatch. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
+| `au::flow` | `xflow` | Dynamic task dependencies, structured completion, cooperative waits, and tiled parallelism with private workers. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
 | `au::json` | `xjson` | Rapid JSON parsing and serialization built on cJSON with C++ RAII wrappers. | ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) |
 
-`au::cv::Image` is a plain descriptor: storage returned by `createImage()` requires `destroyImage()`. An `XImage` created from dimensions owns its storage; copying it or constructing one from an `Image` lvalue borrows that storage and requires the original owner to remain alive. Moving an `XImage` transfers ownership. `Image` rvalues cannot be adopted by `XImage`.
+`au::cv::Image` is a plain descriptor: storage returned by `createImage()` requires `destroyImage()`. An `XImage` created from dimensions owns its storage; copying it or constructing one from an `Image` lvalue borrows that storage and requires the original owner to remain alive. Moving an owning `XImage` transfers ownership; moving a borrowed view remains a borrow. `Image` rvalues cannot be adopted by `XImage`.
 
 ### Supported Platforms
 * **Desktop**: macOS (Apple Silicon/Intel), Linux (x86_64/AArch64), Windows (MSVC)
@@ -84,6 +83,26 @@ make -j$(sysctl -n hw.ncpu)
 ./aura_test
 ```
 
+`aura` is the production library and is built without fault-injection hooks,
+even when tests are enabled. Tests that need hooks link the separate
+`aura_testing` library; `flow_production_test` exercises the public C API against
+the production archive. Use `-DBUILD_TESTING=OFF` for a production-only top-level
+build. When Aura is embedded with `add_subdirectory`, its own tests default to
+OFF; opt in with `-DAURA_BUILD_TESTS=ON` when the parent permits testing. The
+parent's `BUILD_TESTING` option is preserved. Android thread support is selected
+through `Threads::Threads`, and Android logging links `log`.
+
+The current flow review and staged acceptance checklist is tracked in
+[flow_remediation_plan.md](docs/flow_remediation_plan.md).
+Public API usage, `parallelFor`, state queries, structured children and image/handle
+lifetimes are explained in [flow_migration.md](docs/flow_migration.md); its
+[C++11 production examples](test/flow_migration.cpp) run as `flow_migration` in CTest.
+Flow remains part of Aura and may use its common services. Its core uses a generic
+external-completion protocol; OpenCL types and driver calls stay in the GPU provider.
+Flow trace, DOT export and task naming were removed in B7; flow C ABI is now **v2**.
+Rebuild consumers with matching headers and libraries. Changes and validation limits
+are recorded in the [B7 report](docs/flow_validation/B7-2026-10-21.md).
+
 ### Design Philosophy
 * **Minimal Dependencies**: Strictly avoids heavy external frameworks.
 * **Performance First**: Prioritizes cache-friendly data structures and zero-copy semantics.
@@ -94,3 +113,9 @@ make -j$(sysctl -n hw.ncpu)
 <p align="center">
   Copyright (c) 2020-2026 WANGGREATWALL. All rights reserved.
 </p>
+
+au::flow 的同步 tiled 迭代及微基准见 [B1/B2 报告](docs/flow_validation/B1-B2-2026-10-20.md)。开启 `ENABLE_FLOW_BENCHMARKS=ON` 可构建 `flow_microbenchmark`；它链接生产库，不启用故障钩子。tile 回调现在禁止异步 Task/GPU 发布，外部同步循环由 shutdown 排空、从 waitAll 的异步根快照中排除，详见报告中的迁移说明。
+
+B3 的等待、单查询者与默认 2 秒线程退休见 [B3 报告](docs/flow_validation/B3-2026-10-20.md)。可选 `flow_idle_benchmark` 使用生产库和模拟外部事件，对照查询次数、进程 context switch、线程数、PSS 与退休后首次任务成本；它不执行真实 GPU 工作。
+
+B4 的图遍历、Core 职责拆分、错误与上下文整理见 [B4 报告](docs/flow_validation/B4-2026-10-21.md)及[锁关系](docs/flow_locking.md)。全部必要环检查和公开接口保持；可选 `flow_graph_benchmark` 仅在 flow 故障测试和 benchmark 均启用时生成，链接 aura_testing 用于算法/锁内区间诊断，生产 CPU/idle 测量仍链接正常 aura。

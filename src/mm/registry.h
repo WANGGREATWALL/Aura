@@ -2,15 +2,18 @@
 #define AURA_MM_REGISTRY_H_
 
 #include <mutex>
-#include <unordered_map>
+#include <atomic>
+#include <map>
+#include <memory>
 
 #include "mm/xmemory.h"
+#include "mm/memory_control.h"
 
 namespace au {
 namespace mm {
 
-/// Process-wide ptr -> MemBlock table. Single mutex, allocations are
-/// coarse-grained (image/model buffers, not malloc spam).
+/// Per-linked-instance owner registry. Interior views resolve to one stable
+/// allocation; asynchronous leases survive removal of the owner's entry.
 class Registry
 {
 public:
@@ -18,7 +21,10 @@ public:
 
     int insert(const MemBlock& block) noexcept;
     int find(void* ptr, MemBlock& out) const noexcept;
-    int take(void* ptr, MemBlock& out) noexcept;
+    int retire(void* ptr) noexcept;
+    int acquire(const void* ptr, std::size_t size, au::mm::detail::MemoryLease& out) const noexcept;
+    int registerExternal(const ::au_mm_external_memory& memory, void** out) noexcept;
+    int unregisterExternal(void* handle) noexcept;
 
 private:
     Registry() = default;
@@ -26,7 +32,17 @@ private:
     Registry& operator=(const Registry&) = delete;
 
     mutable std::mutex mMutex;
-    std::unordered_map<void*, MemBlock> mTable;
+    struct View {
+        std::shared_ptr<au::mm::detail::MemoryControl> mControl;
+        std::shared_ptr<au::mm::detail::ExternalOwner> mOwner;
+        std::size_t mSize = 0;
+        std::uint64_t mRegistration = 0; // Zero is an Aura-owned allocation.
+    };
+    std::map<std::uintptr_t, au::mm::Registry::View> mTable;
+    std::map<au::sys::memory::FdIdentity, std::weak_ptr<au::mm::detail::MemoryControl>> mFds;
+    std::atomic<std::uint64_t> mNextId{1};
+    int nextId(std::uint64_t& out) noexcept;
+    bool overlaps(std::uintptr_t begin, std::size_t size) const noexcept; // mMutex held.
 };
 
 }  // namespace mm

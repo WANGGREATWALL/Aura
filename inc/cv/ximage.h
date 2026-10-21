@@ -9,7 +9,7 @@ namespace cv {
 // C++11 image handle. Copies borrow the same storage; moving an owning handle
 // transfers ownership. A borrowed handle must not outlive the storage owner.
 // The wrapper is header-only and has no exported C++ class ABI.
-class XImage final
+class AU_LOCAL XImage final
 {
 public:
     XImage() noexcept = default;

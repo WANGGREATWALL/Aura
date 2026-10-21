@@ -1,0 +1,61 @@
+#ifndef AURA_FLOW_COMPLETION_H_
+#define AURA_FLOW_COMPLETION_H_
+
+#include "flow/xflow_types.h"
+
+namespace au {
+namespace flow AU_LOCAL {
+namespace detail {
+
+struct ExternalToken;
+// Providers with static teardown initialize the executor before their own state.
+void initializeExecutor() noexcept;
+bool cleanupActive() noexcept;
+// Token remains live until the provider publishes done. This call pins its
+// parent independently, so publication inside fn may safely release the token.
+void cleanupExternal(au::flow::detail::ExternalToken* token, void (*fn)(void*) noexcept, void* payload) noexcept;
+// Managed workers may execute ready work while a provider waits on a resource
+// event. External callers and cleanup extents never acquire scheduler work.
+bool assistExternalWait(bool (*ready)(void*) noexcept, void* payload,
+                        std::uint64_t retryMicroseconds = UINT64_MAX) noexcept;
+void notifyExternalWaiters() noexcept;
+void leaveExternalWait() noexcept;
+struct ExternalStatus
+{
+    int                   mCode        = 0;
+    int                   mNativeCode  = 0;
+    au::flow::ErrorDomain mDomain      = au::flow::ErrorDomain::None;
+    std::uint64_t         mCauseTaskId = 0;  // Optional predecessor root, preserved through asynchronous native chains.
+};
+struct ExternalOps
+{
+    // A query error is not proof that the device stopped. Set done only after
+    // establishing terminal completion. Called without scheduler locks.
+    int (*mPoll)(void*, bool* done, au::flow::detail::ExternalStatus*) noexcept = nullptr;
+    au::flow::detail::ExternalStatus (*mFinalize)(void*) noexcept               = nullptr;
+    void (*mRelease)(void*) noexcept                                            = nullptr;
+};
+
+// Prepare BEFORE native enqueue. A null token means there is no managed task;
+// the provider must use its standalone pending registry instead. On prepare
+// failure payload ownership stays with the caller. Pure tile callbacks reject
+// preparation (before native enqueue), even on an unmanaged caller. On non-null success it moves
+// to the token until the provider's normal-thread release callback.
+int           prepareExternal(const au::flow::detail::ExternalOps& ops, void* payload,
+                              au::flow::detail::ExternalToken** out) noexcept;
+std::uint64_t currentTaskId() noexcept;
+// Synchronous wrapper preparation/enqueue failures can enrich an int return
+// with the actual native status without requiring an accepted native event.
+void recordExternalError(const au::flow::detail::ExternalStatus& status) noexcept;
+// Providers query on normal threads. Notification before publication is also
+// allowed while the registrar still owns the token; never call after release.
+void notifyExternal(au::flow::detail::ExternalToken* token, const au::flow::detail::ExternalStatus& status) noexcept;
+// Publish a prepared query to the scheduler without allocating another record.
+void pollExternal(au::flow::detail::ExternalToken* token) noexcept;
+// Last registrar access. No use of token after this call.
+void leaveExternalRegistrar(au::flow::detail::ExternalToken* token) noexcept;
+
+}  // namespace detail
+}  // namespace flow AU_LOCAL
+}  // namespace au
+#endif

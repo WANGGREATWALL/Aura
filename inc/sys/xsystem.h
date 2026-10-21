@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <string>
+#include "sys/xvisibility.h"
 
 #if defined(_WIN32)
 #  define AU_OS_WINDOWS 1
