@@ -9,7 +9,7 @@ IndentWidth: 4                              # 4 空格缩进，层级更分明
 TabWidth: 4                                 # Tab 宽度等同于缩进
 UseTab: Never                               # 禁用 Tab，纯空格缩进
 MaxEmptyLinesToKeep: 1                      # 允许最多保留1个空行
-SeparateDefinitionBlocks: Leave             # 保留手动控制的空行 (不自动增删)
+SeparateDefinitionBlocks: Always            # 函数、类等定义块之间保留空行
 
 # --- 大括号与换行逻辑 ---
 BreakBeforeBraces: Custom

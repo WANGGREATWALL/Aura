@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "flow/xflow.h"
+#include "flow/xflow_core.h"
 #include "gtest/gtest.h"
 #if defined(__linux__) || defined(__ANDROID__)
 #include <sched.h>
@@ -22,8 +23,10 @@ bool until(const std::function<bool()>& fn)
             return false;
         std::this_thread::yield();
     }
+
     return true;
 }
+
 struct Member
 {
     int add(int& value, int amount) const
@@ -33,14 +36,17 @@ struct Member
     }
 };
 }  // namespace
+
 class XFlow : public ::testing::Test
 {
 protected:
     void TearDown() override { (void)au::flow::Flow::get().waitAll(); }
 };
+
 TEST_F(XFlow, LazyThreadSpawning)
 {
     auto& flow = au::flow::Flow::get();
+    flow.releaseIdleWorkers();  // Independent of test order and repeated runs.
     ASSERT_EQ(flow.workerCount(), 0u);
     std::atomic<bool> entered{false}, release{false};
     auto              first = flow.enqueue([&] {
@@ -59,6 +65,229 @@ TEST_F(XFlow, LazyThreadSpawning)
         EXPECT_EQ(task.wait(), 0);
     EXPECT_EQ(flow.waitAll(), 0);
 }
+
+namespace {
+template <size_t Bytes, size_t Alignment = alignof(std::max_align_t)>
+struct alignas(Alignment) PayloadProbe
+{
+    unsigned char      mBytes[Bytes]{};
+    std::atomic<int>*  mCalls;
+    std::atomic<int>*  mDestructors;
+    std::atomic<bool>* mGate;
+    bool               mOwns = true;
+
+    PayloadProbe(std::atomic<int>& calls, std::atomic<int>& destructors, std::atomic<bool>* gate = nullptr)
+        : mCalls(&calls), mDestructors(&destructors), mGate(gate)
+    {
+    }
+
+    PayloadProbe(PayloadProbe&& other) noexcept
+        : mCalls(other.mCalls), mDestructors(other.mDestructors), mGate(other.mGate)
+    {
+        other.mOwns = false;
+    }
+
+    PayloadProbe(const PayloadProbe&)            = delete;
+    PayloadProbe& operator=(const PayloadProbe&) = delete;
+
+    ~PayloadProbe()
+    {
+        if (mOwns)
+            mDestructors->fetch_add(1, std::memory_order_relaxed);
+    }
+
+    int operator()()
+    {
+        mCalls->fetch_add(1, std::memory_order_release);
+        return !mGate || until([&] { return mGate->load(std::memory_order_acquire); }) ? 0 : 1;
+    }
+};
+
+template <size_t Bytes>
+struct ThrowingPayload
+{
+    unsigned char mBytes[Bytes]{};
+    int*          mDestructors;
+
+    explicit ThrowingPayload(int& destructors) : mDestructors(&destructors) {}
+
+    ThrowingPayload(const ThrowingPayload&) { throw std::runtime_error("copy failed"); }
+
+    ~ThrowingPayload() { ++*mDestructors; }
+
+    int operator()() { return 0; }
+};
+}  // namespace
+
+TEST_F(XFlow, InlineAndLargePayloadLifetime)
+{
+    auto&            flow = au::flow::Flow::get();
+    std::atomic<int> calls{0}, destructors{0};
+    {
+        auto small = flow.create(PayloadProbe<1>(calls, destructors));
+        ASSERT_TRUE(small.valid());
+        auto* handle = small.nativeHandle();
+        EXPECT_TRUE(handle->mUsesInlinePayload);
+        EXPECT_EQ(handle->mNode.get(), &handle->mStorage);
+        EXPECT_EQ(handle->mNode->mPayload.get(), handle->mInlinePayload);
+        ASSERT_EQ(flow.enqueue(small), 0);
+        EXPECT_EQ(small.wait(), 0);
+        EXPECT_EQ(destructors.load(std::memory_order_relaxed), 1);
+    }
+
+    {
+        auto large = flow.create(PayloadProbe<256>(calls, destructors));
+        ASSERT_TRUE(large.valid());
+        EXPECT_FALSE(large.nativeHandle()->mUsesInlinePayload);
+        ASSERT_EQ(flow.enqueue(large), 0);
+        EXPECT_EQ(large.wait(), 0);
+    }
+
+    {
+        auto aligned = flow.create(PayloadProbe<1, 128>(calls, destructors));
+        ASSERT_TRUE(aligned.valid());
+        EXPECT_FALSE(aligned.nativeHandle()->mUsesInlinePayload);
+        EXPECT_EQ(reinterpret_cast<uintptr_t>(aligned.nativeHandle()->mNode->mPayload.get()) % 128, 0u);
+        ASSERT_EQ(flow.enqueue(aligned), 0);
+        EXPECT_EQ(aligned.wait(), 0);
+    }
+
+    {
+        auto abandoned = flow.create(PayloadProbe<1>(calls, destructors));
+        EXPECT_TRUE(abandoned.valid());
+    }
+
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 3);
+    EXPECT_EQ(destructors.load(std::memory_order_relaxed), 4);
+
+    // Dropping the last public handle must not free in-flight inline bytes.
+    std::atomic<bool> release{false};
+    auto              detached = flow.enqueue(PayloadProbe<1>(calls, destructors, &release));
+    EXPECT_TRUE(until([&] { return calls.load(std::memory_order_acquire) == 4; }));
+    detached = au::flow::Task();
+    release.store(true, std::memory_order_release);
+    EXPECT_EQ(flow.waitAll(), 0);
+    EXPECT_EQ(destructors.load(std::memory_order_relaxed), 5);
+
+    int failedDestructors = 0;
+    {
+        ThrowingPayload<1>   small(failedDestructors);
+        ThrowingPayload<256> large(failedDestructors);
+        EXPECT_EQ(flow.create(small).wait(), au::err::kErrorUnknown);
+        EXPECT_EQ(flow.create(large).wait(), au::err::kErrorUnknown);
+        EXPECT_EQ(failedDestructors, 0);  // Never destroy unconstructed storage.
+    }
+
+    EXPECT_EQ(failedDestructors, 2);
+
+    void* storage = reinterpret_cast<void*>(1);
+    EXPECT_EQ(au_flow_create_task_ex(nullptr, 1, 3, [](void*) { return 0; }, nullptr, &storage), nullptr);
+    EXPECT_EQ(storage, nullptr);
+    auto raw =
+        au_flow_create_task_ex(nullptr, 64, alignof(std::max_align_t), [](void*) { return 0; }, nullptr, &storage);
+    ASSERT_NE(raw, nullptr);
+    EXPECT_EQ(au_flow_enqueue_task(raw), au::err::kErrorNotReady);
+    au_flow_release_task(raw);
+}
+
+TEST_F(XFlow, ReleaseIdleWorkersAndRespawn)
+{
+    auto& flow = au::flow::Flow::get();
+    for (int round = 0; round < 3; ++round) {
+        EXPECT_EQ(flow.enqueue([] {}).wait(), 0);
+        EXPECT_GT(flow.workerCount(), 0u);
+        flow.releaseIdleWorkers();
+        EXPECT_EQ(flow.workerCount(), 0u);
+        flow.parallelizeTiledTasks(200, 1, [](size_t, size_t) {});
+        EXPECT_GT(flow.workerCount(), 0u);
+        flow.releaseIdleWorkers();
+        EXPECT_EQ(flow.workerCount(), 0u);
+    }
+
+    EXPECT_EQ(flow.enqueue([&] { flow.releaseIdleWorkers(); }).wait(), 0);
+    flow.parallelizeTiledTasks(20, 1, [&](size_t, size_t) { flow.releaseIdleWorkers(); });
+
+    std::atomic<int>  calls{0};
+    std::atomic<bool> entered{false}, release{false}, drained{false}, submitted{false};
+    std::thread       tile([&] {
+        flow.parallelizeTiledTasks(1, 1, [&](size_t, size_t) {
+            entered.store(true, std::memory_order_release);
+            if (until([&] { return release.load(std::memory_order_acquire); }))
+                (void)flow.enqueue([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+        });
+    });
+    EXPECT_TRUE(until([&] { return entered.load(std::memory_order_acquire); }));
+    std::thread reclaimer([&] {
+        flow.releaseIdleWorkers();
+        drained.store(true, std::memory_order_release);
+    });
+    EXPECT_TRUE(until([&] {
+        auto&                       core = au::flow::detail::core();
+        std::lock_guard<std::mutex> lock(core.mMutex);
+        return core.mReleasing;
+    }));
+    EXPECT_FALSE(drained.load(std::memory_order_acquire));
+    au::flow::Task next;
+    std::thread    producer([&] {
+        next = flow.enqueue([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+        submitted.store(true, std::memory_order_release);
+    });
+    EXPECT_FALSE(submitted.load(std::memory_order_acquire));
+    release.store(true, std::memory_order_release);
+    tile.join();
+    reclaimer.join();
+    producer.join();
+    EXPECT_TRUE(drained.load(std::memory_order_acquire));
+    EXPECT_EQ(next.wait(), 0);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 2);
+}
+
+TEST_F(XFlow, TileWorkerIndex)
+{
+    auto&                             flow = au::flow::Flow::get();
+    std::array<std::atomic<bool>, 9>  busy{};
+    std::array<std::atomic<int>, 257> seen{};
+    std::atomic<bool>                 caller{false};
+    std::atomic<int>                  errors{0};
+    const auto                        callingThread = std::this_thread::get_id();
+    flow.parallelizeTiledTasks(seen.size(), 1, [&](size_t begin, size_t end, size_t worker) {
+        if (worker >= busy.size()) {
+            errors.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (worker == 0) {
+            if (std::this_thread::get_id() != callingThread)
+                errors.fetch_add(1, std::memory_order_relaxed);
+            caller.store(true, std::memory_order_release);
+        } else if (!until([&] { return caller.load(std::memory_order_acquire); })) {
+            errors.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (busy[worker].exchange(true, std::memory_order_acq_rel))
+            errors.fetch_add(1, std::memory_order_relaxed);
+        for (size_t i = begin; i < end; ++i)
+            seen[i].fetch_add(1, std::memory_order_relaxed);
+        flow.parallelizeTiledTasks(3, 1, [&](size_t, size_t, size_t nested) {
+            if (nested != 0)
+                errors.fetch_add(1, std::memory_order_relaxed);
+        });
+        std::this_thread::yield();
+        busy[worker].store(false, std::memory_order_release);
+    });
+    EXPECT_TRUE(caller.load(std::memory_order_acquire));
+    EXPECT_EQ(errors.load(std::memory_order_relaxed), 0);
+    for (auto& value : seen)
+        EXPECT_EQ(value.load(std::memory_order_relaxed), 1);
+    EXPECT_EQ(flow.enqueue([&] {
+                      flow.parallelizeTiledTasks(20, 1, [&](size_t, size_t, size_t worker) {
+                          if (worker > 8)
+                              errors.fetch_add(1, std::memory_order_relaxed);
+                      });
+                  })
+                  .wait(),
+              0);
+    EXPECT_EQ(errors.load(std::memory_order_relaxed), 0);
+}
+
 TEST_F(XFlow, AsyncEnqueueAndWait)
 {
     auto& flow  = au::flow::Flow::get();
@@ -71,12 +300,12 @@ TEST_F(XFlow, AsyncEnqueueAndWait)
     EXPECT_EQ(flow.enqueue([](std::unique_ptr<int> p) -> int { return *p == 19 ? 0 : 1; }, std::move(owned)).wait(), 0);
     EXPECT_FALSE(owned);
     EXPECT_EQ(flow.enqueue([]() -> int { return 71; }).wait(), 71);
-    EXPECT_EQ(flow.enqueue([]() -> int { throw std::runtime_error("unexpected"); }).wait(), XFLOW_ERROR_EXCEPTION);
+    EXPECT_EQ(flow.enqueue([]() -> int { throw std::runtime_error("unexpected"); }).wait(), au::err::kErrorUnknown);
     au::flow::Task invalid;
-    EXPECT_EQ(invalid.wait(), XFLOW_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(invalid.wait(), au::err::kErrorInvalidParam);
     auto draft = flow.create([] {});
-    EXPECT_EQ(draft.wait(), XFLOW_ERROR_NOT_READY);
-    EXPECT_EQ(draft.result(), XFLOW_ERROR_NOT_READY);
+    EXPECT_EQ(draft.wait(), au::err::kErrorNotReady);
+    EXPECT_EQ(draft.result(), au::err::kErrorNotReady);
     auto copy = draft;
     draft     = std::move(draft);
     copy      = copy;
@@ -94,9 +323,11 @@ TEST_F(XFlow, AsyncEnqueueAndWait)
         EXPECT_EQ(group.add(detached), 0);
         EXPECT_EQ(flow.enqueue(group), 0);
     }
+
     EXPECT_EQ(flow.waitAll(), 0);
     EXPECT_TRUE(released.expired());
 }
+
 TEST_F(XFlow, DependencyChainAndDiamondDAG)
 {
     auto&            flow = au::flow::Flow::get();
@@ -121,6 +352,7 @@ TEST_F(XFlow, DependencyChainAndDiamondDAG)
     EXPECT_EQ(flow.enqueue(graph), 0);
     EXPECT_EQ(stage.load(std::memory_order_relaxed), 3);
 }
+
 TEST_F(XFlow, DynamicEnqueueAfter)
 {
     auto& flow = au::flow::Flow::get();
@@ -143,12 +375,14 @@ TEST_F(XFlow, DynamicEnqueueAfter)
         EXPECT_EQ(tail.wait(), 0);
         EXPECT_EQ(flow.enqueueAfter(pred, [] {}).wait(), 0);  // Completed predecessor.
     }
+
     auto running = flow.enqueue([] {});
     ASSERT_EQ(running.wait(), 0);
-    EXPECT_EQ((running >> running).code(), XFLOW_ERROR_CYCLE_DETECTED);
+    EXPECT_EQ((running >> running).code(), au::err::kErrorFlowCycleDetected);
     EXPECT_EQ(running.result(), 0);
-    EXPECT_EQ(flow.enqueueAfter(au::flow::Task(), [] {}).wait(), XFLOW_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(flow.enqueueAfter(au::flow::Task(), [] {}).wait(), au::err::kErrorInvalidParam);
 }
+
 TEST_F(XFlow, TasksClusterAndDotDump)
 {
     auto&            flow = au::flow::Flow::get();
@@ -196,12 +430,13 @@ TEST_F(XFlow, TasksClusterAndDotDump)
     EXPECT_EQ(flow.enqueue(mixed), 0);
     EXPECT_EQ(mixed.wait(), 0);
     auto incoming = flow.create([] {});
-    EXPECT_EQ(incoming.precede(mixed), XFLOW_ERROR_ALREADY_ENQUEUED);
+    EXPECT_EQ(incoming.precede(mixed), au::err::kErrorStateInvalid);
     EXPECT_EQ(accepted.wait(), 0);
     au::flow::Tasks rejected;
-    EXPECT_EQ(rejected.add(au::flow::Task()), XFLOW_ERROR_INVALID_ARGUMENT);
-    EXPECT_EQ(flow.enqueue(rejected), XFLOW_ERROR_INVALID_ARGUMENT);
+    EXPECT_EQ(rejected.add(au::flow::Task()), au::err::kErrorInvalidParam);
+    EXPECT_EQ(flow.enqueue(rejected), au::err::kErrorInvalidParam);
 }
+
 TEST_F(XFlow, ErrorShortCircuiting)
 {
     auto&            flow = au::flow::Flow::get();
@@ -220,6 +455,7 @@ TEST_F(XFlow, ErrorShortCircuiting)
     EXPECT_EQ(flow.enqueueAfter(a, [&] { ++ran; }).wait(), -123);
     EXPECT_EQ(ran.load(std::memory_order_relaxed), 0);
 }
+
 TEST_F(XFlow, CycleDetectionAndDiscardedDraftLifetime)
 {
     auto&              flow = au::flow::Flow::get();
@@ -228,23 +464,25 @@ TEST_F(XFlow, CycleDetectionAndDiscardedDraftLifetime)
         auto owner = std::make_shared<int>(1);
         observed   = owner;
         auto a = flow.create([owner] {}), b = flow.create([] {});
-        EXPECT_EQ((a >> b >> a).code(), XFLOW_ERROR_CYCLE_DETECTED);
+        EXPECT_EQ((a >> b >> a).code(), au::err::kErrorFlowCycleDetected);
         au::flow::Tasks group;
         (void)group.add(a, b);
-        EXPECT_EQ(flow.enqueue(group), XFLOW_ERROR_CYCLE_DETECTED);
+        EXPECT_EQ(flow.enqueue(group), au::err::kErrorFlowCycleDetected);
     }
+
     EXPECT_TRUE(observed.expired());
     auto self = flow.create([] {});
-    EXPECT_EQ(self.precede(self), XFLOW_ERROR_CYCLE_DETECTED);
-    EXPECT_EQ(flow.enqueue(self), XFLOW_ERROR_CYCLE_DETECTED);
+    EXPECT_EQ(self.precede(self), au::err::kErrorFlowCycleDetected);
+    EXPECT_EQ(flow.enqueue(self), au::err::kErrorFlowCycleDetected);
     auto target = flow.enqueue([] {});
     EXPECT_EQ(target.wait(), 0);
-    EXPECT_EQ(self.precede(target), XFLOW_ERROR_ALREADY_ENQUEUED);
+    EXPECT_EQ(self.precede(target), au::err::kErrorStateInvalid);
     EXPECT_EQ(target.result(), 0);
     auto pred = flow.create([] {}), successor = flow.create([] {});
     EXPECT_EQ(pred.precede(successor), 0);
-    EXPECT_EQ(flow.enqueue(successor), XFLOW_ERROR_INVALID_ARGUMENT);  // No permanently unsubmitted predecessor.
+    EXPECT_EQ(flow.enqueue(successor), au::err::kErrorInvalidParam);  // No permanently unsubmitted predecessor.
 }
+
 TEST_F(XFlow, CooperativeWaitAndWaitCycles)
 {
     auto& flow  = au::flow::Flow::get();
@@ -253,7 +491,7 @@ TEST_F(XFlow, CooperativeWaitAndWaitCycles)
         return child.wait();
     });
     EXPECT_EQ(outer.wait(), 23);
-    EXPECT_EQ(flow.enqueue([&] { return flow.waitAll(); }).wait(), XFLOW_ERROR_WOULD_DEADLOCK);
+    EXPECT_EQ(flow.enqueue([&] { return flow.waitAll(); }).wait(), au::err::kErrorFlowWouldDeadlock);
     std::atomic<bool> go{false};
     au::flow::Task    a, b;
     a = flow.create([&] { return until([&] { return go.load(std::memory_order_acquire); }) ? b.wait() : 1; });
@@ -261,9 +499,10 @@ TEST_F(XFlow, CooperativeWaitAndWaitCycles)
     EXPECT_EQ(flow.enqueue(a), 0);
     EXPECT_EQ(flow.enqueue(b), 0);
     go.store(true, std::memory_order_release);
-    EXPECT_EQ(a.wait(), XFLOW_ERROR_WOULD_DEADLOCK);
-    EXPECT_EQ(b.wait(), XFLOW_ERROR_WOULD_DEADLOCK);
+    EXPECT_EQ(a.wait(), au::err::kErrorFlowWouldDeadlock);
+    EXPECT_EQ(b.wait(), au::err::kErrorFlowWouldDeadlock);
 }
+
 TEST_F(XFlow, TiledParallelismAndNestedSafety)
 {
     auto&            flow = au::flow::Flow::get();
@@ -283,6 +522,7 @@ TEST_F(XFlow, TiledParallelismAndNestedSafety)
         for (size_t i = 0; i < seen.size(); ++i)
             EXPECT_EQ(seen[i].load(std::memory_order_relaxed), i < range ? 1 : 0);
     }
+
     EXPECT_LE(maximum.load(std::memory_order_relaxed), 4);
     std::array<int, 51> values{};
     XTHREAD_PARALLELIZE_TILED_TASK_QUOTE(values.size(), 6) values[i] = static_cast<int>(i);
@@ -318,6 +558,7 @@ TEST_F(XFlow, TiledParallelismAndNestedSafety)
     });
     EXPECT_EQ(end, SIZE_MAX);
 }
+
 TEST_F(XFlow, CpuAffinity)
 {
     auto& flow = au::flow::Flow::get();
@@ -354,7 +595,8 @@ TEST_F(XFlow, CpuAffinity)
         EXPECT_EQ(flow.setAffinity(au::flow::AffinityPolicy::kPerformance), 0);
         EXPECT_EQ(flow.setAffinity(au::flow::AffinityPolicy::kPowerSaving), 0);
     }
-    EXPECT_EQ(flow.setAffinity(au::flow::AffinityPolicy::kCustomMask, 0), XFLOW_ERROR_AFFINITY_FAILED);
+
+    EXPECT_EQ(flow.setAffinity(au::flow::AffinityPolicy::kCustomMask, 0), au::err::kErrorPlatformAPI);
     EXPECT_EQ(flow.setAffinity(au::flow::AffinityPolicy::kDefault), 0);
 }
 #endif

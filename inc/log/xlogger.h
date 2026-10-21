@@ -95,7 +95,9 @@ private:
 
 namespace detail {
 
-constexpr const char* basename(const char* path) noexcept
+// C++11 constexpr bodies cannot contain this loop; ordinary inlining retains
+// the same implementation for all supported public-header language modes.
+inline const char* basename(const char* path) noexcept
 {
     const char* base = path;
     for (const char* p = path; *p != '\0'; ++p) {
