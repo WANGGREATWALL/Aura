@@ -4,7 +4,7 @@
 #include "mm/access.h"
 #include "mm/registry.h"
 #include "cv/ximage_access.h"
-#include "flow/xflow.h"
+#include "mm/access_context.h"
 #include "sys/memory_runtime.h"
 #include "gtest/gtest.h"
 #include <array>
@@ -210,7 +210,7 @@ TEST(XMemory, DeviceFenceBeforeCpuAndAtomicAbort)
     EXPECT_EQ(scope.finish(), 0);
 }
 
-TEST(XMemory, CpuAccessGeometryBoundsAndTiledLease)
+TEST(XMemory, CpuAccessGeometryBoundsAndLease)
 {
     au::cv::XImage image(17, 13, au::cv::kImageFormatNV12, au::mm::MemType::Pss);
     ASSERT_TRUE(image.isValid());
@@ -222,8 +222,7 @@ TEST(XMemory, CpuAccessGeometryBoundsAndTiledLease)
     EXPECT_EQ(scope.begin({au::cv::readAccess(invalid)}), au::err::kErrorOutOfRange);
     ASSERT_EQ(scope.begin({au::cv::writeAccess(image)}), 0);
     const int count = view.dataSize[0];
-    EXPECT_EQ(au::flow::XFlow::get().parallelizeTiledTasks(static_cast<std::size_t>(count), 7,
-        [&view](std::size_t offset, std::size_t size) { std::memset(view.data[0] + offset, 12, size); }), 0);
+    std::memset(view.data[0], 12, static_cast<std::size_t>(count));
     EXPECT_EQ(view.data[0][count - 1], 12);
     image.reset(); // Physical storage remains leased by scope through finish.
     EXPECT_EQ(view.data[0][0], 12);
@@ -301,26 +300,22 @@ TEST(XMemory, FailedDeviceFenceRetainsSourceAndBlocksCpuRead)
 {
     au::mm::XMemory memory(64);
     ASSERT_TRUE(memory.valid());
-    auto producer = au::flow::XFlow::get().enqueue([]() -> int { return 0; });
-    ASSERT_EQ(au::flow::XFlow::get().wait(producer), 0);
     FenceModel model;
     model.mCode = au::err::kErrorPlatformAPI; model.mNative = -7;
-    model.mCause = producer.id(); model.mDevice = true;
+    model.mCause = 41; model.mDevice = true;
     model.mReady.store(true, std::memory_order_release);
     au::mm::detail::DeviceAccess device;
     const auto write = au::mm::writeAccess(memory.data(), memory.size());
     ASSERT_EQ(device.begin(&write, 1), 0);
-    ASSERT_EQ(device.commit(fence(model)), 0);
-    auto consumer = au::flow::XFlow::get().enqueue([&]() -> int {
-        au::mm::CpuAccessScope scope;
-        EXPECT_EQ(scope.begin({au::mm::readAccess(memory.data(), memory.size())}), au::err::kErrorPlatformAPI);
-        EXPECT_FALSE(scope.active());
-        return 0;
-    });
-    au::flow::TaskResult result{};
-    ASSERT_EQ(au::flow::XFlow::get().wait(consumer, &result), au::err::kErrorPlatformAPI);
-    EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mNativeCode, -7);
-    EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL); EXPECT_EQ(result.mCauseTaskId, producer.id());
+    const auto failed = fence(model);
+    ASSERT_EQ(device.commit(failed), 0);
+    au::mm::CpuAccessScope scope;
+    EXPECT_EQ(scope.begin({au::mm::readAccess(memory.data(), memory.size())}), au::err::kErrorPlatformAPI);
+    EXPECT_FALSE(scope.active());
+    const auto status = failed->wait();
+    EXPECT_EQ(status.mCode, au::err::kErrorPlatformAPI);
+    EXPECT_EQ(status.mNativeCode, -7); EXPECT_EQ(status.mCauseTaskId, 41u);
+    EXPECT_TRUE(status.mDeviceError);
     EXPECT_EQ(device.finish(), au::err::kErrorPlatformAPI);
 }
 
@@ -356,58 +351,35 @@ TEST(XMemory, DeviceHostBridgeWaitsBeforeReservingResources)
     }
 }
 
-TEST(XMemory, AccessFailuresJoinTaskAndNativeCause)
+TEST(XMemory, AccessCleanupErrorsRemainLocalAndExplicit)
 {
     AccessModel model;
     Mapping mapping;
     ASSERT_TRUE(mapping.valid());
     au::mm::ExternalMemory registration;
     ASSERT_EQ(registration.registerMemory(mapping.description(mapping.mFirst)), 0);
+    struct Report {
+        int mCode = 0, mNative = 0;
+        static void error(void* data, int code, int native, std::uint64_t, bool) noexcept {
+            auto& self = *static_cast<Report*>(data); self.mCode = code; self.mNative = native;
+        }
+    } report;
+    const auto previous = au::mm::detail::setAccessErrorSink({&Report::error, &report, true});
+    struct Restore { au::mm::detail::AccessErrorSink mSink; ~Restore() { au::mm::detail::setAccessErrorSink(mSink); } } restore{previous};
     model.mFailEnd.store(1, std::memory_order_relaxed);
-    auto task = au::flow::XFlow::get().enqueue([&]() -> int {
+    {
         au::mm::CpuAccessScope scope;
-        const int code = scope.begin({au::mm::writeAccess(mapping.mFirst, 256)});
-        if (code) return code;
-        return 0; // Destructor must report the failed END to the task scope.
-    });
-    au::flow::TaskResult result{};
-    ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), au::err::kErrorPlatformAPI);
-    EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
-    EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Memory);
-    EXPECT_EQ(result.mNativeCode, 77);
-    EXPECT_EQ(result.mCauseTaskId, task.id());
-
-    // A captured scope is destroyed during final closure cleanup, after the
-    // function body returned. Attribute its END error to this task too.
+        ASSERT_EQ(scope.begin({au::mm::writeAccess(mapping.mFirst, 256)}), 0);
+    }
+    EXPECT_EQ(report.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(report.mNative, 77);
     Mapping later;
     ASSERT_TRUE(later.valid());
     au::mm::ExternalMemory laterRegistration;
     ASSERT_EQ(laterRegistration.registerMemory(later.description(later.mFirst)), 0);
     model.mFailEnd.store(2, std::memory_order_relaxed);
-    std::unique_ptr<au::mm::CpuAccessScope> owned(new au::mm::CpuAccessScope());
-    auto captured = au::flow::XFlow::get().enqueue([scope = std::move(owned), &later]() -> int {
-        return scope->begin({au::mm::writeAccess(later.mFirst, 256)});
-    });
-    ASSERT_EQ(au::flow::XFlow::get().wait(captured, &result), au::err::kErrorPlatformAPI);
-    EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
-    EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Memory);
-    EXPECT_EQ(result.mNativeCode, 77);
-    EXPECT_EQ(result.mCauseTaskId, captured.id());
-
-    Mapping explicitFinish;
-    ASSERT_TRUE(explicitFinish.valid());
-    au::mm::ExternalMemory explicitRegistration;
-    ASSERT_EQ(explicitRegistration.registerMemory(explicitFinish.description(explicitFinish.mFirst)), 0);
-    model.mFailEnd.store(3, std::memory_order_relaxed);
-    auto forwarded = au::flow::XFlow::get().enqueue([&]() -> int {
-        au::mm::CpuAccessScope scope;
-        const int code = scope.begin({au::mm::writeAccess(explicitFinish.mFirst, 256)});
-        return code ? code : scope.finish();
-    });
-    ASSERT_EQ(au::flow::XFlow::get().wait(forwarded, &result), au::err::kErrorPlatformAPI);
-    EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
-    EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Memory); EXPECT_EQ(result.mNativeCode, 77);
-    EXPECT_EQ(result.mCauseTaskId, forwarded.id());
+    au::mm::CpuAccessScope explicitScope;
+    ASSERT_EQ(explicitScope.begin({au::mm::writeAccess(later.mFirst, 256)}), 0);
+    EXPECT_EQ(explicitScope.finish(), au::err::kErrorPlatformAPI);
 }
 
 #endif

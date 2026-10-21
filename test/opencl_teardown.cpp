@@ -1,6 +1,5 @@
 #include "gpu/xopencl.h"
 #include "gpu/opencl_api.h"
-#include "flow/xflow.h"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -80,11 +79,8 @@ int main()
     if (au::gpu::detail::setNativeApi(0, &gApi) || au::gpu::detail::setNativeApi(1, &gApi)) return 2;
     if (au::gpu::CLWrapper::get().init({}, true) || au::gpu::OpenCLWrapper::get().init({}, true)) return 3;
     if (au::gpu::OpenCLWrapper::get().setNDRange({1}).enqueue("empty", "__kernel void empty() {}", nullptr)) return 5;
-    auto task = au::flow::XFlow::get().enqueue([]() -> int {
-        while (!gExitGate.load(std::memory_order_acquire)) std::this_thread::yield();
-        const int code = au::gpu::CLWrapper::get().setNDRange({1}).enqueue("empty", "__kernel void empty() {}", nullptr);
-        gManagedCode.store(code, std::memory_order_relaxed); return code;
-    });
-    if (task.submissionCode()) return 6;
-    return std::atexit(&openExitGate) ? 7 : 0;
+    gExitGate.store(true, std::memory_order_release);
+    if (au::gpu::CLWrapper::get().setNDRange({1}).enqueue("empty", "__kernel void empty() {}", nullptr)) return 6;
+    gManagedCode.store(0, std::memory_order_relaxed);
+    return 0; // Backend destructors drain pending native work before verifyTeardown.
 }

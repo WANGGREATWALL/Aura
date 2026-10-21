@@ -1,6 +1,6 @@
 # OpenCLWrapper 配套组件照片归档说明
 
-> 迁移说明 (2026-10-20): 本页是历史照片恢复记录, 接口/行号对应迁移前源码. 当前入口已转为 `inc/gpu/xopencl.h` 的兼容 include, 实现在 `src/gpu/`; 不再使用旧 fd-only registry, 共享 NDRange/kernel 或 CL 完成回调. 实现进度见 `docs/flow_implementation.md`.
+> 迁移说明 (2026-10-21): 本页是历史照片恢复记录, 接口/行号对应迁移前源码. 当前入口已转为 `inc/gpu/xopencl.h` 的兼容 include, 实现在 `src/gpu/`; 不再使用旧 fd-only registry, 共享 NDRange/kernel 或 CL 完成回调. GPU 完成与资源回收由 `src/gpu/pending.*` 独立管理, 不再绑定 flow 任务完成.
 
 已将 `opencl-wrapper-ext1.jpg` 至 `opencl-wrapper-ext10.jpg` 转写为以下五个文件。保留照片中的接口、注释、命名空间、控制流和依赖；仅统一缩进与空白。所有文件存放在用户指定的 `src/gpu-helper`，未加入构建系统。
 

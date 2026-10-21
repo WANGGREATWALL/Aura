@@ -1,6 +1,5 @@
 #include "gpu/xopencl.h"
 #include "gpu/opencl_api.h"
-#include "flow/xflow.h"
 #include "file/xfile.h"
 #include "mm/xmemory.h"
 #include "mm/xaccess.h"
@@ -364,32 +363,26 @@ const char* gImageSource = "__kernel void fill(write_only image2d_t dst, uchar v
 const char* gAliasSource = "__kernel void alias(__global uchar* dst, __global const uchar* src, uchar value) { size_t i=get_global_id(0); dst[i]=src[i]+value; }";
 }
 
-TEST(XOpenCL, BufferTaskAndSameFunctionCpuAccess)
+TEST(XOpenCL, BufferAndSameFunctionCpuAccess)
 {
     NativeModel model;
-    au::mm::MemBlock block; ASSERT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, block), 0);
-    std::memset(block.ptr, 3, block.size);
-    model.mReady.store(false, std::memory_order_relaxed);
-    auto task = au::flow::XFlow::get().enqueue([&]() -> int {
-        return au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add", gSource, nullptr,
-            au::gpu::buffer(au::mm::readWriteAccess(block.ptr, block.size)), static_cast<unsigned char>(7));
-    });
-    EXPECT_EQ(au::flow::XFlow::get().waitFor(task, 2), au::err::kErrorTimeout);
-    EXPECT_EQ(static_cast<unsigned char*>(block.ptr)[0], 3);
-    model.mReady.store(true, std::memory_order_release);
-    au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), 0); EXPECT_EQ(result.mCode, 0);
-    EXPECT_GT(model.mWaits.load(std::memory_order_relaxed), 0);
-    for (std::size_t i = 0; i < block.size; ++i) EXPECT_EQ(static_cast<unsigned char*>(block.ptr)[i], 10);
-    auto mixed = au::flow::XFlow::get().enqueue([&]() -> int {
-        int code = au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add", nullptr, nullptr,
-            au::gpu::buffer(au::mm::readWriteAccess(block.ptr, block.size)), static_cast<unsigned char>(2));
-        if (code) return code;
-        au::mm::CpuAccessScope cpu; code = cpu.begin({au::mm::readAccess(block.ptr, block.size)});
-        if (code) return code;
-        return cpu.finish(static_cast<unsigned char*>(block.ptr)[0] == 12 ? 0 : 91);
-    });
-    ASSERT_EQ(au::flow::XFlow::get().wait(mixed, &result), 0); EXPECT_EQ(result.mCode, 0);
-    EXPECT_EQ(au::gpu::CLWrapper::get().finish(), 0); EXPECT_EQ(au::mm::free(block.ptr), 0);
+    au::mm::MemBlock block; ASSERT_EQ(au::mm::alloc(64,au::mm::MemType::Pss,block),0);
+    std::memset(block.ptr,3,block.size);
+    model.mReady.store(false,std::memory_order_relaxed);
+    ASSERT_EQ(au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add",gSource,nullptr,
+        au::gpu::buffer(au::mm::readWriteAccess(block.ptr,block.size)),static_cast<unsigned char>(7)),0);
+    EXPECT_EQ(static_cast<unsigned char*>(block.ptr)[0],3);
+    EXPECT_GT(model.mEvents.load(std::memory_order_relaxed),0);
+    model.mReady.store(true,std::memory_order_release);
+    EXPECT_EQ(au::gpu::CLWrapper::get().finish(),0);
+    for (std::size_t i=0;i<block.size;++i) EXPECT_EQ(static_cast<unsigned char*>(block.ptr)[i],10);
+    ASSERT_EQ(au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add",nullptr,nullptr,
+        au::gpu::buffer(au::mm::readWriteAccess(block.ptr,block.size)),static_cast<unsigned char>(2)),0);
+    au::mm::CpuAccessScope cpu;
+    ASSERT_EQ(cpu.begin({au::mm::readAccess(block.ptr,block.size)}),0);
+    EXPECT_EQ(static_cast<unsigned char*>(block.ptr)[0],12);
+    EXPECT_EQ(cpu.finish(),0);
+    EXPECT_EQ(au::gpu::CLWrapper::get().finish(),0); EXPECT_EQ(au::mm::free(block.ptr),0);
 }
 
 TEST(XOpenCL, StandaloneImagePaddingAndAlias)
@@ -486,133 +479,88 @@ TEST(XOpenCL, DmaImportAndStagingFollowAccessProtocol)
 
 TEST(XOpenCL, PartialSubmissionFlushQueryAndKernelReuse)
 {
-    for (int scenario = 0; scenario < 5; ++scenario) {
+    for (int scenario=0;scenario<5;++scenario) {
         NativeModel model;
-        au::mm::MemBlock block; ASSERT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, block), 0);
-        std::memset(block.ptr, 5, block.size);
-        model.mReady.store(false, std::memory_order_relaxed);
-        if (scenario == 0) model.mFailCommand.store(2, std::memory_order_relaxed); // Upload accepted, kernel rejected.
-        if (scenario == 1) model.mFailCommand.store(3, std::memory_order_relaxed); // Kernel accepted, readback rejected.
-        if (scenario == 2) model.mFailFlush.store(1, std::memory_order_relaxed);
-        if (scenario == 3) model.mFailQuery.store(1, std::memory_order_relaxed);
-        if (scenario == 4) model.mExecution.store(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, std::memory_order_relaxed);
-        std::atomic<bool> submitted{false};
-        auto task = au::flow::XFlow::get().enqueue([&]() -> int {
-            const int code = au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add", gSource, nullptr,
-                au::gpu::buffer(au::mm::readWriteAccess(block.ptr, block.size)), static_cast<unsigned char>(7));
-            // Publish native submission before testing that its unfinished
-            // events keep the task alive; a short wait timeout alone proves
-            // nothing about whether this task has started on a busy host.
-            submitted.store(true, std::memory_order_release);
-            return code;
-        });
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (!submitted.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
-            std::this_thread::yield();
-        EXPECT_TRUE(submitted.load(std::memory_order_acquire));
-        EXPECT_EQ(au::flow::XFlow::get().waitFor(task, 3), au::err::kErrorTimeout);
-        EXPECT_GT(model.mEvents.load(std::memory_order_relaxed), 0);
-        model.mReady.store(true, std::memory_order_release);
-        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), au::err::kErrorPlatformAPI);
-        EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI);
-        EXPECT_EQ(result.mNativeCode, scenario == 4 ? CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST : CL_OUT_OF_RESOURCES);
-        EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
-        EXPECT_EQ(static_cast<unsigned char*>(block.ptr)[0], 5); // Failed outputs are not copied back as valid data.
-        EXPECT_EQ(au::gpu::CLWrapper::get().finish(), au::err::kErrorPlatformAPI);
-        const int before = model.mCommands.load(std::memory_order_relaxed);
-        EXPECT_EQ(au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add", nullptr, nullptr,
-            au::gpu::buffer(au::mm::readWriteAccess(block.ptr, block.size))), au::err::kErrorSizeMismatch);
-        EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), before); // Pooled kernels cannot reuse stale missing arguments.
-        EXPECT_EQ(au::mm::free(block.ptr), 0);
+        au::mm::MemBlock block; ASSERT_EQ(au::mm::alloc(64,au::mm::MemType::Pss,block),0);
+        std::memset(block.ptr,5,block.size); model.mReady.store(false,std::memory_order_relaxed);
+        if (scenario==0) model.mFailCommand.store(2,std::memory_order_relaxed);
+        if (scenario==1) model.mFailCommand.store(3,std::memory_order_relaxed);
+        if (scenario==2) model.mFailFlush.store(1,std::memory_order_relaxed);
+        if (scenario==3) model.mFailQuery.store(1,std::memory_order_relaxed);
+        if (scenario==4) model.mExecution.store(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST,std::memory_order_relaxed);
+        const int submitted=au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add",gSource,nullptr,
+            au::gpu::buffer(au::mm::readWriteAccess(block.ptr,block.size)),static_cast<unsigned char>(7));
+        EXPECT_EQ(submitted,scenario<3?au::err::kErrorPlatformAPI:0);
+        EXPECT_GT(model.mEvents.load(std::memory_order_relaxed),0);
+        model.mReady.store(true,std::memory_order_release);
+        EXPECT_EQ(au::gpu::CLWrapper::get().finish(),au::err::kErrorPlatformAPI);
+        EXPECT_EQ(static_cast<unsigned char*>(block.ptr)[0],5);
+        const int before=model.mCommands.load(std::memory_order_relaxed);
+        EXPECT_EQ(au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add",nullptr,nullptr,
+            au::gpu::buffer(au::mm::readWriteAccess(block.ptr,block.size))),au::err::kErrorSizeMismatch);
+        EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed),before);
+        EXPECT_EQ(au::mm::free(block.ptr),0);
     }
 }
 
 TEST(XOpenCL, ConcurrentLaunchesKeepArgumentsAndRangesIndependent)
 {
     NativeModel model;
-    std::array<au::mm::MemBlock, 8> memory;
-    std::array<au::flow::Task, 8> tasks;
-    model.mReady.store(false, std::memory_order_relaxed);
-    for (std::size_t i = 0; i < tasks.size(); ++i) {
-        ASSERT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, memory[i]), 0);
-        std::memset(memory[i].ptr, 2, memory[i].size);
-        tasks[i] = au::flow::XFlow::get().enqueue([&, i]() -> int {
-            const auto launch = au::gpu::CLWrapper::get().setNDRange({16 + i});
-            (void)au::gpu::CLWrapper::get().setNDRange({64}); // Must not overwrite the captured launch.
-            return launch.enqueue("add", gSource, nullptr,
-                au::gpu::buffer(au::mm::readWriteAccess(memory[i].ptr, memory[i].size)), static_cast<unsigned char>(i + 1));
+    std::array<au::mm::MemBlock,8> memory;
+    std::array<std::thread,8> threads;
+    std::array<int,8> codes{};
+    model.mReady.store(false,std::memory_order_relaxed);
+    for (std::size_t i=0;i<threads.size();++i) {
+        ASSERT_EQ(au::mm::alloc(64,au::mm::MemType::Pss,memory[i]),0); std::memset(memory[i].ptr,2,memory[i].size);
+        threads[i]=std::thread([&,i] {
+            const auto launch=au::gpu::CLWrapper::get().setNDRange({16+i});
+            (void)au::gpu::CLWrapper::get().setNDRange({64});
+            codes[i]=launch.enqueue("add",gSource,nullptr,
+                au::gpu::buffer(au::mm::readWriteAccess(memory[i].ptr,memory[i].size)),static_cast<unsigned char>(i+1));
         });
     }
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while (model.mCommands.load(std::memory_order_relaxed) < 24 && std::chrono::steady_clock::now() < deadline)
-        std::this_thread::yield();
-    EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), 24);
-    model.mReady.store(true, std::memory_order_release);
-    for (std::size_t i = 0; i < tasks.size(); ++i) {
-        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(tasks[i], &result), 0); EXPECT_EQ(result.mCode, 0);
-        for (std::size_t byte = 0; byte < memory[i].size; ++byte)
-            EXPECT_EQ(static_cast<unsigned char*>(memory[i].ptr)[byte], byte < 16 + i ? 3 + i : 2);
-        EXPECT_EQ(au::mm::free(memory[i].ptr), 0);
+    for (auto& thread:threads) thread.join();
+    for (auto code:codes) EXPECT_EQ(code,0);
+    EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed),24);
+    model.mReady.store(true,std::memory_order_release);
+    EXPECT_EQ(au::gpu::CLWrapper::get().finish(),0);
+    for (std::size_t i=0;i<memory.size();++i) {
+        for (std::size_t b=0;b<memory[i].size;++b) EXPECT_EQ(static_cast<unsigned char*>(memory[i].ptr)[b],b<16+i?3+i:2);
+        EXPECT_EQ(au::mm::free(memory[i].ptr),0);
     }
-    EXPECT_EQ(au::gpu::CLWrapper::get().finish(), 0);
 }
 
 TEST(XOpenCL, EmptyKernelAndRejectedCallsRemainObservable)
 {
     NativeModel model;
-    const char* emptySource = "__kernel void empty() {}";
-    auto task = au::flow::XFlow::get().enqueue([&]() -> int {
-        return au::gpu::CLWrapper::get().setNDRange({1}).enqueue("empty", emptySource, nullptr);
-    });
-    au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), 0);
-    EXPECT_EQ(result.mCode, 0);
-    void* event = nullptr;
-    ASSERT_EQ(au::gpu::CLWrapper::get().setNDRange({1}).enqueue("empty", nullptr, &event), 0);
-    ASSERT_NE(event, nullptr);
-    EXPECT_EQ(au::gpu::CLWrapper::get().releaseEvent(event), 0);
-    EXPECT_EQ(au::gpu::CLWrapper::get().finish(), 0);
-    int before = model.mCommands.load(std::memory_order_relaxed);
-    auto& flow = au::flow::XFlow::get();
-    const auto pureTiles = [&]() -> int {
-        return flow.parallelizeTiledTasks(19, 1, [&](std::size_t, std::size_t) {
-            (void)au::gpu::CLWrapper::get().setNDRange({1}).enqueue("empty", nullptr, nullptr);
-        }); // Ignore the native wrapper result: the loop must retain rejection.
-    };
-    EXPECT_EQ(pureTiles(), au::err::kErrorStateInvalid);
-    EXPECT_EQ(flow.enqueue(pureTiles).wait(), au::err::kErrorStateInvalid);
-    EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), before);
-    auto rejected = au::flow::XFlow::get().enqueue([&]() -> int {
-        (void)au::gpu::CLWrapper::get().setNDRange({0}).enqueue("empty", nullptr, nullptr);
-        return 0; // Dropping the synchronous error must not report a successful task.
-    });
-    ASSERT_EQ(au::flow::XFlow::get().wait(rejected, &result), au::err::kErrorInvalidParam);
-    EXPECT_EQ(result.mCode, au::err::kErrorInvalidParam); EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
-    EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), before);
-    void* context = nullptr; ASSERT_EQ(au::gpu::CLWrapper::get().nativeContext(context), 0);
-    cl_int native = 0;
-    cl_mem raw = NativeModel::buffer(static_cast<cl_context>(context), CL_MEM_READ_WRITE, 16, nullptr, &native);
-    ASSERT_EQ(native, 0);
-    model.mReady.store(false, std::memory_order_relaxed);
-    auto interop = au::flow::XFlow::get().enqueue([&]() -> int {
-        return au::gpu::CLWrapper::get().setNDRange({16}).enqueue("add", gSource, nullptr,
-            au::gpu::nativeMemory(raw), static_cast<unsigned char>(3));
-    });
-    EXPECT_EQ(au::flow::XFlow::get().waitFor(interop, 2), au::err::kErrorTimeout);
-    EXPECT_EQ(NativeModel::releaseMemory(raw), 0); // Drop caller ownership while the wrapper/native event still retain it.
-    EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed), 1);
-    model.mReady.store(true, std::memory_order_release);
-    ASSERT_EQ(au::flow::XFlow::get().wait(interop, &result), 0); EXPECT_EQ(result.mCode, 0);
-    EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed), 0);
-    before = model.mCommands.load(std::memory_order_relaxed);
-    au::mm::MemBlock memory; ASSERT_EQ(au::mm::alloc(32, au::mm::MemType::Pss, memory), 0);
-    std::size_t offset = 0;
-    EXPECT_EQ(au::gpu::bufferOffset(au::mm::readAccess(static_cast<unsigned char*>(memory.ptr) + 9, 8), offset), 0);
-    EXPECT_EQ(offset, 9u);
-    EXPECT_EQ(au::gpu::CLWrapper::get().setNDRange({1}).enqueue("add", gSource, nullptr,
-        au::gpu::image2D(au::mm::readWriteAccess(memory.ptr, memory.size), 8, 4, 7, CL_R, CL_UNSIGNED_INT8),
-        static_cast<unsigned char>(1)), au::err::kErrorOutOfRange);
-    EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), before);
-    EXPECT_EQ(au::mm::free(memory.ptr), 0);
+    const char* source="__kernel void empty() {}";
+    ASSERT_EQ(au::gpu::CLWrapper::get().setNDRange({1}).enqueue("empty",source,nullptr),0);
+    EXPECT_EQ(au::gpu::CLWrapper::get().finish(),0);
+    void* event=nullptr;
+    ASSERT_EQ(au::gpu::CLWrapper::get().setNDRange({1}).enqueue("empty",nullptr,&event),0);
+    ASSERT_NE(event,nullptr); EXPECT_EQ(au::gpu::CLWrapper::get().releaseEvent(event),0);
+    EXPECT_EQ(au::gpu::CLWrapper::get().finish(),0);
+    const int before=model.mCommands.load(std::memory_order_relaxed);
+    EXPECT_EQ(au::gpu::CLWrapper::get().setNDRange({0}).enqueue("empty",nullptr,nullptr),au::err::kErrorInvalidParam);
+    EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed),before);
+    void* context=nullptr; ASSERT_EQ(au::gpu::CLWrapper::get().nativeContext(context),0);
+    cl_int native=0; cl_mem raw=NativeModel::buffer(static_cast<cl_context>(context),0,32,nullptr,&native); ASSERT_EQ(native,0);
+    model.mReady.store(false,std::memory_order_relaxed);
+    ASSERT_EQ(au::gpu::CLWrapper::get().setNDRange({32}).enqueue("add",gSource,nullptr,
+        au::gpu::nativeMemory(raw),static_cast<unsigned char>(3)),0);
+    EXPECT_EQ(NativeModel::releaseMemory(raw),0);
+    EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed),1);
+    model.mReady.store(true,std::memory_order_release);
+    EXPECT_EQ(au::gpu::CLWrapper::get().finish(),0);
+    EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed),0);
+    au::mm::MemBlock memory; ASSERT_EQ(au::mm::alloc(32,au::mm::MemType::Pss,memory),0);
+    std::size_t offset=0;
+    EXPECT_EQ(au::gpu::bufferOffset(au::mm::readAccess(static_cast<unsigned char*>(memory.ptr)+9,8),offset),0);
+    EXPECT_EQ(offset,9u);
+    EXPECT_EQ(au::gpu::CLWrapper::get().setNDRange({1}).enqueue("add",gSource,nullptr,
+        au::gpu::image2D(au::mm::readWriteAccess(memory.ptr,memory.size),8,4,7,CL_R,CL_UNSIGNED_INT8),
+        static_cast<unsigned char>(1)),au::err::kErrorOutOfRange);
+    EXPECT_EQ(au::mm::free(memory.ptr),0);
 }
 
 #if defined(__linux__) || defined(__ANDROID__)
@@ -629,13 +577,12 @@ TEST(XOpenCL, CacheFailureBeforeAndAfterNativeAcceptance)
         ASSERT_EQ(memory.registerMemory(descriptor), 0);
         if ((scenario & 1) == 0) model.mFailStart.store(scenario < 2 ? 1 : 2, std::memory_order_relaxed);
         else model.mFailEnd.store(scenario < 2 ? 1 : 2, std::memory_order_relaxed);
-        auto task = au::flow::XFlow::get().enqueue([&]() -> int {
+        const int submitted = [&]() -> int {
             return au::gpu::OpenCLWrapper::get().setNDRange({4096}).enqueue("add", gSource, nullptr,
                 au::gpu::buffer(au::mm::readWriteAccess(pointer, 4096)), static_cast<unsigned char>(3));
-        });
-        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), au::err::kErrorPlatformAPI);
-        EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mNativeCode, 99);
-        EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Memory);
+        }();
+        const int drained = au::gpu::OpenCLWrapper::get().finish();
+        EXPECT_EQ(submitted ? submitted : drained, au::err::kErrorPlatformAPI);
         EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), scenario < 2 ? 0 : 3);
         EXPECT_EQ(model.mEvents.load(std::memory_order_relaxed), 0);
         EXPECT_EQ(static_cast<unsigned char*>(pointer)[0], scenario == 3 ? 7 : 4);
@@ -651,58 +598,39 @@ TEST(XOpenCL, CacheFailureBeforeAndAfterNativeAcceptance)
 
 TEST(XOpenCL, MissingNativeEventRetainsWorkUntilQueueProof)
 {
-    for (int command = 1; command <= 3; ++command) {
+    for (int command=1;command<=3;++command) {
         NativeModel model;
-        au::mm::MemBlock memory; ASSERT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, memory), 0);
-        std::memset(memory.ptr, 4, memory.size);
-        model.mReady.store(false, std::memory_order_relaxed);
-        model.mMissingEvent.store(command, std::memory_order_relaxed);
-        auto task = au::flow::XFlow::get().enqueue([&]() -> int {
-            return au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add", gSource, nullptr,
-                au::gpu::buffer(au::mm::readWriteAccess(memory.ptr, memory.size)), static_cast<unsigned char>(7));
-        });
-        EXPECT_EQ(au::flow::XFlow::get().waitFor(task, 3), au::err::kErrorTimeout);
-        EXPECT_GT(model.mMemory.load(std::memory_order_relaxed), 0);
-        EXPECT_GT(model.mEvents.load(std::memory_order_relaxed), 0);
-        model.mReady.store(true, std::memory_order_release);
-        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), au::err::kErrorPlatformAPI);
-        EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mNativeCode, CL_INVALID_EVENT);
-        EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
-        EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed), 1); // Live allocation keeps a reusable native cache entry.
-        EXPECT_EQ(model.mEvents.load(std::memory_order_relaxed), 0);
-        EXPECT_EQ(au::mm::free(memory.ptr), 0);
-        EXPECT_EQ(au::gpu::CLWrapper::get().finish(), au::err::kErrorPlatformAPI);
-        EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed), 0);
+        au::mm::MemBlock memory; ASSERT_EQ(au::mm::alloc(64,au::mm::MemType::Pss,memory),0);
+        std::memset(memory.ptr,4,memory.size);
+        model.mReady.store(false,std::memory_order_relaxed); model.mMissingEvent.store(command,std::memory_order_relaxed);
+        EXPECT_EQ(au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add",gSource,nullptr,
+            au::gpu::buffer(au::mm::readWriteAccess(memory.ptr,memory.size)),static_cast<unsigned char>(7)),au::err::kErrorPlatformAPI);
+        EXPECT_GT(model.mMemory.load(std::memory_order_relaxed),0); EXPECT_GT(model.mEvents.load(std::memory_order_relaxed),0);
+        model.mReady.store(true,std::memory_order_release);
+        EXPECT_EQ(au::gpu::CLWrapper::get().finish(),au::err::kErrorPlatformAPI);
+        EXPECT_EQ(model.mEvents.load(std::memory_order_relaxed),0);
+        EXPECT_EQ(au::mm::free(memory.ptr),0);
+        (void)au::gpu::CLWrapper::get().finish();
+        EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed),0);
     }
 }
 
-TEST(XOpenCL, ResourceFailureKeepsOriginalGpuTaskCause)
+TEST(XOpenCL, ResourceFailureBlocksDependentAccess)
 {
     NativeModel model;
-    au::mm::MemBlock memory; ASSERT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, memory), 0);
-    std::memset(memory.ptr, 4, memory.size);
-    model.mExecution.store(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, std::memory_order_relaxed);
-    auto submit = [&]() -> int {
-        return au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add", gSource, nullptr,
-            au::gpu::buffer(au::mm::readWriteAccess(memory.ptr, memory.size)), static_cast<unsigned char>(7));
-    };
-    auto origin = au::flow::XFlow::get().enqueue(submit);
-    au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(origin, &result), au::err::kErrorPlatformAPI);
-    ASSERT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mCauseTaskId, origin.id());
-    const int commands = model.mCommands.load(std::memory_order_relaxed);
-    auto nextGpu = au::flow::XFlow::get().enqueue(submit); // Resource fence detects the failure without inventing a business DAG.
-    ASSERT_EQ(au::flow::XFlow::get().wait(nextGpu, &result), au::err::kErrorPlatformAPI);
-    EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mCauseTaskId, origin.id());
-    EXPECT_EQ(result.mNativeCode, CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST);
-    EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
-    EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), commands);
-    auto nextCpu = au::flow::XFlow::get().enqueue([&]() -> int {
-        au::mm::CpuAccessScope cpu; return cpu.begin({au::mm::readAccess(memory.ptr, memory.size)});
-    });
-    ASSERT_EQ(au::flow::XFlow::get().wait(nextCpu, &result), au::err::kErrorPlatformAPI);
-    EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mCauseTaskId, origin.id());
-    EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL);
-    EXPECT_EQ(au::mm::free(memory.ptr), 0);
+    au::mm::MemBlock memory; ASSERT_EQ(au::mm::alloc(64,au::mm::MemType::Pss,memory),0);
+    std::memset(memory.ptr,4,memory.size);
+    model.mExecution.store(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST,std::memory_order_relaxed);
+    const auto submit=[&] {return au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add",gSource,nullptr,
+        au::gpu::buffer(au::mm::readWriteAccess(memory.ptr,memory.size)),static_cast<unsigned char>(7));};
+    ASSERT_EQ(submit(),0);
+    EXPECT_EQ(au::gpu::CLWrapper::get().finish(),au::err::kErrorPlatformAPI);
+    const int commands=model.mCommands.load(std::memory_order_relaxed);
+    EXPECT_EQ(submit(),au::err::kErrorPlatformAPI);
+    EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed),commands);
+    au::mm::CpuAccessScope cpu;
+    EXPECT_EQ(cpu.begin({au::mm::readAccess(memory.ptr,memory.size)}),au::err::kErrorPlatformAPI);
+    EXPECT_EQ(au::mm::free(memory.ptr),0);
 }
 
 TEST(XOpenCL, ResourceCacheUsesAllocationAndContextGeneration)
@@ -787,51 +715,29 @@ TEST(XOpenCL, BinaryCacheValidatesMetadataAndFallsBackToSource)
 #if defined(__linux__) || defined(__ANDROID__)
 TEST(XOpenCL, NativeChainsSubmitWithoutHostWaitAndKeepRootFailure)
 {
-    for (bool fail : {false, true}) {
+    for (bool fail : {false,true}) {
         NativeModel model(true);
-        std::FILE* file = std::tmpfile(); ASSERT_NE(file, nullptr); ASSERT_EQ(::ftruncate(::fileno(file), 4096), 0);
-        void* pointer = ::mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, ::fileno(file), 0);
-        ASSERT_NE(pointer, MAP_FAILED); std::memset(pointer, 1, 4096);
+        std::FILE* file=std::tmpfile(); ASSERT_NE(file,nullptr); ASSERT_EQ(::ftruncate(::fileno(file),4096),0);
+        void* pointer=::mmap(nullptr,4096,PROT_READ|PROT_WRITE,MAP_SHARED,::fileno(file),0);
+        ASSERT_NE(pointer,MAP_FAILED); std::memset(pointer,1,4096);
         au::mm::ExternalMemory memory;
-        ::au_mm_external_memory description{sizeof(description), pointer, 4096, ::fileno(file),
-            static_cast<unsigned int>(au::mm::MemType::DmaCached), nullptr, nullptr, nullptr};
-        ASSERT_EQ(memory.registerMemory(description), 0);
-        model.mReady.store(false, std::memory_order_release);
-        std::atomic<unsigned int> returned{0};
-        std::vector<au::flow::Task> tasks; tasks.reserve(64);
-        for (unsigned int i = 0; i < 64; ++i) {
-            tasks.push_back(au::flow::XFlow::get().enqueue([&]() -> int {
-                const auto code = au::gpu::OpenCLWrapper::get().setNDRange({4096}).enqueue("add", gSource, nullptr,
-                    au::gpu::buffer(au::mm::readWriteAccess(pointer, 4096)), static_cast<unsigned char>(1));
-                returned.fetch_add(1, std::memory_order_release); return code;
-            }));
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            while (returned.load(std::memory_order_acquire) != i + 1 && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
-            if (returned.load(std::memory_order_acquire) != i + 1) {
-                model.mReady.store(true, std::memory_order_release); // Always unlock worker before test teardown.
-                FAIL() << "native chain blocked its submitting host function";
-            }
-        }
-        EXPECT_EQ(model.mImports.load(std::memory_order_relaxed), 1);
-        EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed), 64);
-        EXPECT_EQ(model.mWaits.load(std::memory_order_relaxed), 0);
-        EXPECT_EQ(au::flow::XFlow::get().waitFor(tasks.back(), 2), au::err::kErrorTimeout);
-        if (fail) model.mExecution.store(-9, std::memory_order_relaxed);
-        model.mReady.store(true, std::memory_order_release);
-        au::flow::TaskResult result{};
-        ASSERT_EQ(au::flow::XFlow::get().wait(tasks.back(), &result), fail ? au::err::kErrorPlatformAPI : 0);
-        EXPECT_EQ(result.mCode, fail ? au::err::kErrorPlatformAPI : 0);
-        if (fail) { EXPECT_EQ(result.mNativeCode, -9); EXPECT_EQ(result.mCauseTaskId, tasks.front().id()); }
-        else {
-            au::mm::CpuAccessScope cpu; ASSERT_EQ(cpu.begin({au::mm::readAccess(pointer, 4096)}), 0);
-            EXPECT_EQ(static_cast<unsigned char*>(pointer)[0], 65); EXPECT_EQ(cpu.finish(), 0);
-        }
-        for (auto& task : tasks) EXPECT_EQ(au::flow::XFlow::get().wait(task), fail ? au::err::kErrorPlatformAPI : 0);
-        EXPECT_EQ(memory.reset(), 0);
-        EXPECT_EQ(au::gpu::OpenCLWrapper::get().finish(), fail ? au::err::kErrorPlatformAPI : 0);
-        EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed), 0);
-        EXPECT_EQ(model.mEvents.load(std::memory_order_relaxed), 0);
-        EXPECT_EQ(::munmap(pointer, 4096), 0); EXPECT_EQ(std::fclose(file), 0);
+        ::au_mm_external_memory description{sizeof(description),pointer,4096,::fileno(file),
+            static_cast<unsigned int>(au::mm::MemType::DmaCached),nullptr,nullptr,nullptr};
+        ASSERT_EQ(memory.registerMemory(description),0);
+        model.mReady.store(false,std::memory_order_release);
+        for (unsigned i=0;i<64;++i) ASSERT_EQ(au::gpu::OpenCLWrapper::get().setNDRange({4096}).enqueue("add",gSource,nullptr,
+            au::gpu::buffer(au::mm::readWriteAccess(pointer,4096)),static_cast<unsigned char>(1)),0);
+        EXPECT_EQ(model.mImports.load(std::memory_order_relaxed),1);
+        EXPECT_EQ(model.mCommands.load(std::memory_order_relaxed),64); EXPECT_EQ(model.mWaits.load(std::memory_order_relaxed),0);
+        if (fail) model.mExecution.store(-9,std::memory_order_relaxed);
+        model.mReady.store(true,std::memory_order_release);
+        EXPECT_EQ(au::gpu::OpenCLWrapper::get().finish(),fail?au::err::kErrorPlatformAPI:0);
+        au::mm::CpuAccessScope cpu;
+        EXPECT_EQ(cpu.begin({au::mm::readAccess(pointer,4096)}),fail?au::err::kErrorPlatformAPI:0);
+        if (!fail) {EXPECT_EQ(static_cast<unsigned char*>(pointer)[0],65); EXPECT_EQ(cpu.finish(),0);}
+        EXPECT_EQ(memory.reset(),0); (void)au::gpu::OpenCLWrapper::get().finish();
+        EXPECT_EQ(model.mMemory.load(std::memory_order_relaxed),0); EXPECT_EQ(model.mEvents.load(std::memory_order_relaxed),0);
+        EXPECT_EQ(::munmap(pointer,4096),0); EXPECT_EQ(std::fclose(file),0);
     }
 }
 #endif

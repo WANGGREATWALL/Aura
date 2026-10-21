@@ -1,6 +1,6 @@
 # CLWrapper 照片恢复说明
 
-> 迁移说明 (2026-10-20): 本页是历史照片恢复记录, 接口/行号对应迁移前源码. 当前入口已转为 `inc/gpu/xopencl.h` 的兼容 include, 实现在 `src/gpu/`; 不再使用旧 fd-only registry, 共享 NDRange/kernel 或 CL 完成回调. 实现进度见 `docs/flow_implementation.md`.
+> 迁移说明 (2026-10-21): 本页是历史照片恢复记录, 接口/行号对应迁移前源码. 当前入口已转为 `inc/gpu/xopencl.h` 的兼容 include, 实现在 `src/gpu/`; 不再使用旧 fd-only registry, 共享 NDRange/kernel 或 CL 完成回调. GPU 完成与资源回收由 `src/gpu/pending.*` 独立管理, 不再绑定 flow 任务完成.
 
 来源为 `cl-wrapper1.jpg` 至 `cl-wrapper35.jpg`（`/Users/wangchen/Downloads/aura_code_images/`）。已完整替换本目录的 `cl_wrapper.h`、`cl_wrapper.cpp`，保持照片的接口、命名空间、依赖、默认值及实现逻辑，仅整理空格与对齐。头文件 272 行、实现 1244 行；关键函数行号保留，便于与照片核对。
 

@@ -4,7 +4,6 @@
 #include "gpu/program_cache.h"
 #include "file/xfile.h"
 #include "gpu/pending.h"
-#include "flow/xflow_api.h"
 #include "CL/cl_ext.h"
 #include "mm/access.h"
 #include "mm/registry.h"
@@ -26,27 +25,25 @@
 #include <vector>
 
 namespace {
-au::flow::detail::ExternalStatus nativeStatus(cl_int code) noexcept
+au::gpu::detail::PendingStatus nativeStatus(cl_int code) noexcept
 {
     if (!code) return {};
     return {code == CL_OUT_OF_HOST_MEMORY ? au::err::kErrorNoMemory : au::err::kErrorPlatformAPI,
-            code, au::flow::ErrorDomain::OpenCL};
+            code, au::gpu::detail::ErrorDomain::OpenCL};
 }
-int report(const au::flow::detail::ExternalStatus& status) noexcept
+int report(const au::gpu::detail::PendingStatus& status) noexcept
 {
-    if (status.mCode && au::flow::detail::currentTaskId()) au::flow::detail::recordExternalError(status);
     return status.mCode;
 }
 template<class F> int boundary(F&& callable) noexcept
 {
     try {
         const int code = callable();
-        return code ? report({code, 0, code == au::flow::kErrorWouldDeadlock ? au::flow::ErrorDomain::Flow :
-            code == au::err::kErrorNoMemory ? au::flow::ErrorDomain::Memory : au::flow::ErrorDomain::OpenCL}) : 0;
+        return code ? report({code, 0, code == au::err::kErrorNoMemory ? au::gpu::detail::ErrorDomain::Memory : au::gpu::detail::ErrorDomain::OpenCL}) : 0;
     }
-    catch (const std::bad_alloc&) { return report({au::err::kErrorNoMemory, 0, au::flow::ErrorDomain::Memory}); }
-    catch (const std::system_error& error) { return report({au::err::kErrorPlatformAPI, error.code().value(), au::flow::ErrorDomain::System}); }
-    catch (...) { return report({au::err::kErrorUnknown, 0, au::flow::ErrorDomain::System}); }
+    catch (const std::bad_alloc&) { return report({au::err::kErrorNoMemory, 0, au::gpu::detail::ErrorDomain::Memory}); }
+    catch (const std::system_error& error) { return report({au::err::kErrorPlatformAPI, error.code().value(), au::gpu::detail::ErrorDomain::System}); }
+    catch (...) { return report({au::err::kErrorUnknown, 0, au::gpu::detail::ErrorDomain::System}); }
 }
 template<class T> class Object {
 public:
@@ -196,7 +193,7 @@ struct Submission {
     bool mAccessPrepared = false;
     bool mNeedsQueueProof = false; // A nonconforming success-without-event cannot be treated as a rejected command.
     ~Submission() noexcept { if (mProgram) mProgram->recycle(std::move(mKernel)); }
-    static int query(void* payload, bool* done, au::flow::detail::ExternalStatus* status) noexcept
+    static int query(void* payload, bool* done, au::gpu::detail::PendingStatus* status) noexcept
     {
         auto& self = *static_cast<Submission*>(payload);
         const auto& api = *self.mState->mApi;
@@ -211,16 +208,15 @@ struct Submission {
             if (code) { *status = nativeStatus(code); return status->mCode; }
             if (execution > CL_COMPLETE) return 0;
         }
-        // Never recurse through N predecessor queries. The fair registry or
-        // managed external-token loop advances earlier records independently.
+        // The registry advances predecessor records without recursive queries.
         for (const auto& entry : self.mAccess.entries()) if (entry.mPrevious && entry.mPrevious->mNativeEvent &&
             !entry.mPrevious->mHostCompletion && entry.mPrevious->mContext == reinterpret_cast<std::uintptr_t>(self.mState->mContext.mValue) &&
             !entry.mPrevious->ready()) return 0;
-        au::flow::detail::ExternalStatus predecessor;
+        au::gpu::detail::PendingStatus predecessor;
         for (const auto& entry : self.mAccess.entries()) if (entry.mPrevious && entry.mPrevious->ready()) {
             const auto prior = entry.mPrevious->wait(); // Cached ready observation; no native/host wait in cleanup.
             if (!predecessor.mCode && prior.mCode) predecessor = {prior.mCode, prior.mNativeCode,
-                prior.mDeviceError ? au::flow::ErrorDomain::OpenCL : au::flow::ErrorDomain::Memory, prior.mCauseTaskId};
+                prior.mDeviceError ? au::gpu::detail::ErrorDomain::OpenCL : au::gpu::detail::ErrorDomain::Memory, prior.mCauseTaskId};
         }
         // clGetEventInfo is deliberately not a host synchronization point. Wait
         // even after observing CL_COMPLETE before consuming readback bytes.
@@ -229,7 +225,7 @@ struct Submission {
         *status = predecessor.mCode ? predecessor : nativeStatus(execution < 0 ? execution : code);
         return 0;
     }
-    static au::flow::detail::ExternalStatus finalize(void* payload, const au::flow::detail::ExternalStatus& incoming) noexcept
+    static au::gpu::detail::PendingStatus finalize(void* payload, const au::gpu::detail::PendingStatus& incoming) noexcept
     {
         auto& self = *static_cast<Submission*>(payload);
         auto status = incoming;
@@ -250,7 +246,7 @@ struct Submission {
                         transfer.mControl->mAccessError = code; transfer.mControl->mAccessNativeError = native;
                     }
                 }
-                if (code) status = {code, native, au::flow::ErrorDomain::Memory};
+                if (code) status = {code, native, au::gpu::detail::ErrorDomain::Memory};
             }
             const auto release = nativeStatus(transfer.mMemory.reset());
             if (!status.mCode) status = release;
@@ -259,8 +255,8 @@ struct Submission {
         const auto eventRelease = nativeStatus(self.mEvent.reset());
         if (!status.mCode) status = eventRelease;
         const int cleanup = self.mAccess.releaseCompleted({status.mCode, status.mNativeCode, 0,
-            status.mDomain == au::flow::ErrorDomain::OpenCL});
-        if (!status.mCode && cleanup) status = {cleanup, self.mAccess.nativeCode(), au::flow::ErrorDomain::Memory};
+            status.mDomain == au::gpu::detail::ErrorDomain::OpenCL});
+        if (!status.mCode && cleanup) status = {cleanup, self.mAccess.nativeCode(), au::gpu::detail::ErrorDomain::Memory};
         self.mState->pruneResources();
         return status;
     }
@@ -270,10 +266,10 @@ const au::gpu::detail::PendingOps gOps{&Submission::query, &Submission::finalize
 
 bool multiply(std::size_t first, std::size_t second, std::size_t& result) noexcept
 { if (first && second > std::numeric_limits<std::size_t>::max() / first) return false; result = first * second; return true; }
-au::flow::detail::ExternalStatus getProgram(const std::shared_ptr<State>& state, const char* name, const char* source,
+au::gpu::detail::PendingStatus getProgram(const std::shared_ptr<State>& state, const char* name, const char* source,
     const char* options, std::shared_ptr<Program>& out)
 {
-    if (!name || !*name) return {au::err::kErrorInvalidParam, 0, au::flow::ErrorDomain::OpenCL};
+    if (!name || !*name) return {au::err::kErrorInvalidParam, 0, au::gpu::detail::ErrorDomain::OpenCL};
     {
         std::lock_guard<std::mutex> lock(state->mCacheMutex);
         const auto found = state->mPrograms.find(name);
@@ -281,10 +277,10 @@ au::flow::detail::ExternalStatus getProgram(const std::shared_ptr<State>& state,
     }
     if (out) {
         if ((source && out->mCompiled->mSource != source) || (options && out->mCompiled->mOptions != options))
-            return {au::err::kErrorAlreadyExists, 0, au::flow::ErrorDomain::OpenCL};
+            return {au::err::kErrorAlreadyExists, 0, au::gpu::detail::ErrorDomain::OpenCL};
         return {};
     }
-    if (!source || !*source) return {au::err::kErrorNotInitialized, 0, au::flow::ErrorDomain::OpenCL};
+    if (!source || !*source) return {au::err::kErrorNotInitialized, 0, au::gpu::detail::ErrorDomain::OpenCL};
     const std::pair<std::string, std::string> sourceKey{source, options ? options : "-cl-std=CL1.2"};
     std::shared_ptr<CompiledProgram> compiled;
     {
@@ -349,10 +345,10 @@ au::flow::detail::ExternalStatus getProgram(const std::shared_ptr<State>& state,
         node = std::move(inserted.node);
     }
     if (out->mCompiled->mSource != program->mCompiled->mSource || out->mCompiled->mOptions != program->mCompiled->mOptions)
-        return {au::err::kErrorAlreadyExists, 0, au::flow::ErrorDomain::OpenCL};
+        return {au::err::kErrorAlreadyExists, 0, au::gpu::detail::ErrorDomain::OpenCL};
     return {};
 }
-au::flow::detail::ExternalStatus leaseKernel(Submission& submission, const char* name)
+au::gpu::detail::PendingStatus leaseKernel(Submission& submission, const char* name)
 {
     {
         std::lock_guard<std::mutex> lock(submission.mProgram->mMutex);
@@ -399,10 +395,6 @@ public:
     enum class Phase { Empty, Starting, Running, Stopping } mPhase = Phase::Empty;
     ~Backend() noexcept
     {
-        // The runtime is constructed before these backends. Drain/join managed
-        // functions while BOTH sibling backends are still usable, then collect
-        // standalone records. Profiling/mm cleanup can still reach the live core.
-        (void)::au_flow_shutdown();
         (void)stop(true);
     }
     struct Entry {
@@ -446,7 +438,7 @@ public:
         cl_uint count = 0;
         cl_int native = api->mGetPlatformIDs(0, nullptr, &count);
         if (native == CL_PLATFORM_NOT_FOUND_KHR || native == CL_DEVICE_NOT_FOUND || (!native && !count))
-            return report({au::err::kErrorNotSupported, native, au::flow::ErrorDomain::OpenCL});
+            return report({au::err::kErrorNotSupported, native, au::gpu::detail::ErrorDomain::OpenCL});
         if (native) return report(nativeStatus(native));
         std::vector<cl_platform_id> platforms(count);
         native = api->mGetPlatformIDs(count, platforms.data(), nullptr);
@@ -466,7 +458,7 @@ public:
         int importNative = 0;
         const int importCode = au::sys::opencl::queryImports(state->mPlatform, state->mDevice,
             api->mGetDeviceInfo, api->mGetExtensionFunctionAddressForPlatform, state->mImports, &importNative);
-        if (importCode) return report({importCode, importNative, au::flow::ErrorDomain::OpenCL});
+        if (importCode) return report({importCode, importNative, au::gpu::detail::ErrorDomain::OpenCL});
         const cl_context_properties properties[]{CL_CONTEXT_PLATFORM, reinterpret_cast<cl_context_properties>(state->mPlatform), 0};
         state->mContext = Object<cl_context>(api->mCreateContext(properties, 1, &state->mDevice, nullptr, nullptr, &native), api->mReleaseContext);
         if (native || !state->mContext.mValue) return report(nativeStatus(native ? native : CL_INVALID_CONTEXT));
@@ -481,8 +473,7 @@ public:
     }
     int stop(bool deinit) noexcept
     {
-        if (au::flow::detail::cleanupActive() || mPending.finalizingHere()) return au::flow::kErrorWouldDeadlock;
-        if (deinit && au::flow::detail::currentTaskId()) return au::flow::kErrorWouldDeadlock;
+        if (au::gpu::detail::pendingCleanupActive() || mPending.finalizingHere()) return au::err::kErrorBusy;
         std::shared_ptr<State> retired;
         {
             std::unique_lock<std::mutex> lock(mMutex);
@@ -509,12 +500,12 @@ Backend* backend(unsigned int id)
     // Construct the native loader before wrapper states, so it outlives native
     // object teardown at normal static destruction too.
     (void)au::gpu::CLSymbols::isLoaded();
-    au::flow::detail::initializeExecutor(); // Executor/mm outlive both backends; no workers are created.
+    (void)au::mm::Registry::instance(); // Resource cleanup outlives backend teardown.
     static std::array<Backend, 2> instances;
     return &instances[id];
 }
 
-au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsigned int backendId,
+au::gpu::detail::PendingStatus prepareArguments(Submission& submission, unsigned int backendId,
     const ::au_gpu_arg* args, std::size_t count)
 {
     const auto& api = *submission.mState->mApi;
@@ -522,18 +513,18 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
     access.reserve(count); submission.mTransfers.reserve(count); submission.mNative.reserve(count);
     submission.mArgumentTransfers.assign(count, std::numeric_limits<std::size_t>::max());
     for (std::size_t index = 0; index < count; ++index) {
-        if (args[index].mStructSize != sizeof(::au_gpu_arg)) return {au::err::kErrorVersionMismatch, 0, au::flow::ErrorDomain::OpenCL};
+        if (args[index].mStructSize != sizeof(::au_gpu_arg)) return {au::err::kErrorVersionMismatch, 0, au::gpu::detail::ErrorDomain::OpenCL};
         if (args[index].mKind == AU_GPU_BUFFER || args[index].mKind == AU_GPU_IMAGE2D) access.push_back(args[index].mAccess);
-        else if (args[index].mKind > AU_GPU_NATIVE_MEMORY) return {au::err::kErrorInvalidParam, 0, au::flow::ErrorDomain::OpenCL};
+        else if (args[index].mKind > AU_GPU_NATIVE_MEMORY) return {au::err::kErrorInvalidParam, 0, au::gpu::detail::ErrorDomain::OpenCL};
         else if ((args[index].mKind == AU_GPU_SCALAR && (!args[index].mValue || !args[index].mSize)) ||
                  (args[index].mKind == AU_GPU_LOCAL && !args[index].mSize))
-            return {au::err::kErrorInvalidParam, 0, au::flow::ErrorDomain::OpenCL};
+            return {au::err::kErrorInvalidParam, 0, au::gpu::detail::ErrorDomain::OpenCL};
         else if (args[index].mKind == AU_GPU_NATIVE_MEMORY && !args[index].mValue) return nativeStatus(CL_INVALID_MEM_OBJECT);
     }
     int code = access.empty() ? 0 : submission.mAccess.begin(access.data(), access.size(),
         reinterpret_cast<std::uintptr_t>(submission.mState->mContext.mValue), true,
         backendId != AU_GPU_DMA_BUFFER || !submission.mState->mImports.mArmImport);
-    if (code) return {code, submission.mAccess.nativeCode(), submission.mAccess.deviceError() ? au::flow::ErrorDomain::OpenCL : au::flow::ErrorDomain::Memory};
+    if (code) return {code, submission.mAccess.nativeCode(), submission.mAccess.deviceError() ? au::gpu::detail::ErrorDomain::OpenCL : au::gpu::detail::ErrorDomain::Memory};
     submission.mAccessPrepared = !access.empty();
     submission.mNativeFence = std::make_shared<NativeEventLease>(); // Before any accepted native command.
     submission.mWaitEvents.reserve(submission.mAccess.entries().size());
@@ -543,24 +534,24 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
         if (std::find(submission.mWaitEvents.begin(), submission.mWaitEvents.end(), event) == submission.mWaitEvents.end())
             submission.mWaitEvents.push_back(event);
     }
-    if (submission.mWaitEvents.size() > std::numeric_limits<cl_uint>::max()) return {au::err::kErrorOverflow, 0, au::flow::ErrorDomain::OpenCL};
+    if (submission.mWaitEvents.size() > std::numeric_limits<cl_uint>::max()) return {au::err::kErrorOverflow, 0, au::gpu::detail::ErrorDomain::OpenCL};
     std::size_t leaseIndex = 0;
     for (std::size_t index = 0; index < count; ++index) {
         const auto& arg = args[index];
         if (arg.mKind != AU_GPU_BUFFER && arg.mKind != AU_GPU_IMAGE2D) continue;
         const std::size_t ranges = arg.mAccess.mCount;
-        if (!ranges || (arg.mKind == AU_GPU_IMAGE2D && ranges != 1)) return {au::err::kErrorInvalidParam, 0, au::flow::ErrorDomain::Memory};
+        if (!ranges || (arg.mKind == AU_GPU_IMAGE2D && ranges != 1)) return {au::err::kErrorInvalidParam, 0, au::gpu::detail::ErrorDomain::Memory};
         const auto& lease = submission.mAccess.leases()[leaseIndex];
         auto* control = lease.control();
         const std::size_t offset = submission.mAccess.leases()[leaseIndex].offset();
         unsigned int mode = 0;
         for (std::size_t range = 0; range < ranges; ++range) {
             if (submission.mAccess.leases()[leaseIndex++].control() != control)
-                return {au::err::kErrorNotSupported, 0, au::flow::ErrorDomain::Memory};
+                return {au::err::kErrorNotSupported, 0, au::gpu::detail::ErrorDomain::Memory};
             mode |= arg.mAccess.mRanges[range].mMode;
         }
         if (backendId == AU_GPU_DMA_BUFFER && (control->mBlock.fd < 0 || arg.mKind == AU_GPU_IMAGE2D))
-            return {au::err::kErrorNotSupported, 0, au::flow::ErrorDomain::OpenCL};
+            return {au::err::kErrorNotSupported, 0, au::gpu::detail::ErrorDomain::OpenCL};
         std::size_t slot = 0;
         for (; slot < submission.mTransfers.size(); ++slot) if (submission.mTransfers[slot].mControl == control) break;
         if (slot < submission.mTransfers.size()) {
@@ -568,14 +559,14 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
             if (existing.mImage != (arg.mKind == AU_GPU_IMAGE2D) || (existing.mImage &&
                 (existing.mOffset != offset || existing.mWidth != arg.mWidth || existing.mHeight != arg.mHeight ||
                  existing.mPitch != arg.mRowPitch || existing.mOrder != arg.mChannelOrder || existing.mType != arg.mChannelType)))
-                return {au::err::kErrorNotSupported, 0, au::flow::ErrorDomain::OpenCL}; // Different native views cannot silently break in-place aliasing.
+                return {au::err::kErrorNotSupported, 0, au::gpu::detail::ErrorDomain::OpenCL}; // Different native views cannot silently break in-place aliasing.
             if (existing.mImage) {
                 // CL1.2 cannot promise same-image read/write kernel semantics.
                 // Read aliases share one object; writable image aliases require
                 // an explicit separate output. Buffer in-place aliases are supported.
-                if ((existing.mMode | mode) & AU_MM_WRITE) return {au::err::kErrorNotSupported, 0, au::flow::ErrorDomain::OpenCL};
+                if ((existing.mMode | mode) & AU_MM_WRITE) return {au::err::kErrorNotSupported, 0, au::gpu::detail::ErrorDomain::OpenCL};
                 const std::size_t footprint = (existing.mHeight - 1) * existing.mPitch + existing.mWidth * existing.mPixelBytes;
-                if (footprint > arg.mAccess.mRanges[0].mSize) return {au::err::kErrorOutOfRange, 0, au::flow::ErrorDomain::Memory};
+                if (footprint > arg.mAccess.mRanges[0].mSize) return {au::err::kErrorOutOfRange, 0, au::gpu::detail::ErrorDomain::Memory};
             }
             existing.mMode |= mode;
         } else {
@@ -603,7 +594,7 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
                         !multiply(arg.mHeight - 1, arg.mRowPitch, minimumRows) ||
                         minimumRows > std::numeric_limits<std::size_t>::max() - arg.mWidth ||
                         minimumRows + arg.mWidth > arg.mAccess.mRanges[0].mSize)
-                        return {au::err::kErrorOutOfRange, 0, au::flow::ErrorDomain::Memory};
+                        return {au::err::kErrorOutOfRange, 0, au::gpu::detail::ErrorDomain::Memory};
                     const cl_image_format format{arg.mChannelOrder, arg.mChannelType};
                     cl_image_desc description{}; description.image_type = CL_MEM_OBJECT_IMAGE2D;
                     description.image_width = arg.mWidth; description.image_height = arg.mHeight;
@@ -617,12 +608,12 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
                     if (control->mBlock.fd >= 0 && submission.mState->mImports.mArmImport) {
                         au::sys::memory::FdIdentity fdIdentity;
                         const int duplicate = au::sys::memory::duplicateFd(control->mBlock.fd, bytes, resource->mOwnedFd, fdIdentity);
-                        if (duplicate) return {duplicate, 0, au::flow::ErrorDomain::Memory};
+                        if (duplicate) return {duplicate, 0, au::gpu::detail::ErrorDomain::Memory};
                         cl_mem imported = nullptr; int importNative = 0;
                         const int importedCode = au::sys::opencl::importDmaBuf(submission.mState->mImports,
                             submission.mState->mContext.mValue, resource->mOwnedFd, bytes, &imported, &importNative);
                         resource->mMemory = Object<cl_mem>(imported, api.mReleaseMemObject);
-                        if (importedCode) return {importedCode, importNative, au::flow::ErrorDomain::OpenCL};
+                        if (importedCode) return {importedCode, importNative, au::gpu::detail::ErrorDomain::OpenCL};
                         resource->mImported = true;
                     } else resource->mMemory = Object<cl_mem>(api.mCreateBuffer(
                         submission.mState->mContext.mValue, CL_MEM_READ_WRITE, bytes, nullptr, &native), api.mReleaseMemObject);
@@ -645,7 +636,7 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
                     arg.mRowPitch < row || arg.mRowPitch % transfer.mPixelBytes || !multiply(arg.mHeight - 1, arg.mRowPitch, preceding) ||
                     preceding > std::numeric_limits<std::size_t>::max() - row || offset > control->mBlock.size ||
                     preceding + row > control->mBlock.size - offset || preceding + row > arg.mAccess.mRanges[0].mSize ||
-                    !multiply(arg.mHeight, row, bytes)) return {au::err::kErrorOutOfRange, 0, au::flow::ErrorDomain::Memory};
+                    !multiply(arg.mHeight, row, bytes)) return {au::err::kErrorOutOfRange, 0, au::gpu::detail::ErrorDomain::Memory};
             }
             transfer.mImported = resource->mImported;
             native = api.mRetainMemObject(resource->mMemory.mValue);
@@ -665,7 +656,7 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
         if (transfer.mImported) continue;
         int native = 0;
         code = au::mm::detail::syncCpuAccess(transfer.mControl, AU_MM_READ, true, &native);
-        if (code) return {code, native, au::flow::ErrorDomain::Memory};
+        if (code) return {code, native, au::gpu::detail::ErrorDomain::Memory};
         auto* source = static_cast<unsigned char*>(transfer.mControl->mBlock.ptr) + transfer.mOffset;
         if (transfer.mImage) {
             const std::size_t row = transfer.mWidth * transfer.mPixelBytes;
@@ -676,7 +667,7 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
         if (code) {
             { std::lock_guard<std::mutex> lock(transfer.mControl->mAccessMutex);
               transfer.mControl->mAccessError = code; transfer.mControl->mAccessNativeError = native; }
-            return {code, native, au::flow::ErrorDomain::Memory};
+            return {code, native, au::gpu::detail::ErrorDomain::Memory};
         }
     }
     for (std::size_t index = 0; index < count; ++index) {
@@ -698,7 +689,7 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
                 native = api.mSetKernelArg(submission.mKernel->mKernel.mValue, static_cast<cl_uint>(index), sizeof(memory), &memory);
             }
         } else {
-            if (!arg.mSize || (arg.mKind == AU_GPU_SCALAR && !arg.mValue)) return {au::err::kErrorInvalidParam, 0, au::flow::ErrorDomain::OpenCL};
+            if (!arg.mSize || (arg.mKind == AU_GPU_SCALAR && !arg.mValue)) return {au::err::kErrorInvalidParam, 0, au::gpu::detail::ErrorDomain::OpenCL};
             native = api.mSetKernelArg(submission.mKernel->mKernel.mValue, static_cast<cl_uint>(index), arg.mSize,
                                       arg.mKind == AU_GPU_LOCAL ? nullptr : arg.mValue);
         }
@@ -707,11 +698,11 @@ au::flow::detail::ExternalStatus prepareArguments(Submission& submission, unsign
     return {};
 }
 
-au::flow::detail::ExternalStatus enqueueCommands(Submission& submission, const ::au_gpu_range& range, void** output) noexcept
+au::gpu::detail::PendingStatus enqueueCommands(Submission& submission, const ::au_gpu_range& range, void** output) noexcept
 {
     const auto& api = *submission.mState->mApi;
     const auto queue = submission.mState->mQueue.mValue;
-    auto accept = [&](cl_int code, cl_event event) -> au::flow::detail::ExternalStatus {
+    auto accept = [&](cl_int code, cl_event event) -> au::gpu::detail::PendingStatus {
         if (code) { if (event) (void)api.mReleaseEvent(event); return nativeStatus(code); }
         if (!event) {
             submission.mNeedsQueueProof = true;
@@ -770,12 +761,12 @@ extern "C" int au_gpu_available(std::uint32_t id) noexcept
 }
 extern "C" int au_gpu_init(std::uint32_t id, const char* binaryDirectory, int profiling) noexcept
 {
-    if (au::flow::detail::cleanupActive()) return report({au::flow::kErrorWouldDeadlock, 0, au::flow::ErrorDomain::Flow});
+    if (au::gpu::detail::pendingCleanupActive()) return report({au::err::kErrorBusy, 0, au::gpu::detail::ErrorDomain::System});
     return boundary([&] { auto* instance = backend(id); return instance ? instance->init(profiling != 0, binaryDirectory) : au::err::kErrorInvalidParam; });
 }
 extern "C" int au_gpu_context(std::uint32_t id, void** context) noexcept
 {
-    if (!context) return report({au::err::kErrorNullPointer, 0, au::flow::ErrorDomain::OpenCL});
+    if (!context) return report({au::err::kErrorNullPointer, 0, au::gpu::detail::ErrorDomain::OpenCL});
     *context = nullptr;
     return boundary([&] {
         auto* instance = backend(id); if (!instance) return au::err::kErrorInvalidParam;
@@ -798,7 +789,7 @@ extern "C" int au_gpu_flush(std::uint32_t id) noexcept
 }
 extern "C" int au_gpu_prepare(std::uint32_t id, const char* name, const char* source, const char* options) noexcept
 {
-    if (au::flow::detail::cleanupActive()) return report({au::flow::kErrorWouldDeadlock, 0, au::flow::ErrorDomain::Flow});
+    if (au::gpu::detail::pendingCleanupActive()) return report({au::err::kErrorBusy, 0, au::gpu::detail::ErrorDomain::System});
     return boundary([&] {
         auto* instance = backend(id); if (!instance) return au::err::kErrorInvalidParam;
         Backend::Entry entry; const int code = instance->enter(entry); if (code) return code;
@@ -811,10 +802,10 @@ extern "C" int au_gpu_enqueue(std::uint32_t id, const ::au_gpu_range* range, con
     const ::au_gpu_arg* args, std::size_t count, void** event) noexcept
 {
     if (event) *event = nullptr;
-    if (au::flow::detail::cleanupActive()) return report({au::flow::kErrorWouldDeadlock, 0, au::flow::ErrorDomain::Flow});
+    if (au::gpu::detail::pendingCleanupActive()) return report({au::err::kErrorBusy, 0, au::gpu::detail::ErrorDomain::System});
     return boundary([&] {
         auto* instance = backend(id); if (!instance) return au::err::kErrorInvalidParam;
-        int code = validateRange(range); if (code) return report({code, 0, au::flow::ErrorDomain::OpenCL});
+        int code = validateRange(range); if (code) return report({code, 0, au::gpu::detail::ErrorDomain::OpenCL});
         if ((!args && count) || count > std::numeric_limits<cl_uint>::max()) return au::err::kErrorInvalidParam;
         Backend::Entry entry; code = instance->enter(entry); if (code) return code;
         instance->mPending.pollSome();
@@ -826,12 +817,12 @@ extern "C" int au_gpu_enqueue(std::uint32_t id, const ::au_gpu_range* range, con
             cl_uint expected = 0;
             status = nativeStatus(entry.mState->mApi->mGetKernelInfo(payload->mKernel->mKernel.mValue,
                 CL_KERNEL_NUM_ARGS, sizeof(expected), &expected, nullptr));
-            if (!status.mCode && expected != count) status = {au::err::kErrorSizeMismatch, 0, au::flow::ErrorDomain::OpenCL};
+            if (!status.mCode && expected != count) status = {au::err::kErrorSizeMismatch, 0, au::gpu::detail::ErrorDomain::OpenCL};
         }
         if (status.mCode) return report(status);
         au::gpu::detail::PreparedSubmission submission;
         code = submission.prepare(instance->mPending, gOps, payload.get(), reinterpret_cast<std::uintptr_t>(entry.mState->mContext.mValue));
-        if (code) return report({code, 0, code == au::err::kErrorNoMemory ? au::flow::ErrorDomain::Memory : au::flow::ErrorDomain::Flow});
+        if (code) return report({code, 0, code == au::err::kErrorNoMemory ? au::gpu::detail::ErrorDomain::Memory : au::gpu::detail::ErrorDomain::System});
         auto* raw = payload.release(); // PreparedSubmission now owns every preparation rollback.
         status = prepareArguments(*raw, id, args, count);
         if (status.mCode) { report(status); submission.cancel(status); return status.mCode; }
@@ -851,7 +842,7 @@ extern "C" int au_gpu_enqueue(std::uint32_t id, const ::au_gpu_range* range, con
             } else if (!status.mCode) status = nativeStatus(retained);
         }
         const int commit = raw->mAccessPrepared ? raw->mAccess.commit(submission.fence()) : 0;
-        if (commit && !status.mCode) status = {commit, 0, au::flow::ErrorDomain::Memory};
+        if (commit && !status.mCode) status = {commit, 0, au::gpu::detail::ErrorDomain::Memory};
         const auto flush = nativeStatus(entry.mState->mApi->mFlush(entry.mState->mQueue.mValue));
         if (!status.mCode) status = flush;
         report(status); // Preserve synchronous native provenance before a concurrent completion query can report another error.

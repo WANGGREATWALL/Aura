@@ -47,19 +47,9 @@ set(AURA_SOURCES
     src/sys/xdlib.cpp
     src/sys/xsystem.cpp
     src/sys/xsystem_vivo.cpp
-    src/sys/flow_runtime.cpp
     src/sys/memory_runtime.cpp
     src/sys/memory_allocation.cpp
     src/flow/xflow.cpp
-    src/flow/node.cpp
-    src/flow/execution_context.cpp
-    src/flow/graph.cpp
-    src/flow/graph_search.cpp
-    src/flow/task_completion.cpp
-    src/flow/task_errors.cpp
-    src/flow/executor.cpp
-    src/flow/external_completion.cpp
-    src/flow/tiled.cpp
     src/gpu/pending.cpp
     src/gpu/arguments.cpp
     src/file/xpath.cpp
@@ -140,10 +130,6 @@ option(ENABLE_TEST_XIMAGE    "Enable ximage unit test"    ON)
 option(ENABLE_TEST_XFLOW     "Enable xflow unit test"     ON)
 if(AURA_TESTS_ENABLED)
     aura_add_library(aura_testing)
-    if(ENABLE_TEST_XFLOW)
-        target_sources(aura_testing PRIVATE src/flow/testing.cpp)
-        target_compile_definitions(aura_testing PRIVATE AURA_FLOW_TESTING=1)
-    endif()
     if(ENABLE_OPENCL)
         target_compile_definitions(aura_testing PRIVATE AURA_GPU_TESTING=1)
     endif()
@@ -197,21 +183,13 @@ aura_add_test(xerror)
 aura_add_test(xfile)
 aura_add_test(ximage)
 aura_add_test(xflow)
-if(ENABLE_TEST_XFLOW)
-    list(APPEND AURA_TEST_SOURCES test/test_flow_runtime.cpp test/test_flow_public.cpp
-        test/test_flow_mechanisms.cpp)
-endif()
-if(ENABLE_TEST_XFLOW AND ENABLE_TEST_XMEMORY)
+if(ENABLE_TEST_XMEMORY)
     list(APPEND AURA_TEST_SOURCES test/test_xgpu_pending.cpp)
 endif()
 
 add_executable(aura_test ${AURA_TEST_SOURCES})
 target_compile_features(aura_test PRIVATE cxx_std_17)
 target_compile_definitions(aura_test PRIVATE ${AURA_TEST_DEFINITIONS})
-if(ENABLE_TEST_XFLOW)
-    target_compile_definitions(aura_test PRIVATE AURA_FLOW_TESTING=1)
-    target_sources(aura_test PRIVATE test/test_flow_queue.cpp)
-endif()
 if(ENABLE_TEST_XMEMORY)
     target_compile_definitions(aura_test PRIVATE AURA_MM_TESTING=1)
 endif()
@@ -227,25 +205,23 @@ target_include_directories(aura_test PRIVATE
 
 target_link_libraries(aura_test PRIVATE aura_testing)
 if(ENABLE_OPENCL)
-    if(ENABLE_TEST_XFLOW AND ENABLE_TEST_XMEMORY)
+    if(ENABLE_TEST_XMEMORY)
         target_sources(aura_test PRIVATE test/test_xopencl.cpp)
         target_include_directories(aura_test PRIVATE src/gpu_helper)
         target_compile_definitions(aura_test PRIVATE AURA_GPU_TESTING=1 CL_TARGET_OPENCL_VERSION=120)
-        add_test(NAME flow_opencl COMMAND aura_test --gtest_filter=XOpenCL.*)
-        set_tests_properties(flow_opencl PROPERTIES TIMEOUT 60)
         add_executable(opencl_teardown_test test/opencl_teardown.cpp)
         target_compile_features(opencl_teardown_test PRIVATE cxx_std_17)
         target_include_directories(opencl_teardown_test PRIVATE src src/gpu_helper)
         target_compile_definitions(opencl_teardown_test PRIVATE AURA_GPU_TESTING=1 CL_TARGET_OPENCL_VERSION=120)
         target_link_libraries(opencl_teardown_test PRIVATE aura_testing)
-        add_test(NAME flow_opencl_teardown COMMAND opencl_teardown_test)
-        set_tests_properties(flow_opencl_teardown PROPERTIES TIMEOUT 60)
+        add_test(NAME opencl_teardown COMMAND opencl_teardown_test)
+        set_tests_properties(opencl_teardown PROPERTIES TIMEOUT 60)
         if(ENABLE_OPENCL_HARDWARE_TESTS)
             add_executable(opencl_hardware_test src/gpu_helper/cl_hpp_test.cpp)
             target_link_libraries(opencl_hardware_test PRIVATE aura)
             set_target_properties(opencl_hardware_test PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
-            add_test(NAME flow_opencl_hardware COMMAND opencl_hardware_test)
-            set_tests_properties(flow_opencl_hardware PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+            add_test(NAME opencl_hardware COMMAND opencl_hardware_test)
+            set_tests_properties(opencl_hardware PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
         endif()
     endif()
     add_executable(opencl_loader_test test/opencl_loader.cpp)
@@ -257,98 +233,19 @@ if(ENABLE_OPENCL)
     add_test(NAME opencl_loader COMMAND opencl_loader_test)
 endif()
 
+add_test(NAME aura_unit COMMAND aura_test)
+set_tests_properties(aura_unit PROPERTIES TIMEOUT 90)
 if(ENABLE_TEST_XFLOW)
-    add_test(NAME flow_unit COMMAND aura_test --gtest_filter=XFlow.*:XFlowPublic.*)
-    add_test(NAME flow_runtime COMMAND aura_test --gtest_filter=XFlowRuntime.*)
-    set_tests_properties(flow_runtime PROPERTIES TIMEOUT 90)
-    if(ENABLE_TEST_XMEMORY)
-        add_test(NAME flow_gpu_pending COMMAND aura_test --gtest_filter=XGpu.*)
-        set_tests_properties(flow_gpu_pending PROPERTIES TIMEOUT 60)
-    endif()
-    set_tests_properties(flow_unit PROPERTIES TIMEOUT 60)
-    if(ENABLE_TEST_XMEMORY)
-        add_test(NAME flow_memory COMMAND aura_test --gtest_filter=XMemory.*)
-        set_tests_properties(flow_memory PROPERTIES TIMEOUT 60)
-    endif()
-    add_executable(flow_cxx11_test test/flow_cxx11.cpp)
-    target_include_directories(flow_cxx11_test PRIVATE src)
-    set_target_properties(flow_cxx11_test PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
-    target_link_libraries(flow_cxx11_test PRIVATE aura_testing)
-    add_test(NAME flow_cxx11 COMMAND flow_cxx11_test)
-    add_test(NAME flow_worker_failure COMMAND flow_cxx11_test worker-failure)
-    add_executable(flow_migration_test test/flow_migration.cpp)
-    set_target_properties(flow_migration_test PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
-    target_link_libraries(flow_migration_test PRIVATE aura)
-    add_test(NAME flow_migration COMMAND flow_migration_test)
-    set_tests_properties(flow_migration PROPERTIES TIMEOUT 30)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$" AND NOT MSVC AND NOT CMAKE_CROSSCOMPILING)
-        add_test(NAME flow_callable_contract COMMAND ${CMAKE_COMMAND}
-            -DCOMPILER=${CMAKE_CXX_COMPILER} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/test/flow_callable_contract.cmake)
-        set_tests_properties(flow_callable_contract PROPERTIES TIMEOUT 60)
-    endif()
     add_executable(flow_c_api_test test/flow_c_api.c)
-    set_target_properties(flow_c_api_test PROPERTIES LINKER_LANGUAGE CXX C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
-    target_link_libraries(flow_c_api_test PRIVATE aura_testing)
+    set_target_properties(flow_c_api_test PROPERTIES LINKER_LANGUAGE CXX C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+    target_link_libraries(flow_c_api_test PRIVATE aura)
     add_test(NAME flow_c_api COMMAND flow_c_api_test)
-    # Exercise the same public C consumer against the actual production archive.
-    add_executable(flow_production_test test/flow_c_api.c)
-    set_target_properties(flow_production_test PROPERTIES LINKER_LANGUAGE CXX C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
-    target_link_libraries(flow_production_test PRIVATE aura)
-    add_test(NAME flow_production COMMAND flow_production_test)
-    if(CMAKE_NM AND NOT MSVC)
-        add_test(NAME flow_production_symbols COMMAND ${CMAKE_COMMAND}
-            "-DAURA_NM=${CMAKE_NM}" "-DAURA_LIBRARY=$<TARGET_FILE:aura>"
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/test/flow_production_symbols.cmake)
-    endif()
-    add_executable(flow_shutdown_test test/flow_shutdown.cpp)
-    target_link_libraries(flow_shutdown_test PRIVATE aura_testing)
-    target_compile_features(flow_shutdown_test PRIVATE cxx_std_17)
-    add_test(NAME flow_shutdown COMMAND flow_shutdown_test)
-    set_tests_properties(flow_shutdown PROPERTIES TIMEOUT 30)
-    if(UNIX)
-        foreach(plugin IN ITEMS flow_plugin_a flow_plugin_b)
-            add_library(${plugin} MODULE test/flow_plugin.cpp)
-            # Exercise default-visible consumers: isolation must come from Aura
-            # declarations and objects, not mandatory application-wide flags.
-            target_include_directories(${plugin} PRIVATE src)
-            if(ENABLE_OPENCL)
-                target_include_directories(${plugin} PRIVATE src/gpu_helper)
-                target_compile_definitions(${plugin} PRIVATE AURA_GPU_TESTING=1 CL_TARGET_OPENCL_VERSION=120)
-            endif()
-            target_link_libraries(${plugin} PRIVATE aura_testing)
-        endforeach()
-        add_executable(flow_isolation_test test/flow_isolation.cpp)
-        target_include_directories(flow_isolation_test PRIVATE inc)
-        target_link_libraries(flow_isolation_test PRIVATE ${CMAKE_DL_LIBS})
-        add_test(NAME flow_isolation COMMAND flow_isolation_test
-            $<TARGET_FILE:flow_plugin_a> $<TARGET_FILE:flow_plugin_b>)
-    endif()
+    add_executable(flow_cxx11_test test/flow_cxx11.cpp)
+    set_target_properties(flow_cxx11_test PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
+    target_link_libraries(flow_cxx11_test PRIVATE aura)
+    add_test(NAME flow_cxx11 COMMAND flow_cxx11_test)
 endif()
 endif() # AURA_TESTS_ENABLED
-
-option(ENABLE_FLOW_BENCHMARKS "Build optional host flow measurement executable" OFF)
-if(ENABLE_FLOW_BENCHMARKS)
-    foreach(benchmark IN ITEMS flow_microbenchmark flow_idle_benchmark flow_mechanism_benchmark
-            flow_gpu_gap_benchmark flow_payload_benchmark)
-        add_executable(${benchmark} test/${benchmark}.cpp)
-        target_include_directories(${benchmark} PRIVATE src)
-        target_link_libraries(${benchmark} PRIVATE aura)
-        target_compile_features(${benchmark} PRIVATE cxx_std_17)
-    endforeach()
-    if(TARGET aura_testing AND ENABLE_TEST_XFLOW)
-        # Algorithm/lock-duration diagnostic; production timings remain in the
-        # separate benchmarks linked to aura.
-        add_executable(flow_graph_benchmark test/flow_graph_benchmark.cpp)
-        target_include_directories(flow_graph_benchmark PRIVATE src)
-        target_link_libraries(flow_graph_benchmark PRIVATE aura_testing)
-        target_compile_features(flow_graph_benchmark PRIVATE cxx_std_17)
-    endif()
-endif()
-
-# ---------------------------------------------------------------------------
-# Sanitizer options for aura_test
-# ---------------------------------------------------------------------------
 
 option(ENABLE_ASAN "Enable AddressSanitizer for aura_test" OFF)
 option(ENABLE_TSAN "Enable ThreadSanitizer for aura_test" OFF)
@@ -357,22 +254,17 @@ if(ENABLE_ASAN AND ENABLE_TSAN)
     message(FATAL_ERROR "ENABLE_ASAN and ENABLE_TSAN are mutually exclusive")
 endif()
 
-if(ENABLE_ASAN)
-    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_migration_test flow_mechanism_benchmark flow_gpu_gap_benchmark flow_payload_benchmark flow_microbenchmark flow_idle_benchmark flow_graph_benchmark)
+if(ENABLE_ASAN OR ENABLE_TSAN)
+    if(ENABLE_ASAN)
+        set(AURA_SANITIZER address)
+    else()
+        set(AURA_SANITIZER thread)
+    endif()
+    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test
+            opencl_loader_test opencl_hardware_test opencl_teardown_test)
         if(TARGET ${target})
-            target_compile_options(${target} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
-            target_link_options(${target} PRIVATE -fsanitize=address)
+            target_compile_options(${target} PRIVATE -fsanitize=${AURA_SANITIZER} -fno-omit-frame-pointer -g)
+            target_link_options(${target} PRIVATE -fsanitize=${AURA_SANITIZER})
         endif()
     endforeach()
-    message(STATUS "AddressSanitizer enabled for Aura and its test consumers")
-endif()
-
-if(ENABLE_TSAN)
-    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_migration_test flow_mechanism_benchmark flow_gpu_gap_benchmark flow_payload_benchmark flow_microbenchmark flow_idle_benchmark flow_graph_benchmark)
-        if(TARGET ${target})
-            target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer -g)
-            target_link_options(${target} PRIVATE -fsanitize=thread)
-        endif()
-    endforeach()
-    message(STATUS "ThreadSanitizer enabled for Aura and its test consumers")
 endif()

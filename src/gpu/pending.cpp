@@ -20,15 +20,12 @@ namespace detail {
 class Pending;
 struct CompletionState {
     // The fence must not retain the provider's leases back to MemoryControl.
-    // Registry/token own the live record; the fence only has a weak reference.
+    // The registry owns the live record; the fence only has a weak reference.
     std::weak_ptr<au::gpu::detail::Pending> mPending;
     std::atomic<bool> mDone{false};
     std::mutex mMutex;
     std::condition_variable mChanged;
-    std::size_t mWaiters = 0;
-    bool mManaged = false; // Immutable before fence/token publication.
-    au::flow::detail::ExternalStatus mStatus;
-    std::uint64_t mCause = 0;
+    au::gpu::detail::PendingStatus mStatus;
 };
 class Pending final {
 public:
@@ -41,11 +38,9 @@ public:
     std::shared_ptr<au::gpu::detail::Pending> mKeepAlive;
     au::gpu::detail::Pending* mPrevious = nullptr;
     au::gpu::detail::Pending* mNext = nullptr;
-    au::flow::detail::ExternalToken* mToken = nullptr;
-    au::flow::detail::ExternalToken* mCleanupToken = nullptr; // Immutable after preparation; live until mDone publication.
     std::atomic<bool> mPublished{false};
     std::atomic_flag mQuerying = ATOMIC_FLAG_INIT;
-    au::flow::detail::ExternalStatus mStatus; // One querying thread until mDone publication.
+    au::gpu::detail::PendingStatus mStatus; // One querying thread until mDone publication.
     ~Pending() noexcept { if (mPayload) mOps.mDestroy(mPayload); }
     Pending() = default;
     Pending(const au::gpu::detail::Pending&) = delete;
@@ -53,19 +48,12 @@ public:
     Pending(au::gpu::detail::Pending&&) = delete;
     au::gpu::detail::Pending& operator=(au::gpu::detail::Pending&&) = delete;
 
-    void complete(au::flow::detail::ExternalStatus status) noexcept
-    {
-        struct Call { au::gpu::detail::Pending* mPending; au::flow::detail::ExternalStatus mStatus; } call{this, status};
-        au::flow::detail::cleanupExternal(mCleanupToken, [](void* payload) noexcept {
-            auto& item = *static_cast<Call*>(payload); item.mPending->completeBody(item.mStatus);
-        }, &call);
-    }
-    void completeBody(au::flow::detail::ExternalStatus status) noexcept
+    void complete(au::gpu::detail::PendingStatus status) noexcept
     {
         struct Extent {
             FinalizingFrame mFrame;
             au::mm::detail::AccessErrorSink mPreviousSink;
-            au::flow::detail::ExternalStatus mError;
+            au::gpu::detail::PendingStatus mError;
             explicit Extent(au::gpu::detail::PendingRegistry* registry) noexcept
                 : mFrame{registry, gFinalizingFrame}, mPreviousSink(au::mm::detail::setAccessErrorSink({&Extent::error, this, false}))
             { gFinalizingFrame = &mFrame; }
@@ -73,10 +61,10 @@ public:
             static void error(void* payload, int code, int native, std::uint64_t cause, bool device) noexcept
             {
                 auto& self = *static_cast<Extent*>(payload);
-                if (!self.mError.mCode) self.mError = {code, native, device ? au::flow::ErrorDomain::OpenCL : au::flow::ErrorDomain::Memory, cause};
+                if (!self.mError.mCode) self.mError = {code, native, device ? au::gpu::detail::ErrorDomain::OpenCL : au::gpu::detail::ErrorDomain::Memory, cause};
             }
         } extent(mRegistry);
-        const auto cleanup = mOps.mFinalize ? mOps.mFinalize(mPayload, status) : au::flow::detail::ExternalStatus{};
+        const auto cleanup = mOps.mFinalize ? mOps.mFinalize(mPayload, status) : au::gpu::detail::PendingStatus{};
         if (!status.mCode) status = cleanup;
         else if (cleanup.mCode && (cleanup.mCode != status.mCode || cleanup.mNativeCode != status.mNativeCode))
             XLOG_E("au::gpu cleanup failed code=%d native=%d\n", cleanup.mCode, cleanup.mNativeCode);
@@ -84,16 +72,13 @@ public:
         mOps.mDestroy(payload); // Drop native/resource leases before publishing safe completion.
         if (!status.mCode) status = extent.mError;
         mState->mStatus = status;
-        bool waiting;
         {
             std::lock_guard<std::mutex> lock(mState->mMutex);
             mState->mDone.store(true, std::memory_order_release); // Publish status/cleanup before either wake channel.
-            waiting = mState->mManaged && mState->mWaiters;
         }
         mState->mChanged.notify_all();
-        if (waiting) au::flow::detail::notifyExternalWaiters();
     }
-    int poll(bool* done, au::flow::detail::ExternalStatus* status) noexcept
+    int poll(bool* done, au::gpu::detail::PendingStatus* status) noexcept
     {
         *done = mState->mDone.load(std::memory_order_acquire);
         if (*done) { *status = mState->mStatus; return 0; }
@@ -104,10 +89,10 @@ public:
             mQuerying.clear(std::memory_order_release); return 0;
         }
         bool terminal = false;
-        au::flow::detail::ExternalStatus observed;
+        au::gpu::detail::PendingStatus observed;
         const int query = mOps.mQuery(mPayload, &terminal, &observed);
         if (query && !observed.mCode) {
-            observed.mCode = query; observed.mDomain = au::flow::ErrorDomain::OpenCL;
+            observed.mCode = query; observed.mDomain = au::gpu::detail::ErrorDomain::OpenCL;
         }
         if (!mStatus.mCode && observed.mCode) mStatus = observed;
         *status = query ? observed : mStatus;
@@ -125,64 +110,34 @@ public:
 } // namespace au
 
 namespace {
-typedef std::shared_ptr<au::gpu::detail::Pending> PendingOwner;
-int queryFlow(void* payload, bool* done, au::flow::detail::ExternalStatus* status) noexcept
-{ return (*static_cast<PendingOwner*>(payload))->poll(done, status); }
-au::flow::detail::ExternalStatus finalizeFlow(void*) noexcept
-{ return {}; } // poll already includes provider cleanup; do not report it a second time.
-void releaseFlow(void* payload) noexcept { delete static_cast<PendingOwner*>(payload); }
 au::mm::detail::FenceStatus waitFence(void* payload) noexcept
 {
     auto& state = *static_cast<std::shared_ptr<au::gpu::detail::CompletionState>*>(payload);
-    struct Waiter {
-        au::gpu::detail::CompletionState* mState;
-        explicit Waiter(au::gpu::detail::CompletionState* state) noexcept : mState(state)
-        {
-            std::lock_guard<std::mutex> lock(mState->mMutex);
-            ++mState->mWaiters;
-        }
-        ~Waiter() noexcept
-        {
-            {
-                std::lock_guard<std::mutex> lock(mState->mMutex);
-                --mState->mWaiters;
-            }
-            mState->mChanged.notify_all();
-            au::flow::detail::leaveExternalWait();
-        }
-    } waiter(state.get());
     auto delay = kRetryMinimum;
-    const auto ready = [](void* payload) noexcept {
-        return static_cast<au::gpu::detail::CompletionState*>(payload)->mDone.load(std::memory_order_acquire);
-    };
     while (!state->mDone.load(std::memory_order_acquire)) {
-        if (state->mManaged && au::flow::detail::assistExternalWait(ready, state.get())) continue;
         // Explicit outside callers may query managed fences too. In particular,
         // completion and cleanup must remain possible on the thread calling wait.
         if (auto record = state->mPending.lock()) {
-            bool done = false; au::flow::detail::ExternalStatus status;
+            bool done = false; au::gpu::detail::PendingStatus status;
             (void)record->poll(&done, &status);
             if (done) break;
-            if (!au::flow::detail::cleanupActive()) record->mRegistry->pollSome();
-        }
-        if (!state->mManaged && au::flow::detail::assistExternalWait(ready, state.get(),
-                static_cast<std::uint64_t>(delay.count()))) {
-            delay = std::min(kRetryMaximum, delay * 2);
-            continue;
+            if (!au::gpu::detail::pendingCleanupActive()) record->mRegistry->pollSome();
         }
         std::unique_lock<std::mutex> lock(state->mMutex);
         state->mChanged.wait_for(lock, delay, [&] { return state->mDone.load(std::memory_order_acquire); });
         delay = std::min(kRetryMaximum, delay * 2);
     }
     const auto status = state->mStatus;
-    return {status.mCode, status.mNativeCode, status.mCauseTaskId ? status.mCauseTaskId : state->mCause,
-        status.mDomain == au::flow::ErrorDomain::OpenCL};
+    return {status.mCode, status.mNativeCode, status.mCauseTaskId,
+        status.mDomain == au::gpu::detail::ErrorDomain::OpenCL};
 }
 void destroyFence(void* payload) noexcept
 { delete static_cast<std::shared_ptr<au::gpu::detail::CompletionState>*>(payload); }
 bool readyFence(void* payload) noexcept
 { return (*static_cast<std::shared_ptr<au::gpu::detail::CompletionState>*>(payload))->mDone.load(std::memory_order_acquire); }
 }
+
+bool au::gpu::detail::pendingCleanupActive() noexcept { return gFinalizingFrame != nullptr; }
 
 au::gpu::detail::PendingRegistry::~PendingRegistry() noexcept { (void)drain(); }
 void au::gpu::detail::PendingRegistry::add(const std::shared_ptr<au::gpu::detail::Pending>& pending) noexcept
@@ -228,13 +183,13 @@ void au::gpu::detail::PendingRegistry::pollSome(std::size_t limit) noexcept
                 first->mPrevious = mTail; first->mNext = nullptr; mTail->mNext = first; mTail = first;
             }
         }
-        bool done = false; au::flow::detail::ExternalStatus status;
+        bool done = false; au::gpu::detail::PendingStatus status;
         (void)pending->poll(&done, &status);
     }
 }
-au::flow::detail::ExternalStatus au::gpu::detail::PendingRegistry::drain() noexcept
+au::gpu::detail::PendingStatus au::gpu::detail::PendingRegistry::drain() noexcept
 {
-    if (finalizingHere()) return {au::flow::kErrorWouldDeadlock, 0, au::flow::ErrorDomain::Flow};
+    if (finalizingHere()) return {au::err::kErrorBusy, 0, au::gpu::detail::ErrorDomain::System};
     std::unique_lock<std::mutex> lock(mMutex);
     mChanged.wait(lock, [this] { return !mDraining; });
     mDraining = true; // One explicit drain caller owns the retry timer.
@@ -257,7 +212,7 @@ au::flow::detail::ExternalStatus au::gpu::detail::PendingRegistry::drain() noexc
     return status;
 }
 au::gpu::detail::PreparedSubmission::~PreparedSubmission() noexcept
-{ if (mPending && !mPublished) cancel({au::err::kErrorAborted, 0, au::flow::ErrorDomain::OpenCL}); }
+{ if (mPending && !mPublished) cancel({au::err::kErrorAborted, 0, au::gpu::detail::ErrorDomain::OpenCL}); }
 int au::gpu::detail::PreparedSubmission::prepare(au::gpu::detail::PendingRegistry& registry,
     const au::gpu::detail::PendingOps& ops, void* payload, std::uintptr_t context, bool hostCompletion) noexcept
 {
@@ -268,15 +223,8 @@ int au::gpu::detail::PreparedSubmission::prepare(au::gpu::detail::PendingRegistr
         auto fence = std::make_shared<au::mm::detail::DeviceFence>();
         std::unique_ptr<std::shared_ptr<au::gpu::detail::CompletionState>> fenceOwner(
             new std::shared_ptr<au::gpu::detail::CompletionState>(state));
-        std::unique_ptr<PendingOwner> tokenOwner(new PendingOwner(pending));
         pending->mRegistry = &registry; pending->mOps = ops; pending->mState = state;
-        state->mPending = pending; state->mCause = au::flow::detail::currentTaskId();
-        const au::flow::detail::ExternalOps external{&queryFlow, &finalizeFlow, &releaseFlow};
-        const int code = au::flow::detail::prepareExternal(external, tokenOwner.get(), &pending->mToken);
-        if (code) return code;
-        if (pending->mToken) (void)tokenOwner.release();
-        pending->mCleanupToken = pending->mToken;
-        state->mManaged = pending->mToken != nullptr;
+        state->mPending = pending;
         fence->mPayload = fenceOwner.release(); fence->mWait = &waitFence; fence->mDestroy = &destroyFence;
         fence->mReady = &readyFence;
         fence->mContext = context; fence->mHostCompletion = hostCompletion;
@@ -285,23 +233,17 @@ int au::gpu::detail::PreparedSubmission::prepare(au::gpu::detail::PendingRegistr
         return 0;
     } catch (...) { return au::err::kErrorNoMemory; }
 }
-void au::gpu::detail::PreparedSubmission::publish(const au::flow::detail::ExternalStatus& status) noexcept
+void au::gpu::detail::PreparedSubmission::publish(const au::gpu::detail::PendingStatus& status) noexcept
 {
     if (!mPending || mPublished) return;
     mPublished = true;
     mPending->mStatus = status;
     mPending->mRegistry->add(mPending);
-    auto* token = mPending->mToken; mPending->mToken = nullptr;
     mPending->mPublished.store(true, std::memory_order_release); // Publish fully committed native/fence state to all pollers.
-    au::flow::detail::pollExternal(token);
-    au::flow::detail::leaveExternalRegistrar(token);
 }
-void au::gpu::detail::PreparedSubmission::cancel(const au::flow::detail::ExternalStatus& status) noexcept
+void au::gpu::detail::PreparedSubmission::cancel(const au::gpu::detail::PendingStatus& status) noexcept
 {
     if (!mPending || mPublished) return;
     mPublished = true;
     mPending->complete(status); // No native command has been accepted; cleanup is safe synchronously.
-    auto* token = mPending->mToken; mPending->mToken = nullptr;
-    au::flow::detail::notifyExternal(token, mPending->mState->mStatus);
-    au::flow::detail::leaveExternalRegistrar(token);
 }

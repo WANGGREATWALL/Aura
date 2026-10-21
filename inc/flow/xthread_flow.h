@@ -1,5 +1,4 @@
-#ifndef AURA_PUBLIC_FLOW_XTHREAD_FLOW_H_
-#define AURA_PUBLIC_FLOW_XTHREAD_FLOW_H_
-// Historical include path. Thread management is now private to XFlow.
+#ifndef AURA_FLOW_XTHREAD_FLOW_H_
+#define AURA_FLOW_XTHREAD_FLOW_H_
 #include "flow/xflow.h"
 #endif
