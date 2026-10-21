@@ -322,6 +322,9 @@ public:
     }
     int setAffinity(const au::flow::AffinityPolicy& policy) noexcept
     { return au_flow_affinity(static_cast<std::uint32_t>(policy.mMode), policy.mCpuIds, policy.mCount); }
+    // Live slots only; IDs can have gaps and a reused slot has a new native
+    // thread lifetime. Idle workers retire after two seconds. Refresh snapshots
+    // rather than treating an array index or old thread ID as a permanent worker.
     int getWorkers(au::flow::WorkerInfo* out, std::size_t capacity, std::size_t& count) const noexcept;
     int getWorkerAffinity(std::uint32_t workerId, std::uint32_t* cpus, std::size_t capacity,
                           std::size_t& count) const noexcept

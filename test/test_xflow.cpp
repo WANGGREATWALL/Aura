@@ -1099,24 +1099,35 @@ TEST(XFlow, ExternalRecordsGrowAndDrainWithoutAThirdThreadPool)
 TEST(XFlow, AffinityAppliesBeforeTheNextCallableAndCanBeQueried)
 {
     au::flow::XFlow& flow = au::flow::XFlow::get();
-    ASSERT_EQ(code(flow.enqueue([]() -> int { return 0; })), 0);
+    std::uint64_t thread = 0;
+    ASSERT_EQ(code(flow.enqueue([&]() -> int { thread = au::sys::flow::threadId(); return 0; })), 0);
+    const auto slotFor = [&](std::uint64_t native) -> std::uint32_t {
+        std::array<au::flow::WorkerInfo, 8> info{};
+        std::size_t slots = 0;
+        if (flow.getWorkers(info.data(), info.size(), slots)) return 8;
+        for (std::size_t i = 0; i < slots; ++i) if (info[i].mThreadId == native) return info[i].mWorkerId;
+        return 8;
+    };
+    const auto firstSlot = slotFor(thread);
+    ASSERT_LT(firstSlot, 8u);
     std::size_t count = 0;
-    const int query = flow.getWorkerAffinity(0, nullptr, 0, count);
+    const int query = flow.getWorkerAffinity(firstSlot, nullptr, 0, count);
     if (query == au::err::kErrorNotSupported) GTEST_SKIP() << "Explicit affinity is unsupported";
     ASSERT_EQ(query, au::err::kErrorBufferUnderflow);
     ASSERT_GT(count, 0u);
     std::vector<std::uint32_t> cpus(count);
-    ASSERT_EQ(flow.getWorkerAffinity(0, cpus.data(), cpus.size(), count), 0);
+    ASSERT_EQ(flow.getWorkerAffinity(firstSlot, cpus.data(), cpus.size(), count), 0);
     const std::uint32_t selected = cpus[0];
     const au::flow::AffinityPolicy policy{au::flow::AffinityMode::ExplicitCpuSet, &selected, 1};
     ASSERT_EQ(flow.setAffinity(policy), 0);
-    EXPECT_EQ(code(flow.enqueue([selected]() -> int {
+    EXPECT_EQ(code(flow.enqueue([selected, &thread]() -> int {
+        thread = au::sys::flow::threadId();
         std::vector<std::uint32_t> actual;
         const int ret = au::sys::flow::currentAffinity(actual);
         return ret ? ret : actual.size() == 1 && actual[0] == selected ? 0 : 1;
     })), 0);
     std::uint32_t actual = 0;
-    EXPECT_EQ(flow.getWorkerAffinity(0, &actual, 1, count), 0);
+    EXPECT_EQ(flow.getWorkerAffinity(slotFor(thread), &actual, 1, count), 0);
     EXPECT_EQ(count, 1u); EXPECT_EQ(actual, selected);
     const au::flow::AffinityPolicy restore{au::flow::AffinityMode::SystemDefault, nullptr, 0};
     EXPECT_EQ(flow.setAffinity(restore), 0);

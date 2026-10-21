@@ -2,6 +2,7 @@
 #define AURA_SYS_FLOW_RUNTIME_H_
 
 #include <chrono>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -12,17 +13,24 @@ namespace au {
 namespace sys {
 namespace flow {
 
-// The count and sleep predicate share the same mutex: a notification cannot be
-// lost between observing zero and entering the OS wait. No per-post allocation.
+// Work permits represent queue items only. Control changes have a separate
+// epoch under the same sleep mutex. A parked surplus worker uses the control
+// CV so it cannot swallow notify_one intended for a work-eligible waiter.
 class WorkSemaphore {
 public:
+    enum class Wake { Work, Control, Timeout };
     void post(std::size_t count = 1) noexcept;
+    void control() noexcept;
+    std::uint64_t epoch() noexcept;
     bool tryAcquire() noexcept;
-    bool acquireUntil(std::chrono::steady_clock::time_point deadline) noexcept;
+    au::sys::flow::WorkSemaphore::Wake acquireUntil(std::uint64_t observed,
+        std::chrono::steady_clock::time_point deadline, bool allowWork = true) noexcept;
 private:
     std::mutex mMutex;
     std::condition_variable mChanged;
+    std::condition_variable mParked;
     std::size_t mCount = 0;
+    std::atomic<std::uint64_t> mEpoch{0}; // Writes under mMutex; lock-free snapshots are rechecked before sleep.
 };
 
 int allowedCpus(std::vector<std::uint32_t>& cpus) noexcept;

@@ -23,7 +23,10 @@ bool cleanupActive() noexcept;
 void cleanupExternal(au::flow::detail::ExternalToken* token, void (*fn)(void*) noexcept, void* payload) noexcept;
 // Managed workers may execute ready work while a provider waits on a resource
 // event. External callers and cleanup extents never acquire scheduler work.
-bool assistExternalWait() noexcept;
+bool assistExternalWait(bool (*ready)(void*) noexcept, void* payload,
+                        std::uint64_t retryMicroseconds = UINT64_MAX) noexcept;
+void notifyExternalWaiters() noexcept;
+void leaveExternalWait() noexcept;
 void* pauseCpuSlice() noexcept;
 void resumeCpuSlice(void* frame) noexcept;
 class CpuSlicePause final {

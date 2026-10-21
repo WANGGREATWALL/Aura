@@ -129,6 +129,7 @@ struct Node {
     au_flow_result mResult{};
     std::mutex mWaitMutex;
     std::condition_variable mChanged;
+    std::size_t mCooperativeWaiters = 0; // Protected by mWaitMutex; finish signals the unified gate.
     au::flow::detail::Node* mWaitTarget = nullptr; // Protected by Core::mMutex.
     au::flow::detail::Node* mExecutingChild = nullptr; // Cooperative stack edge, protected by Core::mMutex.
     au::flow::detail::ReadyLink mReady;
@@ -223,6 +224,27 @@ private:
 std::array<std::atomic<int>, 5> gFailure{{-1, -1, -1, -1, -1}};
 std::atomic<std::size_t> gOutstandingLimit{SIZE_MAX};
 std::atomic<au::flow::testing::SnapshotHook*> gSnapshotHook{nullptr};
+std::mutex gRuntimeHookMutex;
+std::condition_variable gRuntimeHookChanged;
+au::flow::testing::RuntimeHook* gRuntimeHook = nullptr;
+std::size_t gRuntimeReaders = 0;
+void runtimePoint(au::flow::testing::RuntimePoint point, std::size_t id) noexcept
+{
+    au::flow::testing::RuntimeHook* hook;
+    {
+        std::lock_guard<std::mutex> lock(au::flow::detail::gRuntimeHookMutex);
+        hook = au::flow::detail::gRuntimeHook;
+        if (!hook) return;
+        ++au::flow::detail::gRuntimeReaders;
+    }
+    hook->mInvoke(hook->mPayload, point, id); // No scheduler or seam lock held.
+    {
+        std::lock_guard<std::mutex> lock(au::flow::detail::gRuntimeHookMutex);
+        --au::flow::detail::gRuntimeReaders;
+    }
+    au::flow::detail::gRuntimeHookChanged.notify_all();
+}
+
 bool fail(au::flow::testing::Failure failure) noexcept
 {
     std::atomic<int>& counter = au::flow::detail::gFailure[static_cast<unsigned int>(failure)];
@@ -437,14 +459,15 @@ public:
         if (parent->mOutstanding.fetch_sub(1, std::memory_order_acq_rel) == 1) finish(parent.get()); // Release event reservation last.
         return true;
     }
-    void deferExternal(au::flow::detail::ExternalToken* token) noexcept
+    void deferExternal(au::flow::detail::ExternalToken* token, bool announce = true) noexcept
     {
         std::lock_guard<std::mutex> lock(mExternalMutex);
         token->mPendingNext = nullptr;
         if (mPendingExternalTail) mPendingExternalTail->mPendingNext = token;
         else mPendingExternal = token;
         mPendingExternalTail = token;
-        mPendingExternalCount.fetch_add(1, std::memory_order_release); // Enable timed retry only while deferred work exists.
+        const auto previous = mPendingExternalCount.fetch_add(1, std::memory_order_release);
+        if (announce && !previous) mWork.control(); // First query claimant must wake an indefinitely sleeping worker.
     }
     bool pollPendingExternal() noexcept
     {
@@ -457,7 +480,7 @@ public:
             if (!mPendingExternal) mPendingExternalTail = nullptr;
             mPendingExternalCount.fetch_sub(1, std::memory_order_release);
         }
-        if (!consumeExternal(token)) { deferExternal(token); return false; }
+        if (!consumeExternal(token)) { deferExternal(token, false); return false; }
         return true;
     }
     static au_flow_result result(au::flow::detail::Node* node, int code,
@@ -559,6 +582,43 @@ public:
         std::unique_ptr<au::flow::detail::Edge, au::flow::detail::Core::EdgeOwner> mEdge;
     };
 
+    class WorkerAdmission {
+    public:
+        explicit WorkerAdmission(au::flow::detail::Core* core) noexcept : mCore(core) {}
+        int accept(int* native = nullptr) noexcept
+        {
+            std::unique_lock<std::mutex> lock(mCore->mWorkerMutex);
+            if (mCore->mClosingQueries) return au::err::kErrorStateInvalid;
+            if (mCore->mAdmissions == SIZE_MAX) return au::err::kErrorOverflow;
+            ++mCore->mAdmissions;
+            mAccepted = true;
+            const int code = mCore->eligibleWorkers() ? 0 : mCore->startWorker(lock);
+            if (native) *native = code ? mCore->mLastWorkerNative : 0;
+            lock.unlock();
+#ifdef AURA_FLOW_TESTING
+            if (!code) au::flow::detail::runtimePoint(au::flow::testing::RuntimePoint::AfterAdmission,
+                au::flow::detail::gWorker < 0 ? 8 : static_cast<std::size_t>(au::flow::detail::gWorker));
+#endif
+            return code;
+        }
+        ~WorkerAdmission() noexcept
+        {
+            if (!mAccepted) return;
+            bool wake;
+            {
+                std::lock_guard<std::mutex> lock(mCore->mWorkerMutex);
+                --mCore->mAdmissions;
+                wake = mCore->mRetirePending.load(std::memory_order_acquire);
+            }
+            mCore->mPolicyChanged.notify_all();
+            if (wake) mCore->mWork.control();
+        }
+        WorkerAdmission(const WorkerAdmission&) = delete;
+        WorkerAdmission& operator=(const WorkerAdmission&) = delete;
+    private:
+        au::flow::detail::Core* mCore;
+        bool mAccepted = false;
+    };
     int submit(au::flow::detail::Node* top, bool reportFailure = true) noexcept
     {
         int ret = 0;
@@ -569,6 +629,7 @@ public:
         else if (top->mState.load(std::memory_order_acquire) != au::flow::TaskState::Draft || top->mGroup)
             ret = au::err::kErrorStateInvalid;
         if (ret) { if (reportFailure) scopedError(ret); return ret; }
+        WorkerAdmission admission(this);
         std::vector<Prepared> batch;
         std::vector<Registration> registrations;
         std::unique_ptr<au::flow::detail::Edge, EdgeOwner> diagnostic(nullptr, EdgeOwner{this});
@@ -637,7 +698,7 @@ public:
                         registrations.push_back({before, std::move(edge)});
                     }
                 }
-                ret = ensureWorker(&native);
+                ret = admission.accept(&native);
             }
             if (!ret) {
                 std::lock_guard<std::mutex> lock(mMutex);
@@ -747,6 +808,7 @@ public:
         mReadyCount.fetch_add(1, std::memory_order_relaxed); // Scaling hint only.
         mReady.push(&node->mReady);
         mWork.post();
+        grow();
     }
     void activate(au::flow::detail::Node* node, au::flow::detail::Node** continuation = nullptr) noexcept
     {
@@ -813,11 +875,14 @@ public:
                     : node->mResult.mCode ? au::flow::TaskState::Failed : au::flow::TaskState::Succeeded);
             }
             trace(node, "Task", 'e', node->mResult.mCode);
+            bool cooperative;
             {
                 std::lock_guard<std::mutex> lock(node->mWaitMutex);
                 node->mState.store(static_cast<au::flow::TaskState>(node->mResult.mState), std::memory_order_release);
+                cooperative = node->mCooperativeWaiters != 0;
             }
             node->mChanged.notify_all();
+            if (cooperative) mWork.control();
             au::flow::detail::Edge* edge = node->mSuccessors.exchange(au::flow::detail::closedEdges(),
                 std::memory_order_acq_rel); // Release final result; acquire complete edge list.
             au::flow::detail::Node** single = edge && !edge->mNext ? continuation : nullptr;
@@ -833,6 +898,7 @@ public:
                 else mActive = node->mActiveNext;
                 if (node->mActiveNext) node->mActiveNext->mActivePrev = node->mActivePrev;
                 --mAccepted;
+                if (!mAccepted && mRetirePending.load(std::memory_order_acquire)) mWork.control();
             }
             if (parent.get()) {
                 inherit(parent.get(), node->mResult, node->mOrder);
@@ -848,22 +914,96 @@ public:
         au::flow::detail::gFinishing = false;
     }
 
-    bool helpOne(bool blocking, std::chrono::steady_clock::time_point deadline) noexcept
+    void notifyExternalWaiters() noexcept { mWork.control(); }
+    void releasePoller() noexcept
+    {
+        int owner = au::flow::detail::gWorker;
+        // Most CPU dispatches have no lease. Avoid compare-exchange traffic
+        // on a shared cache line, and take the worker lock only for a handoff.
+        if (owner < 0 || mPollOwner.load(std::memory_order_acquire) != owner) return;
+        bool released;
+        {
+            std::lock_guard<std::mutex> lock(mWorkerMutex);
+            released = mPollOwner.compare_exchange_strong(owner, -1, std::memory_order_acq_rel);
+        }
+        if (released) mWork.control(); // Retirement and relinquishing the last query consumer are serialized.
+    }
+    bool pumpExternal(std::chrono::steady_clock::time_point& deadline) noexcept
+    {
+        const int id = au::flow::detail::gWorker;
+        if (!mPendingExternalCount.load(std::memory_order_acquire)) { releasePoller(); return false; }
+        if (id < 0 || static_cast<std::size_t>(id) >= mBudget.load(std::memory_order_acquire)) return false;
+        int unclaimed = -1;
+        auto& worker = mWorkers[static_cast<std::size_t>(id)];
+        if (mPollOwner.load(std::memory_order_acquire) == -1 &&
+            mPollOwner.compare_exchange_strong(unclaimed, id, std::memory_order_acq_rel)) {
+            worker.mPollDue = std::chrono::steady_clock::now();
+            worker.mPollDelay = kPollMinimum;
+            worker.mPollRemaining = 0;
+        }
+        if (mPollOwner.load(std::memory_order_acquire) != id) return false;
+        bool progress = false;
+        if (std::chrono::steady_clock::now() >= worker.mPollDue &&
+            !mPolling.test_and_set(std::memory_order_acquire)) {
+            if (!worker.mPollRemaining) {
+                worker.mPollRemaining = mPendingExternalCount.load(std::memory_order_acquire);
+                worker.mPollProgress = false;
+            }
+#ifdef AURA_FLOW_TESTING
+            mPollPasses.fetch_add(1, std::memory_order_relaxed);
+            au::flow::detail::runtimePoint(au::flow::testing::RuntimePoint::BeforePendingQuery, static_cast<std::size_t>(id));
+#endif
+            const auto attempts = std::min<std::size_t>(kPollBatch, worker.mPollRemaining);
+            for (std::size_t i = 0; i < attempts; ++i) progress = pollPendingExternal() || progress;
+            worker.mPollRemaining -= attempts;
+            worker.mPollProgress = worker.mPollProgress || progress;
+            if (!worker.mPollRemaining) {
+                worker.mPollDelay = worker.mPollProgress ? kPollMinimum : std::min(kPollMaximum, worker.mPollDelay * 2);
+                worker.mPollDue = std::chrono::steady_clock::now() + worker.mPollDelay;
+            } else worker.mPollDue = std::chrono::steady_clock::now(); // Finish a round fairly, eight queries per dispatch.
+            mPolling.clear(std::memory_order_release);
+        }
+        if (!mPendingExternalCount.load(std::memory_order_acquire)) releasePoller();
+        else deadline = std::min(deadline, worker.mPollDue);
+        return progress;
+    }
+    bool helpOne(bool blocking, std::chrono::steady_clock::time_point deadline,
+                 au::flow::detail::Node* awaited = nullptr, const std::uint64_t* observed = nullptr,
+                 bool (*externalReady)(void*) noexcept = nullptr, void* externalPayload = nullptr) noexcept
     {
         if (au::flow::detail::gDepth >= 32) return false;
-        if (mPendingExternalCount.load(std::memory_order_acquire) != 0) {
-            if ((au::flow::detail::gCompletionBurst < 8 || mReadyCount.load(std::memory_order_relaxed) == 0) && pollPendingExternal()) {
-                ++au::flow::detail::gCompletionBurst; return true;
-            }
-            deadline = std::min(deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(1));
-        }
-        if (!(blocking ? mWork.acquireUntil(deadline) : mWork.tryAcquire())) return false;
+        const auto epoch = observed ? *observed : mWork.epoch();
+        if (mStop.load(std::memory_order_acquire)) return false;
         if (au::flow::detail::gWorker >= 0) applyPolicy(static_cast<std::size_t>(au::flow::detail::gWorker));
+        const bool eligible = au::flow::detail::gWorker < 0 ||
+            static_cast<std::size_t>(au::flow::detail::gWorker) < mBudget.load(std::memory_order_acquire);
+        if (eligible && (au::flow::detail::gCompletionBurst < 8 || mReadyCount.load(std::memory_order_relaxed) == 0) &&
+            pumpExternal(deadline)) {
+            ++au::flow::detail::gCompletionBurst;
+            return true;
+        }
+        if (awaited && au::flow::detail::finalState(awaited->mState.load(std::memory_order_acquire))) return false;
+        if (externalReady && externalReady(externalPayload)) return false;
+        if (!eligible) releasePoller();
+        if (blocking) {
+#ifdef AURA_FLOW_TESTING
+            au::flow::detail::runtimePoint(au::flow::testing::RuntimePoint::BeforeSleep,
+                au::flow::detail::gWorker < 0 ? 8 : static_cast<std::size_t>(au::flow::detail::gWorker));
+#endif
+            const auto wake = mWork.acquireUntil(epoch, deadline, eligible);
+#ifdef AURA_FLOW_TESTING
+            if (wake == au::sys::flow::WorkSemaphore::Wake::Timeout) mWaitTimeouts.fetch_add(1, std::memory_order_relaxed);
+            else if (wake == au::sys::flow::WorkSemaphore::Wake::Control) mControlWakes.fetch_add(1, std::memory_order_relaxed);
+            else mWorkWakes.fetch_add(1, std::memory_order_relaxed);
+#endif
+            if (wake != au::sys::flow::WorkSemaphore::Wake::Work) return false;
+        } else if (!eligible || !mWork.tryAcquire()) return false;
         if (au::flow::detail::gWorker >= 0 &&
             static_cast<std::size_t>(au::flow::detail::gWorker) >= mBudget.load(std::memory_order_acquire)) {
-            mWork.post(); // Return a real permit when this retained worker is outside the new budget.
+            mWork.post(); // Return an acquired real permit if the budget changed.
             return false;
         }
+        releasePoller(); // Dispatch may run a long callable; transfer timer ownership first.
         au::flow::detail::ReadyLink* link = nullptr;
         bool overflowFirst = false;
         bool completion = false;
@@ -872,14 +1012,13 @@ public:
             if (au::flow::detail::gCompletionBurst < 8 && mCompletions.pop(link, overflowFirst)) { completion = true; break; }
             if (mReady.pop(link, overflowFirst)) break;
             if (mCompletions.pop(link, overflowFirst)) { completion = true; break; }
-            if (mStop.load(std::memory_order_acquire)) return false; // Shutdown control permits have no queue item.
-            if (++attempts == 8) {
-                if (!blocking || (deadline != std::chrono::steady_clock::time_point::max() &&
-                    std::chrono::steady_clock::now() >= deadline)) {
-                    mWork.post(); // Return the permit, never lose it. A paused publisher cannot trap a timed/cooperative wait here.
-                    return false;
-                }
-                attempts = 0;
+            if (++attempts == kQueueProbeLimit) {
+#ifdef AURA_FLOW_TESTING
+                au::flow::detail::runtimePoint(au::flow::testing::RuntimePoint::QueueProbeMiss,
+                    au::flow::detail::gWorker < 0 ? 8 : static_cast<std::size_t>(au::flow::detail::gWorker));
+#endif
+                mWork.post(); // Preserve the real permit; recheck target/control/timeout outside this bounded probe.
+                return false;
             }
             overflowFirst = !overflowFirst;
             std::this_thread::yield(); // Keep the acquired permit across transient publication gaps.
@@ -905,7 +1044,6 @@ public:
                 }
             }
         }
-        grow(); // Gates can expose new parallelism without a further external enqueue.
         return true;
     }
     void run(au::flow::detail::Node* node, au::flow::detail::Node** continuation = nullptr) noexcept
@@ -924,6 +1062,7 @@ public:
         ++au::flow::detail::gDepth;
         // External tiled callers provide extra capacity, not busy pool workers.
         if (au::flow::detail::gWorker >= 0) mBusy.fetch_add(1, std::memory_order_relaxed); // Scaling hint; cooperative stacks may overlap.
+        if (mPendingExternalCount.load(std::memory_order_acquire)) grow(); // Preserve a query consumer when dispatch takes its leader.
         int code = 0;
         trace(node, "callable wall", 'B'); // Includes all waits inside the function.
         frame.mCpuActive = true; trace(node, "CPU slice", 'B'); // Excludes known waits; not OS scheduled CPU time.
@@ -949,6 +1088,7 @@ public:
             node->mState.store(au::flow::TaskState::Ready, std::memory_order_release);
             mReadyCount.fetch_add(1, std::memory_order_relaxed); // Helper yields after a bounded tile batch.
             mReady.push(&node->mReady); mWork.post();
+            grow();
             if (frame.mPrevious) {
                 std::lock_guard<std::mutex> lock(mMutex);
                 frame.mPrevious->mNode->mExecutingChild = nullptr;
@@ -961,6 +1101,32 @@ public:
             frame.mPrevious->mNode->mExecutingChild = nullptr;
         }
     }
+
+    void leaveCooperativeWait() noexcept
+    {
+        if (!au::flow::detail::gFrame || au::flow::detail::gWorker < 0 || au::flow::detail::gCleanupDepth) return;
+        releasePoller(); // The callable resumes here; it must not retain an idle query lease.
+        if (mPendingExternalCount.load(std::memory_order_acquire)) grow();
+    }
+    class CooperativeWait {
+    public:
+        CooperativeWait(au::flow::detail::Core* core, au::flow::detail::Node* node) noexcept
+            : mCore(core), mNode(au::flow::detail::gFrame && !au::flow::detail::gCleanupDepth ? node : nullptr)
+        {
+            if (mNode) { std::lock_guard<std::mutex> lock(mNode->mWaitMutex); ++mNode->mCooperativeWaiters; }
+        }
+        ~CooperativeWait() noexcept
+        {
+            if (!mNode) return;
+            { std::lock_guard<std::mutex> lock(mNode->mWaitMutex); --mNode->mCooperativeWaiters; }
+            mCore->leaveCooperativeWait();
+        }
+        CooperativeWait(const CooperativeWait&) = delete;
+        CooperativeWait& operator=(const CooperativeWait&) = delete;
+    private:
+        au::flow::detail::Core* mCore;
+        au::flow::detail::Node* mNode;
+    };
 
     int wait(au::flow::detail::Node* node, std::uint64_t timeout, au_flow_result* out) noexcept
     {
@@ -988,15 +1154,13 @@ public:
                 current->mWaitTarget = node;
             } catch (...) { return au::err::kErrorNoMemory; }
         }
+        CooperativeWait registration(this, node);
         int ret = 0;
         while (!au::flow::detail::finalState(node->mState.load(std::memory_order_acquire))) {
             if (std::chrono::steady_clock::now() >= deadline) { ret = au::err::kErrorTimeout; break; }
-            if (current && helpOne(false, deadline)) continue;
+            if (current) { (void)helpOne(true, deadline, node); continue; }
             std::unique_lock<std::mutex> lock(node->mWaitMutex);
-            if (current) {
-                node->mChanged.wait_until(lock, std::min(deadline,
-                    std::chrono::steady_clock::now() + std::chrono::milliseconds(1)));
-            } else if (deadline == std::chrono::steady_clock::time_point::max()) {
+            if (deadline == std::chrono::steady_clock::time_point::max()) {
                 node->mChanged.wait(lock, [node] { return au::flow::detail::finalState(node->mState.load(std::memory_order_acquire)); });
             } else {
                 node->mChanged.wait_until(lock, deadline, [node] { return au::flow::detail::finalState(node->mState.load(std::memory_order_acquire)); });
@@ -1048,85 +1212,192 @@ public:
         {
             std::unique_lock<std::mutex> lock(mWorkerMutex);
             mClosingQueries = true;
-            mPolicyChanged.wait(lock, [this] { return mAffinityQueries == 0; });
-            mStop.store(true, std::memory_order_release); // Workers may now consume control permits and leave.
+            mPolicyChanged.wait(lock, [this] { return mAffinityQueries == 0 && mAdmissions == 0 && mJoiners == 0; });
+            mStop.store(true, std::memory_order_release);
         }
-        mWork.post(8);
+        mWork.control(); // Control wakes never manufacture queue permits.
         for (auto& worker : mWorkers) if (worker.mThread.joinable()) worker.mThread.join();
         { std::lock_guard<std::mutex> lock(mMutex); mPhase = Phase::Closed; }
         return 0;
     }
 
-    int ensureWorker(int* native = nullptr) noexcept
+    std::size_t eligibleWorkers() const noexcept
     {
-        std::lock_guard<std::mutex> lock(mWorkerMutex);
-        if (mStop.load(std::memory_order_acquire)) return au::err::kErrorStateInvalid;
-        if (mWorkerCount) return 0;
-        const int code = startWorker();
-        if (native) *native = mLastWorkerNative;
-        return code;
+        std::size_t count = 0;
+        const std::size_t budget = mBudget.load(std::memory_order_acquire);
+        for (std::size_t i = 0; i < budget; ++i) if (mWorkers[i].mState == WorkerState::Running) ++count;
+        return count; // mWorkerMutex held.
     }
-    void grow() noexcept
+    std::size_t workDemand() const noexcept
     {
-        std::lock_guard<std::mutex> lock(mWorkerMutex);
-        if (mStop.load(std::memory_order_acquire)) return;
-        const std::size_t demand = mReadyCount.load(std::memory_order_relaxed) + mBusy.load(std::memory_order_relaxed);
-        while (mWorkerCount < std::min(mBudget.load(std::memory_order_relaxed), demand)) {
-            if (startWorker() != 0) break;
-        }
+        return std::min(mBudget.load(std::memory_order_acquire),
+            mReadyCount.load(std::memory_order_relaxed) + mBusy.load(std::memory_order_relaxed) +
+            (mPendingExternalCount.load(std::memory_order_acquire) ? 1 : 0));
     }
-    int startWorker() noexcept
+    void grow(bool force = false) noexcept
+    {
+        if (!force && mEligibleCount.load(std::memory_order_acquire) >= workDemand()) return;
+        std::unique_lock<std::mutex> lock(mWorkerMutex);
+        // startWorker can unlock to join; policy and demand may change during
+        // that interval. Never spin toward a capacity above the current budget.
+        while (!mClosingQueries && eligibleWorkers() < workDemand()) if (startWorker(lock)) break;
+    }
+    int startWorker(std::unique_lock<std::mutex>& lock) noexcept
     {
         mLastWorkerNative = 0;
+        for (;;) {
+            if (mClosingQueries) return au::err::kErrorStateInvalid;
+            const std::size_t budget = mBudget.load(std::memory_order_acquire);
+            bool retiring = false;
+            for (std::size_t id = 0; id < budget; ++id) {
+                auto& worker = mWorkers[id];
+                if (worker.mState == WorkerState::Exited) {
+                    std::thread previous = std::move(worker.mThread);
+                    worker.mState = WorkerState::Joining;
+                    ++mJoiners;
+                    lock.unlock();
+                    previous.join(); // No graph, worker, gate or provider lock held.
+                    lock.lock();
+                    --mJoiners;
+                    worker.mState = WorkerState::Free;
+                    mPolicyChanged.notify_all();
+                    break; // Recheck shutdown/budget and all slots after the unlocked join.
+                }
+                if (worker.mState == WorkerState::Retiring || worker.mState == WorkerState::Joining) {
+                    retiring = true;
+                    continue;
+                }
+                if (worker.mState != WorkerState::Free) continue;
 #ifdef AURA_FLOW_TESTING
-        if (au::flow::detail::fail(au::flow::testing::Failure::Worker)) return au::err::kErrorPlatformAPI;
+                if (au::flow::detail::fail(au::flow::testing::Failure::Worker)) return au::err::kErrorPlatformAPI;
 #endif
-        if (mWorkerCount == mWorkers.size()) return 0;
-        const std::size_t id = mWorkerCount;
-        try {
-            mWorkers[id].mThread = std::thread(au::flow::detail::WorkerEntry{this, id});
-            ++mWorkerCount;
-            return 0;
-        } catch (const std::system_error& error) {
-            mLastWorkerNative = error.code().value();
-            return au::err::kErrorPlatformAPI;
-        } catch (const std::bad_alloc&) { return au::err::kErrorNoMemory; }
-        catch (...) { return au::err::kErrorPlatformAPI; }
+                if (worker.mGeneration == UINT64_MAX) return au::err::kErrorOverflow;
+                try {
+                    worker.mThreadId = 0;
+                    worker.mAppliedVersion.store(UINT64_MAX, std::memory_order_relaxed); // New generation, not running yet.
+                    worker.mAffinityCode = au::err::kErrorNotReady;
+                    worker.mThread = std::thread(au::flow::detail::WorkerEntry{this, id});
+                    ++worker.mGeneration;
+                    worker.mState = WorkerState::Running;
+                    mWorkerCount.fetch_add(1, std::memory_order_release);
+                    mEligibleCount.store(eligibleWorkers(), std::memory_order_release); // Enqueue-side capacity hint.
+                    return 0;
+                } catch (const std::system_error& error) {
+                    mLastWorkerNative = error.code().value();
+                    return au::err::kErrorPlatformAPI;
+                } catch (const std::bad_alloc&) { return au::err::kErrorNoMemory; }
+                catch (...) { return au::err::kErrorPlatformAPI; }
+            }
+            bool reusable = false;
+            for (std::size_t id = 0; id < budget; ++id)
+                if (mWorkers[id].mState == WorkerState::Free || mWorkers[id].mState == WorkerState::Exited) reusable = true;
+            if (reusable) continue;
+            if (!retiring) return 0; // Budget already filled by another grow/admission.
+            mPolicyChanged.wait(lock); // A retiring/joining slot must finish before reuse.
+        }
+    }
+    void updateRetirementPending() noexcept
+    {
+        bool pending = false;
+        for (const auto& worker : mWorkers) pending = pending || worker.mRetirePending;
+        mRetirePending.store(pending, std::memory_order_release);
+    }
+    bool retire(std::size_t id) noexcept
+    {
+        std::lock_guard<std::mutex> workers(mWorkerMutex);
+        auto& worker = mWorkers[id];
+        if (id < mBudget.load(std::memory_order_acquire) && mPendingExternalCount.load(std::memory_order_acquire)) {
+            int unclaimed = -1;
+            if (mPollOwner.compare_exchange_strong(unclaimed, static_cast<int>(id), std::memory_order_acq_rel)) {
+                worker.mPollDue = std::chrono::steady_clock::now();
+                worker.mPollDelay = kPollMinimum;
+                worker.mPollRemaining = 0;
+                return false; // Become the idle query consumer instead of retiring behind a busy worker.
+            }
+            if (unclaimed == static_cast<int>(id)) return false;
+        }
+        // Worker -> graph is the only nested order. Admissions never hold the
+        // graph mutex while obtaining the worker mutex or joining a thread.
+        std::lock_guard<std::mutex> graph(mMutex);
+        worker.mRetirePending = true;
+        updateRetirementPending(); // Before checking counters, under their writers' mutexes.
+        const bool lastConsumer = mWorkerCount.load(std::memory_order_relaxed) == 1 ||
+            (id < mBudget.load(std::memory_order_acquire) && eligibleWorkers() == 1);
+        if (worker.mPins || (lastConsumer && (mAdmissions || mAccepted))) return false;
+        worker.mRetirePending = false;
+        worker.mState = WorkerState::Retiring;
+        mWorkerCount.fetch_sub(1, std::memory_order_release);
+        mEligibleCount.store(eligibleWorkers(), std::memory_order_release);
+        updateRetirementPending();
+        return true;
     }
     void workerLoop(std::size_t id) noexcept
     {
         au::flow::detail::gWorker = static_cast<int>(id);
-        const std::uint64_t threadId = au::sys::flow::threadId();
         {
             std::lock_guard<std::mutex> lock(mWorkerMutex);
-            mWorkers[id].mThreadId = threadId;
+            mWorkers[id].mThreadId = au::sys::flow::threadId();
         }
+        auto lastActive = std::chrono::steady_clock::now();
         while (!mStop.load(std::memory_order_acquire)) {
+            const auto epoch = mWork.epoch(); // Before checking policy/retirement predicates.
             applyPolicy(id);
+            const auto idleDeadline = lastActive + kIdleTimeout;
+            auto deadline = idleDeadline;
+            if (std::chrono::steady_clock::now() >= idleDeadline) {
+                if (retire(id)) {
+#ifdef AURA_FLOW_TESTING
+                    mRetirements.fetch_add(1, std::memory_order_relaxed);
+                    au::flow::detail::runtimePoint(au::flow::testing::RuntimePoint::AfterRetire, id);
+#endif
+                    break;
+                }
+                deadline = std::chrono::steady_clock::time_point::max(); // Counters/pins signal changes, no periodic retry.
+            }
             if (id >= mBudget.load(std::memory_order_acquire)) {
-                // Park retained surplus threads after a budget reduction.
-                std::unique_lock<std::mutex> lock(mWorkerMutex);
-                mPolicyChanged.wait_for(lock, std::chrono::milliseconds(10));
+                releasePoller();
+                (void)mWork.acquireUntil(epoch, deadline, false);
                 continue;
             }
-            (void)helpOne(true, std::chrono::steady_clock::time_point::max());
+            if (helpOne(true, deadline, nullptr, &epoch)) {
+                lastActive = std::chrono::steady_clock::now();
+                if (!mRetirePending.load(std::memory_order_acquire)) continue;
+                std::lock_guard<std::mutex> lock(mWorkerMutex);
+                if (mWorkers[id].mRetirePending) {
+                    mWorkers[id].mRetirePending = false;
+                    updateRetirementPending();
+                }
+            }
         }
+        releasePoller();
         au::flow::detail::gWorker = -1;
+        {
+            std::lock_guard<std::mutex> lock(mWorkerMutex);
+            auto& worker = mWorkers[id];
+            if (worker.mState == WorkerState::Running) mWorkerCount.fetch_sub(1, std::memory_order_release);
+            worker.mRetirePending = false;
+            worker.mState = WorkerState::Exited; // No Core access after notifying slot waiters.
+            mEligibleCount.store(eligibleWorkers(), std::memory_order_release);
+            updateRetirementPending();
+        }
+        mPolicyChanged.notify_all();
     }
     void applyPolicy(std::size_t id) noexcept
     {
+        if (mWorkers[id].mAppliedVersion.load(std::memory_order_acquire) ==
+            mPolicyVersion.load(std::memory_order_acquire)) return;
         std::vector<std::uint32_t> cpus;
         std::uint64_t version;
         try {
             {
                 std::lock_guard<std::mutex> lock(mWorkerMutex);
-                version = mPolicyVersion;
-                if (mWorkers[id].mAppliedVersion == version) return;
+                version = mPolicyVersion.load(std::memory_order_relaxed);
+                if (mWorkers[id].mAppliedVersion.load(std::memory_order_relaxed) == version) return;
                 cpus = mPolicy.empty() ? mAllowed : mPolicy;
             }
             const int code = version == 0 || cpus.empty() ? 0 : au::sys::flow::applyAffinity(cpus);
             std::lock_guard<std::mutex> lock(mWorkerMutex);
-            mWorkers[id].mAppliedVersion = version;
+            mWorkers[id].mAppliedVersion.store(version, std::memory_order_release);
             mWorkers[id].mAffinityCode = code; // Effective affinity is queried on demand, not cached.
         } catch (...) {
             std::lock_guard<std::mutex> lock(mWorkerMutex);
@@ -1145,15 +1416,27 @@ public:
             selected.erase(std::unique(selected.begin(), selected.end()), selected.end());
             if (mode && selected.empty()) return au::err::kErrorInvalidParam;
             {
-                std::lock_guard<std::mutex> lock(mWorkerMutex);
+                std::unique_lock<std::mutex> lock(mWorkerMutex);
                 if (mClosingQueries) return au::err::kErrorStateInvalid;
-                if (mPolicyVersion == UINT64_MAX) return au::err::kErrorOverflow;
-                mPolicy = std::move(selected); ++mPolicyVersion;
-                mBudget.store(std::max<std::size_t>(1, std::min<std::size_t>(8,
-                    mode ? mPolicy.size() : mAllowed.size())), std::memory_order_release); // New dispatch budget.
+                const auto budget = std::max<std::size_t>(1, std::min<std::size_t>(8,
+                    mode ? selected.size() : mAllowed.size()));
+                bool consumer = false;
+                for (std::size_t id = 0; id < budget; ++id)
+                    consumer = consumer || mWorkers[id].mState == WorkerState::Running;
+                if (!consumer && mWorkerCount.load(std::memory_order_relaxed)) {
+                    const int code = startWorker(lock);
+                    if (code) return code; // Do not strand accepted work by narrowing to empty live slots.
+                }
+                if (mClosingQueries) return au::err::kErrorStateInvalid;
+                if (mPolicyVersion.load(std::memory_order_relaxed) == UINT64_MAX) return au::err::kErrorOverflow;
+                mPolicy = std::move(selected);
+                mPolicyVersion.fetch_add(1, std::memory_order_release); // Publish policy edits before dispatch fast checks.
+                mBudget.store(budget, std::memory_order_release);
+                mEligibleCount.store(eligibleWorkers(), std::memory_order_release);
             }
             mPolicyChanged.notify_all();
-            grow();
+            mWork.control();
+            grow(true);
             return 0;
         } catch (...) { return au::err::kErrorNoMemory; }
     }
@@ -1161,31 +1444,50 @@ public:
     {
         if (!count || (capacity && !out)) return au::err::kErrorInvalidParam;
         std::lock_guard<std::mutex> lock(mWorkerMutex);
-        *count = mWorkerCount;
-        for (std::size_t i = 0; i < std::min(capacity, mWorkerCount); ++i) {
-            if (out[i].mStructSize != sizeof(au_flow_worker)) return au::err::kErrorVersionMismatch;
-            out[i] = {sizeof(au_flow_worker), static_cast<std::uint32_t>(i), mWorkers[i].mThreadId,
-                      mPolicyVersion, mWorkers[i].mAppliedVersion, mWorkers[i].mAffinityCode};
+        *count = 0;
+        for (std::size_t id = 0; id < mWorkers.size(); ++id) {
+            const auto& worker = mWorkers[id];
+            if (worker.mState != WorkerState::Running) continue;
+            const auto index = (*count)++;
+            if (index >= capacity) continue;
+            if (out[index].mStructSize != sizeof(au_flow_worker)) return au::err::kErrorVersionMismatch;
+            out[index] = {sizeof(au_flow_worker), static_cast<std::uint32_t>(id), worker.mThreadId,
+                mPolicyVersion.load(std::memory_order_relaxed), worker.mAppliedVersion.load(std::memory_order_acquire),
+                worker.mAffinityCode};
         }
-        return capacity < mWorkerCount ? au::err::kErrorBufferUnderflow : 0;
+        return capacity < *count ? au::err::kErrorBufferUnderflow : 0;
     }
+
     int workerAffinity(std::uint32_t id, std::uint32_t* cpus, std::size_t capacity, std::size_t* count) noexcept
     {
         if (!count || (capacity && !cpus)) return au::err::kErrorInvalidParam;
         std::uint64_t thread;
         {
             std::lock_guard<std::mutex> lock(mWorkerMutex);
-            if (id >= mWorkerCount) return au::err::kErrorOutOfRange;
+            if (id >= mWorkers.size()) return au::err::kErrorOutOfRange;
             if (mClosingQueries) return au::err::kErrorStateInvalid;
+            if (mWorkers[id].mState != WorkerState::Running) return au::err::kErrorNotReady;
             thread = mWorkers[id].mThreadId;
             if (!thread) return au::err::kErrorNotReady;
-            ++mAffinityQueries; // Prevent exit/TID reuse during the native query.
+            if (mAffinityQueries == SIZE_MAX || mWorkers[id].mPins == SIZE_MAX) return au::err::kErrorOverflow;
+            ++mAffinityQueries;
+            ++mWorkers[id].mPins; // Pin this generation until the native query returns.
         }
+#ifdef AURA_FLOW_TESTING
+        au::flow::detail::runtimePoint(au::flow::testing::RuntimePoint::QueryPinned, id);
+#endif
         std::vector<std::uint32_t> effective;
         int code = au::sys::flow::affinitySupported();
         if (!code) code = au::sys::flow::threadAffinity(thread, effective);
-        { std::lock_guard<std::mutex> lock(mWorkerMutex); --mAffinityQueries; }
+        bool wake;
+        {
+            std::lock_guard<std::mutex> lock(mWorkerMutex);
+            --mAffinityQueries;
+            --mWorkers[id].mPins;
+            wake = mWorkers[id].mRetirePending;
+        }
         mPolicyChanged.notify_all();
+        if (wake) mWork.control();
         if (code) return code;
         *count = effective.size();
         if (cpus) std::copy_n(effective.begin(), std::min(capacity, *count), cpus);
@@ -1230,6 +1532,32 @@ public:
     int tracing(bool enabled) noexcept { return mDiagnostics.setEnabled(enabled); }
     int dumpTrace(const char* path) const noexcept { return mDiagnostics.dumpTrace(path); }
 #ifdef AURA_FLOW_TESTING
+    int queueHooks(const au::flow::detail::QueueHooks& hooks) noexcept
+    {
+        std::lock_guard<std::mutex> workers(mWorkerMutex);
+        std::lock_guard<std::mutex> graph(mMutex);
+        if (mWorkerCount.load(std::memory_order_acquire) || mAdmissions || mAccepted || mJobs)
+            return au::err::kErrorBusy;
+        mReady.testHooks(hooks); // Private test installation at a quiescent queue only.
+        return 0;
+    }
+    au::flow::testing::RuntimeStats runtimeStats() noexcept
+    {
+        au::flow::testing::RuntimeStats stats;
+        std::lock_guard<std::mutex> lock(mWorkerMutex);
+        stats.mLive = mWorkerCount.load(std::memory_order_acquire);
+        stats.mPollOwner = mPollOwner.load(std::memory_order_acquire);
+        stats.mWaitTimeouts = mWaitTimeouts.load(std::memory_order_relaxed);
+        stats.mControlWakes = mControlWakes.load(std::memory_order_relaxed);
+        stats.mWorkWakes = mWorkWakes.load(std::memory_order_relaxed);
+        stats.mPollPasses = mPollPasses.load(std::memory_order_relaxed);
+        stats.mRetirements = mRetirements.load(std::memory_order_relaxed);
+        for (std::size_t id = 0; id < mWorkers.size(); ++id) {
+            stats.mGenerations[id] = mWorkers[id].mGeneration;
+            if (mWorkers[id].mRetirePending) ++stats.mRetireBlocked;
+        }
+        return stats;
+    }
     std::size_t testBudget() const noexcept { return mBudget.load(std::memory_order_acquire); }
     int testBudget(std::size_t budget) noexcept
     {
@@ -1238,8 +1566,13 @@ public:
           if (mJobs) return au::err::kErrorBusy;
           for (au::flow::detail::Node* node = mActive; node; node = node->mActiveNext)
               if (!au::flow::detail::finalState(node->mState.load(std::memory_order_acquire))) return au::err::kErrorBusy;
-          mBudget.store(budget, std::memory_order_release); }
+          }
+        { std::lock_guard<std::mutex> lock(mWorkerMutex);
+          mBudget.store(budget, std::memory_order_release);
+          mEligibleCount.store(eligibleWorkers(), std::memory_order_release); }
         mPolicyChanged.notify_all();
+        mWork.control();
+        grow(true);
         return 0;
     }
 #endif
@@ -1288,7 +1621,8 @@ public:
     // checks and completion, but skip general graph preparation/allocations.
     std::size_t acceptHelpers(au::flow::detail::NodeRef* helpers, std::size_t count) noexcept
     {
-        if (!count || ensureWorker()) return 0; // Optional: caller can finish every tile.
+        WorkerAdmission admission(this);
+        if (!count || admission.accept()) return 0; // Optional: caller can finish every tile.
         std::size_t accepted = 0;
         {
             std::lock_guard<std::mutex> lock(mMutex);
@@ -1323,18 +1657,19 @@ public:
         // completion, and all callbacks still use the normal wait-cycle checks.
         // Re-validating it through general wait() would allocate and could fail
         // before join, letting a helper retain a pointer to an expired Loop.
+        CooperativeWait registration(this, node);
         while (!au::flow::detail::finalState(node->mState.load(std::memory_order_acquire))) {
-            if (au::flow::detail::gFrame && helpOne(false, std::chrono::steady_clock::time_point::max())) continue;
-            std::unique_lock<std::mutex> lock(node->mWaitMutex);
             if (au::flow::detail::gFrame) {
-                node->mChanged.wait_for(lock, std::chrono::milliseconds(1));
+                (void)helpOne(true, std::chrono::steady_clock::time_point::max(), node);
             } else {
+                std::unique_lock<std::mutex> lock(node->mWaitMutex);
                 node->mChanged.wait(lock, [node] {
                     return au::flow::detail::finalState(node->mState.load(std::memory_order_acquire));
                 });
             }
         }
     }
+
     int tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* payload) noexcept;
     void externalProfile(const au::flow::detail::ExternalProfile& profile) noexcept
     {
@@ -1345,11 +1680,25 @@ public:
         mDiagnostics.record(index, profile.mTask, thread, "GPU profile", 'i', 0, 0, nullptr, 0, &profile);
     }
 private:
+    static constexpr auto kIdleTimeout = std::chrono::seconds(2);
+    static constexpr auto kPollMinimum = std::chrono::microseconds(200);
+    static constexpr auto kPollMaximum = std::chrono::microseconds(2000);
+    static constexpr unsigned int kPollBatch = 8;
+    static constexpr unsigned int kQueueProbeLimit = 8;
     enum class Phase { Dormant, Running, Stopping, Closed };
+    enum class WorkerState { Free, Running, Retiring, Exited, Joining };
     struct Worker {
         std::thread mThread;
         std::uint64_t mThreadId = 0;
-        std::uint64_t mAppliedVersion = UINT64_MAX;
+        std::atomic<std::uint64_t> mAppliedVersion{UINT64_MAX};
+        std::uint64_t mGeneration = 0;
+        WorkerState mState = WorkerState::Free;
+        std::size_t mPins = 0;
+        bool mRetirePending = false;
+        bool mPollProgress = false;
+        std::size_t mPollRemaining = 0;
+        std::chrono::steady_clock::time_point mPollDue;
+        std::chrono::microseconds mPollDelay{200};
         int mAffinityCode = au::err::kErrorNotReady;
     };
     au::flow::detail::PayloadPool mPayloads;
@@ -1379,14 +1728,23 @@ private:
     std::mutex mWorkerMutex;
     std::condition_variable mPolicyChanged;
     std::array<Worker, 8> mWorkers;
-    std::size_t mWorkerCount = 0;
+    std::atomic<std::size_t> mWorkerCount{0};
+    std::atomic<std::size_t> mEligibleCount{0};
+    std::size_t mAdmissions = 0;
+    std::size_t mJoiners = 0;
+    std::atomic<bool> mRetirePending{false};
+    std::atomic<int> mPollOwner{-1};
+    std::atomic_flag mPolling = ATOMIC_FLAG_INIT;
     std::size_t mAffinityQueries = 0;
     bool mClosingQueries = false;
     int mLastWorkerNative = 0; // Protected by mWorkerMutex, copied into first-submit rejection.
     std::atomic<std::size_t> mBudget{1};
     std::vector<std::uint32_t> mAllowed;
     std::vector<std::uint32_t> mPolicy;
-    std::uint64_t mPolicyVersion = 0;
+    std::atomic<std::uint64_t> mPolicyVersion{0};
+#ifdef AURA_FLOW_TESTING
+    std::atomic<std::uint64_t> mWaitTimeouts{0}, mControlWakes{0}, mWorkWakes{0}, mPollPasses{0}, mRetirements{0};
+#endif
     au::flow::detail::Diagnostics mDiagnostics;
 };
 
@@ -1534,11 +1892,18 @@ void resumeCpuSlice(void* cookie) noexcept
     if (!frame || frame != au::flow::detail::gFrame || frame->mCpuActive) return;
     frame->mCpuActive = true; au::flow::detail::core().trace(frame->mNode, "CPU slice", 'B');
 }
-bool assistExternalWait() noexcept
+bool assistExternalWait(bool (*ready)(void*) noexcept, void* payload, std::uint64_t retryMicroseconds) noexcept
 {
-    if (!au::flow::detail::gFrame || au::flow::detail::gWorker < 0 || au::flow::detail::gCleanupDepth) return false;
-    return au::flow::detail::core().helpOne(false, std::chrono::steady_clock::now());
+    if (!au::flow::detail::gFrame || au::flow::detail::gWorker < 0 || au::flow::detail::gCleanupDepth ||
+        au::flow::detail::gDepth >= 32) return false;
+    const auto deadline = retryMicroseconds == UINT64_MAX ? std::chrono::steady_clock::time_point::max()
+        : std::chrono::steady_clock::now() + std::chrono::microseconds(retryMicroseconds);
+    (void)au::flow::detail::core().helpOne(true, deadline, nullptr, nullptr, ready, payload);
+    return true;
 }
+void notifyExternalWaiters() noexcept { au::flow::detail::core().notifyExternalWaiters(); }
+void leaveExternalWait() noexcept { au::flow::detail::core().leaveCooperativeWait(); }
+
 void cleanupExternal(au::flow::detail::ExternalToken* token, void (*fn)(void*) noexcept, void* payload) noexcept
 {
     auto* owner = token ? token->mCore : &au::flow::detail::core();
@@ -1562,6 +1927,17 @@ void leaveExternalRegistrar(au::flow::detail::ExternalToken* token) noexcept
 } // namespace au
 
 #ifdef AURA_FLOW_TESTING
+int au::flow::testing::queueHooks(const au::flow::detail::QueueHooks& hooks) noexcept
+{ return au::flow::detail::core().queueHooks(hooks); }
+void au::flow::testing::runtimeHook(au::flow::testing::RuntimeHook* hook) noexcept
+{
+    std::unique_lock<std::mutex> lock(au::flow::detail::gRuntimeHookMutex);
+    au::flow::detail::gRuntimeHook = nullptr;
+    au::flow::detail::gRuntimeHookChanged.wait(lock, [] { return au::flow::detail::gRuntimeReaders == 0; });
+    au::flow::detail::gRuntimeHook = hook;
+}
+au::flow::testing::RuntimeStats au::flow::testing::runtimeStats() noexcept
+{ return au::flow::detail::core().runtimeStats(); }
 void au::flow::testing::failAfter(au::flow::testing::Failure failure, int count) noexcept
 { au::flow::detail::gFailure[static_cast<unsigned int>(failure)].store(count, std::memory_order_relaxed); }
 void au::flow::testing::setOutstandingLimit(std::size_t limit) noexcept

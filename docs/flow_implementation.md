@@ -285,3 +285,10 @@ return tailCode ? tailCode : aCode ? aCode : bCode;
 - 每个 tile 的错误先在其执行线程上收集，然后按最小已执行失败 offset 合并。回调返回非零优先；转发相同错误保留 native/domain/cause，捕获异常与返回同值业务码区分。已开始的回调仍须结束。
 - tile 内需要异步 fan-out/GPU 的旧用法须移到外层普通 Task 中，再调用同步 tiled 处理纯计算；这是显式契约变化。单 Task 内的 GPU 连续 enqueue 及普通 DAG 完整完成边没有改变。
 - 8 tile 批量是当前测量候选，不承诺毫秒级抢占公平性。B3 的等待/查询者/线程退休尚未实施，不能从本批推断功耗或驻留改善。
+
+
+## 13. 2026-10-20 B3：等待与 worker 生命周期
+
+实现及验收见 [B3 报告](flow_validation/B3-2026-10-20.md)。工作许可与控制世代共用睡眠协议，控制不消耗工作计数；协作 wait、helper join 与托管 fence 等待通过完成通知推进。周期 GPU 查询只由一个空闲 worker 负责，支持交接及退避。worker 默认空闲 2 秒退休到 0，槽位复用先在锁外 join 并增加代际，亲核查询 pin 活跃线程。纯 caller Job 不保留无用 worker，shutdown 仍覆盖它。
+
+本节取代早期“高水位线程保留/1 ms 查询/10 ms 预算复查”的实现描述。普通 GPU Task 边、结构化完成、公开 ABI 与错误来源仍维持原契约。getWorkers 只返回活跃 slot，不能把数组下标或旧 TID 当永久身份。B3 主机证据及性能限制详见报告，Android 和真实 GPU 尚待用户验证。

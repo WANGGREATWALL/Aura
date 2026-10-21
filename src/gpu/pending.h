@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include "flow/completion.h"
@@ -39,6 +40,9 @@ private:
     void retire(au::gpu::detail::Pending* pending) noexcept;
     // Mutated by concurrent worker queries and normal wrapper entries.
     mutable std::mutex mMutex;
+    std::condition_variable mChanged;
+    bool mDraining = false;
+    std::uint64_t mRevision = 0;
     au::gpu::detail::Pending* mHead = nullptr;
     au::gpu::detail::Pending* mTail = nullptr;
     std::size_t mCount = 0;

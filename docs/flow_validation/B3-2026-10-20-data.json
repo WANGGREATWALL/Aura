@@ -1,0 +1,2982 @@
+{
+  "batch": "B3",
+  "report": "B3-2026-10-20.md",
+  "generated_utc": "2026-10-21T00:10:08Z",
+  "source": {
+    "B2_base": "900a7384b294320ecdf6d57c4a59f3e41a90715c",
+    "B3": "uncommitted working tree on dev; no push",
+    "code_sha256": {
+      "CMakeLists.txt": "145175dd7552cc6021fac9e621929b248289e7368aa5e5457a73940d1849f42f",
+      "inc/flow/xflow.h": "4d469e637460312e679eab43d7bd03966d162e0ad7c80a23d66d0c739c575e36",
+      "inc/flow/xflow_api.h": "b940d5b10361f9a42078fa06c1267f6685455dfa79f46facc4583314b1f6e70b",
+      "src/flow/xflow.cpp": "ebe074466a7b4b3ebeb9d99d5c17cc17a2cb9fde9576cd5ac11192090a689956",
+      "src/flow/completion.h": "6193517e6b62a76d92d55e63764c6fea58f90f6954906e35e37e8481fa4dfb75",
+      "src/flow/testing.h": "223d8b7ee1e90f4ae9adecb4a9a7081b614ff0adae101e8e201b8289b93d5b6a",
+      "src/gpu/pending.h": "4b4e5fe21d82384439cb4343d50ab3e3993422c3c6e9a07a2db5d89cccad7840",
+      "src/gpu/pending.cpp": "9d6de811c0ec981f227b7371bcc3334a7ee40b15da9c2cf8d7a4879a06241892",
+      "src/sys/flow_runtime.h": "ff1fe9a94c047a89e73294e40f74cfb9da5ce7610f8e7d98d864cf8f1adf266a",
+      "src/sys/flow_runtime.cpp": "9cbfaf933103ea60f733595cc817c3d79d2fb1abbc3f2e77e7b6b1920f5f4c63",
+      "test/flow_microbenchmark.cpp": "54de32f3350f7eba159dbb8feb7c3989668ad1aeb418470e905e04ab5e55ce3f",
+      "test/flow_idle_benchmark.cpp": "e3e37b4531c092d6508c8a953d149d0accf495455a2d06b207e36aa0ce01fede",
+      "test/test_flow_runtime.cpp": "ee7869a985f0c9c27cbd629cc1cd1e041e4b4d0cacb3d4cbd098fb35b0c2c123",
+      "test/test_xflow.cpp": "7ec2b18a99d24c27eeaa2774b434646c9d171f09e52f9cd147c7b17e39c86489",
+      "test/test_xgpu_pending.cpp": "b8e0d177f91a7ded5c4e45a233687c232ea1047cf3d4c72c2ba1c68217390c7c",
+      "test/test_xopencl.cpp": "cc42b64fa2dff73c15ec5db6bf74174ddfb3fb2f04543133ff1e4fc84465ad31",
+      "test/flow_production_symbols.cmake": "5513f0762c1cb40e7b224c90e2902db04efcca2c51ab0a87b0c42aecb464e94f"
+    },
+    "fixed_1ms_experiment_diff": "--- src/flow/xflow.cpp\t2026-10-20 14:53:55.878802758 +0000\n+++ /workspace/.cloud-build/flow-b3-fixed-source/src/flow/xflow.cpp\t2026-10-20 14:55:43.809139772 +0000\n@@ -1681,8 +1681,8 @@\n     }\n private:\n     static constexpr auto kIdleTimeout = std::chrono::seconds(2);\n-    static constexpr auto kPollMinimum = std::chrono::microseconds(200);\n-    static constexpr auto kPollMaximum = std::chrono::microseconds(2000);\n+    static constexpr auto kPollMinimum = std::chrono::microseconds(1000);\n+    static constexpr auto kPollMaximum = std::chrono::microseconds(1000);\n     static constexpr unsigned int kPollBatch = 8;\n     static constexpr unsigned int kQueueProbeLimit = 8;\n     enum class Phase { Dormant, Running, Stopping, Closed };\n"
+  },
+  "host": {
+    "os": "Linux-6.18.55-x86_64-with-glibc2.41",
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "cpus_allowed_list": "0-4",
+    "cgroup_cpu_max": "400000 100000",
+    "compiler": "c++ (Debian 14.2.0-19) 14.2.0",
+    "cmake": "cmake version 3.31.6",
+    "frequency_control": "not fixed; shared host, no device/thermal evidence"
+  },
+  "configuration": {
+    "benchmarks": "Release -O3 -DNDEBUG, CPU-only, BUILD_TESTING=OFF AURA_BUILD_TESTS=OFF ENABLE_FLOW_BENCHMARKS=ON; normal aura, no fault hooks; trace/perf output off",
+    "cpu_source_sha256": "54de32f3350f7eba159dbb8feb7c3989668ad1aeb418470e905e04ab5e55ce3f",
+    "cpu": "101 samples, 16 warmups; 25-call separate global C++ new count window; 1920x1080; five interleaved old/new runs",
+    "idle": "same current flow_idle_benchmark.cpp linked against frozen B2 lib and current B3; five interleaved before/fixed/after runs; 200ms windows; retirement snapshot after 2300ms; old failure attempts real CPU work recovery; exit 7 remains invalid",
+    "parameter_decision": "retain single periodic query owner with 200–2000us backoff; fixed single-owner 1000us is experiment only; device latency/power decision pending user validation",
+    "explicit_exclusions": [
+      "NDK/ADB/ARM64",
+      "real OpenCL/GPU clocks and power",
+      "FlashPE and GitLab engines",
+      "OS wakeup counts",
+      "malloc/driver allocations not captured by global new",
+      "device p50/p95 thresholds"
+    ]
+  },
+  "binaries": {
+    "B2_CPU": {
+      "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/b2-microbenchmark",
+      "sha256": "3ebd163a8bd07831b1df20bd3262e7968387651f696fcf83a17a5c2f390c4b87"
+    },
+    "B2_idle": {
+      "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/b2-idle-benchmark",
+      "sha256": "62a706ec2fd35b22a3f8905880dfc2a3a88d4526383c4f1d9c92b56fa05377a8"
+    },
+    "B2_library": {
+      "path": "/workspace/.cloud-build/flow-b2-after/libaura.a",
+      "sha256": "c25e1b0d30cfe165e42bc2c84f118034ccd412b8c88149ed5f004369b3c34724"
+    },
+    "B3_CPU": {
+      "path": "/workspace/.cloud-build/flow-b3-release/flow_microbenchmark",
+      "sha256": "fbbd8ea8c283ccdd96c3d519ccc1e9461b6b608e3219cbf245add3b035c5b26d"
+    },
+    "B3_idle": {
+      "path": "/workspace/.cloud-build/flow-b3-release/flow_idle_benchmark",
+      "sha256": "17942cad040b6da0a7d28e4433f2fb8ea3c1356792f5aedee4b4e596a8aa628a"
+    },
+    "B3_fixed1ms_idle": {
+      "path": "/workspace/.cloud-build/flow-b3-fixed/flow_idle_benchmark",
+      "sha256": "7f3fc01ef8821849fae646f83c3f83f36d8edb65f093af0600ccea8bcb7f1fef"
+    }
+  },
+  "validation": {
+    "CPU": "172/172; CTest 11 passed",
+    "OpenCL": "185/185; CTest 14 passed, 1 hardware skipped",
+    "ASan_LSan": "14/14 before test-only submission barrier; final changed OpenCL group 1/1 rechecked with leak scanning",
+    "TSan": "11/11 CPU; no race report",
+    "submission_barrier_repetition": "50/50; prior failure preserved, event assertion retained",
+    "strict_headers": "C11 and C++11 -Wall -Wextra -Werror -pedantic syntax checks passed",
+    "production_symbols": "normal Release archive passed flow_production_symbols.cmake",
+    "logs": {
+      "cpu-tests": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-cpu-tests.log",
+        "sha256": "91ba4a114c11924afba02404e2e567954ddbe556b0e8643da366b58fc4327fcb",
+        "result_lines": [
+          "100% tests passed, 0 tests failed out of 11"
+        ]
+      },
+      "cpu-all": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-cpu-all.log",
+        "sha256": "06a278b1639b9ef1bcd40000e6ee99b51508807b7cacb236abaa2006cef40587",
+        "result_lines": [
+          "[==========] 172 tests from 17 test suites ran. (40845 ms total)",
+          "[  PASSED  ] 172 tests."
+        ]
+      },
+      "opencl-tests": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-opencl-tests.log",
+        "sha256": "96d2ecfbaf1ce2f6d405f04b592f2dc9745ce5fbd54670775070f9443c9abf5c",
+        "result_lines": [
+          "100% tests passed, 0 tests failed out of 15",
+          "\t  3 - flow_opencl_hardware (Skipped)"
+        ]
+      },
+      "opencl-all": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-opencl-all.log",
+        "sha256": "85b3265cda063e9671d1ffa0fc8884e1c9c89ff429b49f0b850b783af6f44f38",
+        "result_lines": [
+          "[==========] Running 185 tests from 18 test suites.",
+          "[==========] 185 tests from 18 test suites ran. (39955 ms total)",
+          "[  PASSED  ] 185 tests."
+        ]
+      },
+      "opencl-submission-repeat": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-opencl-submission-repeat.log",
+        "sha256": "d7de32f09d9e96a77f5c28e601edadcaab47ac7fe169d333ad99b44a944f6564",
+        "result_lines": [
+          "[  PASSED  ] 1 test.",
+          "[  PASSED  ] 1 test.",
+          "[  PASSED  ] 1 test.",
+          "[  PASSED  ] 1 test.",
+          "[  PASSED  ] 1 test."
+        ]
+      },
+      "asan-tests": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-asan-tests.log",
+        "sha256": "b30caf0dfa9b4ce6ce93e55027d436d16d12808e503d011f7d177c13ee877028",
+        "result_lines": [
+          "100% tests passed, 0 tests failed out of 14"
+        ]
+      },
+      "asan-opencl-recheck": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-asan-opencl-recheck.log",
+        "sha256": "50e0a08e2d0607e1c836e08df168ed42ecdbc771da04a29778a650b2c888b5a4",
+        "result_lines": [
+          "100% tests passed, 0 tests failed out of 1"
+        ]
+      },
+      "tsan-tests": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-tsan-tests.log",
+        "sha256": "0b6e61f3e0f73e6d5a9913ea1c37f477c6c38026d6efc9237fd1c27c51712324",
+        "result_lines": [
+          "100% tests passed, 0 tests failed out of 11"
+        ]
+      },
+      "release-build": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-release-build.log",
+        "sha256": "0acf5a0f7299482dc468785274e6941a9ac31beeeb3fe1d8cb6879a5aff87a5f",
+        "result_lines": []
+      },
+      "fixed-build": {
+        "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/flow-b3-fixed-build.log",
+        "sha256": "9a24628e326eebdabc5acf56c6bfb7d0c083f09c46b79611d3a7d6afb4885b73",
+        "result_lines": []
+      }
+    }
+  },
+  "summary": {
+    "cpu": {
+      "before": {
+        "external_empty_range0": {
+          "p50_ns": {
+            "median": 30,
+            "min": 30,
+            "max": 30,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 30,
+            "min": 30,
+            "max": 30,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "external_empty_range1": {
+          "p50_ns": {
+            "median": 50,
+            "min": 50,
+            "max": 70,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 61,
+            "min": 60,
+            "max": 81,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "external_empty_1080x16": {
+          "p50_ns": {
+            "median": 23726,
+            "min": 17947,
+            "max": 24146,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 32840,
+            "min": 25248,
+            "max": 35423,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "managed_empty_1080x16": {
+          "p50_ns": {
+            "median": 28323,
+            "min": 27311,
+            "max": 31007,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 69866,
+            "min": 52799,
+            "max": 253793,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 6.0,
+            "min": 6.0,
+            "max": 6.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 128.0,
+            "min": 128.0,
+            "max": 128.0,
+            "samples": 5
+          }
+        },
+        "external_rows_1920x1080_tile16": {
+          "p50_ns": {
+            "median": 161223,
+            "min": 137548,
+            "max": 164298,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 249347,
+            "min": 237949,
+            "max": 275866,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "external_rows_1920x1080_tile64": {
+          "p50_ns": {
+            "median": 163737,
+            "min": 162145,
+            "max": 229606,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 280433,
+            "min": 241033,
+            "max": 402002,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "synthetic_cpu_fanout3_fanin": {
+          "p50_ns": {
+            "median": 717973,
+            "min": 683512,
+            "max": 864274,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 973064,
+            "min": 913749,
+            "max": 1141402,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 42.0,
+            "min": 42.0,
+            "max": 42.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 1176.0,
+            "min": 1176.0,
+            "max": 1176.0,
+            "samples": 5
+          }
+        }
+      },
+      "after": {
+        "external_empty_range0": {
+          "p50_ns": {
+            "median": 30,
+            "min": 30,
+            "max": 30,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 30,
+            "min": 30,
+            "max": 31,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "external_empty_range1": {
+          "p50_ns": {
+            "median": 70,
+            "min": 50,
+            "max": 71,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 80,
+            "min": 60,
+            "max": 110,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "external_empty_1080x16": {
+          "p50_ns": {
+            "median": 24097,
+            "min": 14312,
+            "max": 24197,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 28102,
+            "min": 25719,
+            "max": 37827,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "managed_empty_1080x16": {
+          "p50_ns": {
+            "median": 27452,
+            "min": 27311,
+            "max": 31137,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 41853,
+            "min": 32068,
+            "max": 47011,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 6.0,
+            "min": 6.0,
+            "max": 6.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 128.0,
+            "min": 128.0,
+            "max": 128.0,
+            "samples": 5
+          }
+        },
+        "external_rows_1920x1080_tile16": {
+          "p50_ns": {
+            "median": 158999,
+            "min": 133772,
+            "max": 181504,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 262236,
+            "min": 223036,
+            "max": 312502,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "external_rows_1920x1080_tile64": {
+          "p50_ns": {
+            "median": 173181,
+            "min": 156676,
+            "max": 202876,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 262066,
+            "min": 248545,
+            "max": 272040,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "samples": 5
+          }
+        },
+        "synthetic_cpu_fanout3_fanin": {
+          "p50_ns": {
+            "median": 662135,
+            "min": 649730,
+            "max": 778796,
+            "samples": 5
+          },
+          "p95_ns": {
+            "median": 935371,
+            "min": 910544,
+            "max": 1150146,
+            "samples": 5
+          },
+          "cpp_allocs_per_call": {
+            "median": 42.0,
+            "min": 42.0,
+            "max": 42.0,
+            "samples": 5
+          },
+          "cpp_bytes_per_call": {
+            "median": 1176.0,
+            "min": 1176.0,
+            "max": 1176.0,
+            "samples": 5
+          }
+        }
+      }
+    },
+    "idle": {
+      "before": {
+        "runs": 5,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          7
+        ],
+        "completion_valid": 4,
+        "external_pending": {
+          "modeled_queries": {
+            "median": 590,
+            "min": 506,
+            "max": 728,
+            "samples": 5
+          },
+          "ms": {
+            "median": 200,
+            "min": 200,
+            "max": 200,
+            "samples": 5
+          },
+          "process_involuntary_context_switches": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          },
+          "process_voluntary_context_switches": {
+            "median": 596,
+            "min": 513,
+            "max": 737,
+            "samples": 5
+          }
+        },
+        "budget_one_pending": {
+          "modeled_queries": {
+            "median": 185,
+            "min": 0,
+            "max": 187,
+            "samples": 5
+          },
+          "ms": {
+            "median": 200,
+            "min": 200,
+            "max": 200,
+            "samples": 5
+          },
+          "process_involuntary_context_switches": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          },
+          "process_voluntary_context_switches": {
+            "median": 230,
+            "min": 64,
+            "max": 250,
+            "samples": 5
+          },
+          "includes_invalid_completion_samples": true
+        },
+        "idle": {
+          "modeled_queries": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          },
+          "ms": {
+            "median": 200,
+            "min": 200,
+            "max": 200,
+            "samples": 5
+          },
+          "process_involuntary_context_switches": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          },
+          "process_voluntary_context_switches": {
+            "median": 1,
+            "min": 1,
+            "max": 2,
+            "samples": 5
+          }
+        },
+        "before_idle": {
+          "process_pss_kb": {
+            "median": 1629,
+            "min": 1625,
+            "max": 1641,
+            "samples": 5
+          },
+          "process_threads": {
+            "median": 5,
+            "min": 5,
+            "max": 5,
+            "samples": 5
+          },
+          "worker_records": {
+            "median": 4,
+            "min": 4,
+            "max": 4,
+            "samples": 5
+          }
+        },
+        "after_idle_2300ms": {
+          "process_pss_kb": {
+            "median": 1629,
+            "min": 1625,
+            "max": 1641,
+            "samples": 5
+          },
+          "process_threads": {
+            "median": 5,
+            "min": 5,
+            "max": 5,
+            "samples": 5
+          },
+          "worker_records": {
+            "median": 4,
+            "min": 4,
+            "max": 4,
+            "samples": 5
+          }
+        },
+        "valid_ready_to_task_ns": {
+          "median": 847970.0,
+          "min": 761649,
+          "max": 1053960,
+          "samples": 4
+        },
+        "restart_task_ns": {
+          "median": 74272,
+          "min": 29054,
+          "max": 170498,
+          "samples": 5
+        }
+      },
+      "fixed": {
+        "runs": 5,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "completion_valid": 5,
+        "external_pending": {
+          "modeled_queries": {
+            "median": 185,
+            "min": 183,
+            "max": 186,
+            "samples": 5
+          },
+          "ms": {
+            "median": 200,
+            "min": 200,
+            "max": 200,
+            "samples": 5
+          },
+          "process_involuntary_context_switches": {
+            "median": 0,
+            "min": 0,
+            "max": 1,
+            "samples": 5
+          },
+          "process_voluntary_context_switches": {
+            "median": 186,
+            "min": 184,
+            "max": 187,
+            "samples": 5
+          }
+        },
+        "budget_one_pending": {
+          "modeled_queries": {
+            "median": 186,
+            "min": 180,
+            "max": 187,
+            "samples": 5
+          },
+          "ms": {
+            "median": 200,
+            "min": 200,
+            "max": 200,
+            "samples": 5
+          },
+          "process_involuntary_context_switches": {
+            "median": 1,
+            "min": 0,
+            "max": 2,
+            "samples": 5
+          },
+          "process_voluntary_context_switches": {
+            "median": 195,
+            "min": 188,
+            "max": 198,
+            "samples": 5
+          },
+          "includes_invalid_completion_samples": false
+        },
+        "idle": {
+          "modeled_queries": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          },
+          "ms": {
+            "median": 200,
+            "min": 200,
+            "max": 200,
+            "samples": 5
+          },
+          "process_involuntary_context_switches": {
+            "median": 0,
+            "min": 0,
+            "max": 1,
+            "samples": 5
+          },
+          "process_voluntary_context_switches": {
+            "median": 1,
+            "min": 1,
+            "max": 5,
+            "samples": 5
+          }
+        },
+        "before_idle": {
+          "process_pss_kb": {
+            "median": 1641,
+            "min": 1633,
+            "max": 1701,
+            "samples": 5
+          },
+          "process_threads": {
+            "median": 5,
+            "min": 5,
+            "max": 5,
+            "samples": 5
+          },
+          "worker_records": {
+            "median": 4,
+            "min": 4,
+            "max": 4,
+            "samples": 5
+          }
+        },
+        "after_idle_2300ms": {
+          "process_pss_kb": {
+            "median": 1648,
+            "min": 1605,
+            "max": 1708,
+            "samples": 5
+          },
+          "process_threads": {
+            "median": 1,
+            "min": 1,
+            "max": 1,
+            "samples": 5
+          },
+          "worker_records": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          }
+        },
+        "valid_ready_to_task_ns": {
+          "median": 577061,
+          "min": 26731,
+          "max": 2160971,
+          "samples": 5
+        },
+        "restart_task_ns": {
+          "median": 141824,
+          "min": 91869,
+          "max": 202335,
+          "samples": 5
+        }
+      },
+      "after": {
+        "runs": 5,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "completion_valid": 5,
+        "external_pending": {
+          "modeled_queries": {
+            "median": 97,
+            "min": 96,
+            "max": 97,
+            "samples": 5
+          },
+          "ms": {
+            "median": 200,
+            "min": 200,
+            "max": 200,
+            "samples": 5
+          },
+          "process_involuntary_context_switches": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          },
+          "process_voluntary_context_switches": {
+            "median": 98,
+            "min": 98,
+            "max": 98,
+            "samples": 5
+          }
+        },
+        "budget_one_pending": {
+          "modeled_queries": {
+            "median": 98,
+            "min": 97,
+            "max": 98,
+            "samples": 5
+          },
+          "ms": {
+            "median": 200,
+            "min": 200,
+            "max": 200,
+            "samples": 5
+          },
+          "process_involuntary_context_switches": {
+            "median": 0,
+            "min": 0,
+            "max": 2,
+            "samples": 5
+          },
+          "process_voluntary_context_switches": {
+            "median": 106,
+            "min": 105,
+            "max": 109,
+            "samples": 5
+          },
+          "includes_invalid_completion_samples": false
+        },
+        "idle": {
+          "modeled_queries": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          },
+          "ms": {
+            "median": 200,
+            "min": 200,
+            "max": 200,
+            "samples": 5
+          },
+          "process_involuntary_context_switches": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          },
+          "process_voluntary_context_switches": {
+            "median": 1,
+            "min": 1,
+            "max": 5,
+            "samples": 5
+          }
+        },
+        "before_idle": {
+          "process_pss_kb": {
+            "median": 1641,
+            "min": 1637,
+            "max": 1645,
+            "samples": 5
+          },
+          "process_threads": {
+            "median": 5,
+            "min": 5,
+            "max": 5,
+            "samples": 5
+          },
+          "worker_records": {
+            "median": 4,
+            "min": 4,
+            "max": 4,
+            "samples": 5
+          }
+        },
+        "after_idle_2300ms": {
+          "process_pss_kb": {
+            "median": 1648,
+            "min": 1644,
+            "max": 1652,
+            "samples": 5
+          },
+          "process_threads": {
+            "median": 1,
+            "min": 1,
+            "max": 1,
+            "samples": 5
+          },
+          "worker_records": {
+            "median": 0,
+            "min": 0,
+            "max": 0,
+            "samples": 5
+          }
+        },
+        "valid_ready_to_task_ns": {
+          "median": 1090451,
+          "min": 416479,
+          "max": 2144592,
+          "samples": 5
+        },
+        "restart_task_ns": {
+          "median": 143537,
+          "min": 123627,
+          "max": 159881,
+          "samples": 5
+        }
+      }
+    }
+  },
+  "runs": [
+    {
+      "kind": "cpu",
+      "variant": "before",
+      "repetition": 1,
+      "started_utc": "2026-10-21T00:08:23Z",
+      "exit_code": 0,
+      "file": "final-cpu-before-1.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=415472\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=60 max_ns=61 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=23876 p95_ns=35263 max_ns=73451 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31007 p95_ns=253793 max_ns=1977644 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=164298 p95_ns=275866 max_ns=704904 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=229606 p95_ns=402002 max_ns=3055755 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=777614 p95_ns=1141402 max_ns=2318659 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34044\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 415472
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 30,
+          "max_ns": 31,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 50,
+          "p95_ns": 60,
+          "max_ns": 61,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 23876,
+          "p95_ns": 35263,
+          "max_ns": 73451,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 31007,
+          "p95_ns": 253793,
+          "max_ns": 1977644,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 164298,
+          "p95_ns": 275866,
+          "max_ns": 704904,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 229606,
+          "p95_ns": 402002,
+          "max_ns": 3055755,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 777614,
+          "p95_ns": 1141402,
+          "max_ns": 2318659,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 34044
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "cpu",
+      "variant": "after",
+      "repetition": 1,
+      "started_utc": "2026-10-21T00:08:23Z",
+      "exit_code": 0,
+      "file": "final-cpu-after-1.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=437911\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=50 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=70 p95_ns=80 max_ns=110 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24066 p95_ns=31898 max_ns=49855 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=27452 p95_ns=39510 max_ns=128103 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=181504 p95_ns=262236 max_ns=468707 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=185280 p95_ns=272040 max_ns=417530 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=662135 p95_ns=924686 max_ns=1001571 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34052\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 437911
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 30,
+          "max_ns": 50,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 70,
+          "p95_ns": 80,
+          "max_ns": 110,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 24066,
+          "p95_ns": 31898,
+          "max_ns": 49855,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 27452,
+          "p95_ns": 39510,
+          "max_ns": 128103,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 181504,
+          "p95_ns": 262236,
+          "max_ns": 468707,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 185280,
+          "p95_ns": 272040,
+          "max_ns": 417530,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 662135,
+          "p95_ns": 924686,
+          "max_ns": 1001571,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 34052
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "cpu",
+      "variant": "after",
+      "repetition": 2,
+      "started_utc": "2026-10-21T00:08:23Z",
+      "exit_code": 0,
+      "file": "final-cpu-after-2.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=193823\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=60 max_ns=61 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=14312 p95_ns=25719 max_ns=101593 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=30316 p95_ns=45108 max_ns=116816 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=158999 p95_ns=231850 max_ns=635669 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=173181 p95_ns=248545 max_ns=355587 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=778796 p95_ns=1150146 max_ns=2518500 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34052\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 193823
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 30,
+          "max_ns": 31,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 50,
+          "p95_ns": 60,
+          "max_ns": 61,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 14312,
+          "p95_ns": 25719,
+          "max_ns": 101593,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 30316,
+          "p95_ns": 45108,
+          "max_ns": 116816,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 158999,
+          "p95_ns": 231850,
+          "max_ns": 635669,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 173181,
+          "p95_ns": 248545,
+          "max_ns": 355587,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 778796,
+          "p95_ns": 1150146,
+          "max_ns": 2518500,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 34052
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "cpu",
+      "variant": "before",
+      "repetition": 2,
+      "started_utc": "2026-10-21T00:08:24Z",
+      "exit_code": 0,
+      "file": "final-cpu-before-2.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=253353\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=50 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=70 p95_ns=81 max_ns=90 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24146 p95_ns=25248 max_ns=80962 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=27612 p95_ns=69866 max_ns=304981 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=157558 p95_ns=237949 max_ns=1061311 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=163737 p95_ns=258480 max_ns=705204 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=717973 p95_ns=913749 max_ns=964606 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34040\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 253353
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 30,
+          "max_ns": 50,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 70,
+          "p95_ns": 81,
+          "max_ns": 90,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 24146,
+          "p95_ns": 25248,
+          "max_ns": 80962,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 27612,
+          "p95_ns": 69866,
+          "max_ns": 304981,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 157558,
+          "p95_ns": 237949,
+          "max_ns": 1061311,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 163737,
+          "p95_ns": 258480,
+          "max_ns": 705204,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 717973,
+          "p95_ns": 913749,
+          "max_ns": 964606,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 34040
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "cpu",
+      "variant": "before",
+      "repetition": 3,
+      "started_utc": "2026-10-21T00:08:24Z",
+      "exit_code": 0,
+      "file": "final-cpu-before-3.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=257819\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=60 max_ns=70 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=23726 p95_ns=31247 max_ns=71608 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=27311 p95_ns=52799 max_ns=121583 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=161223 p95_ns=238550 max_ns=399543 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=162145 p95_ns=241033 max_ns=337479 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=683512 p95_ns=939393 max_ns=1205318 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34040\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 257819
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 30,
+          "max_ns": 31,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 50,
+          "p95_ns": 60,
+          "max_ns": 70,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 23726,
+          "p95_ns": 31247,
+          "max_ns": 71608,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 27311,
+          "p95_ns": 52799,
+          "max_ns": 121583,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 161223,
+          "p95_ns": 238550,
+          "max_ns": 399543,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 162145,
+          "p95_ns": 241033,
+          "max_ns": 337479,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 683512,
+          "p95_ns": 939393,
+          "max_ns": 1205318,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 34040
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "cpu",
+      "variant": "after",
+      "repetition": 3,
+      "started_utc": "2026-10-21T00:08:24Z",
+      "exit_code": 0,
+      "file": "final-cpu-after-3.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=239552\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=140 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=70 p95_ns=80 max_ns=230 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24097 p95_ns=37827 max_ns=115224 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=27311 p95_ns=32068 max_ns=197679 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=157398 p95_ns=223036 max_ns=350009 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=163687 p95_ns=253243 max_ns=349808 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=649730 p95_ns=935371 max_ns=2070495 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34052\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 239552
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 31,
+          "max_ns": 140,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 70,
+          "p95_ns": 80,
+          "max_ns": 230,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 24097,
+          "p95_ns": 37827,
+          "max_ns": 115224,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 27311,
+          "p95_ns": 32068,
+          "max_ns": 197679,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 157398,
+          "p95_ns": 223036,
+          "max_ns": 350009,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 163687,
+          "p95_ns": 253243,
+          "max_ns": 349808,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 649730,
+          "p95_ns": 935371,
+          "max_ns": 2070495,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 34052
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "cpu",
+      "variant": "after",
+      "repetition": 4,
+      "started_utc": "2026-10-21T00:08:25Z",
+      "exit_code": 0,
+      "file": "final-cpu-after-4.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=229807\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=2023 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=71 p95_ns=81 max_ns=240 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24197 p95_ns=26149 max_ns=56375 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=27371 p95_ns=41853 max_ns=132450 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=173832 p95_ns=312502 max_ns=3520953 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=202876 p95_ns=264049 max_ns=368106 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=676320 p95_ns=910544 max_ns=974321 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34052\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 229807
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 30,
+          "max_ns": 2023,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 71,
+          "p95_ns": 81,
+          "max_ns": 240,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 24197,
+          "p95_ns": 26149,
+          "max_ns": 56375,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 27371,
+          "p95_ns": 41853,
+          "max_ns": 132450,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 173832,
+          "p95_ns": 312502,
+          "max_ns": 3520953,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 202876,
+          "p95_ns": 264049,
+          "max_ns": 368106,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 676320,
+          "p95_ns": 910544,
+          "max_ns": 974321,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 34052
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "cpu",
+      "variant": "before",
+      "repetition": 4,
+      "started_utc": "2026-10-21T00:08:25Z",
+      "exit_code": 0,
+      "file": "final-cpu-before-4.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=255646\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=61 max_ns=70 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=17947 p95_ns=32840 max_ns=109245 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=28323 p95_ns=69024 max_ns=2254432 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=162425 p95_ns=263718 max_ns=634798 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=175535 p95_ns=363008 max_ns=1016564 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=864274 p95_ns=1000149 max_ns=1151708 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33992\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 255646
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 30,
+          "max_ns": 31,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 50,
+          "p95_ns": 61,
+          "max_ns": 70,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 17947,
+          "p95_ns": 32840,
+          "max_ns": 109245,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 28323,
+          "p95_ns": 69024,
+          "max_ns": 2254432,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 162425,
+          "p95_ns": 263718,
+          "max_ns": 634798,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 175535,
+          "p95_ns": 363008,
+          "max_ns": 1016564,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 864274,
+          "p95_ns": 1000149,
+          "max_ns": 1151708,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 33992
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "cpu",
+      "variant": "before",
+      "repetition": 5,
+      "started_utc": "2026-10-21T00:08:25Z",
+      "exit_code": 0,
+      "file": "final-cpu-before-5.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=332441\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=70 p95_ns=80 max_ns=100 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=18047 p95_ns=35423 max_ns=217027 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=30345 p95_ns=240353 max_ns=1129985 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=137548 p95_ns=249347 max_ns=401646 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=163097 p95_ns=280433 max_ns=361475 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=694108 p95_ns=973064 max_ns=1183315 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34104\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 332441
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 30,
+          "max_ns": 31,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 70,
+          "p95_ns": 80,
+          "max_ns": 100,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 18047,
+          "p95_ns": 35423,
+          "max_ns": 217027,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 30345,
+          "p95_ns": 240353,
+          "max_ns": 1129985,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 137548,
+          "p95_ns": 249347,
+          "max_ns": 401646,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 163097,
+          "p95_ns": 280433,
+          "max_ns": 361475,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 694108,
+          "p95_ns": 973064,
+          "max_ns": 1183315,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 34104
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "cpu",
+      "variant": "after",
+      "repetition": 5,
+      "started_utc": "2026-10-21T00:08:26Z",
+      "exit_code": 0,
+      "file": "final-cpu-after-5.txt",
+      "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=259552\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=70 p95_ns=110 max_ns=321 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24156 p95_ns=28102 max_ns=91488 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31137 p95_ns=47011 max_ns=171539 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=133772 p95_ns=301635 max_ns=1122184 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=156676 p95_ns=262066 max_ns=823402 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=658975 p95_ns=1099759 max_ns=1660736 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34116\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+      "records": [
+        {
+          "scope": "host_cpu",
+          "trace": "off",
+          "perf_output": "off",
+          "timer": "steady_clock",
+          "samples": 101,
+          "allocation_samples": 25
+        },
+        {
+          "cold_external_empty_1080x16_ns": 259552
+        },
+        {
+          "case": "external_empty_range0",
+          "samples": 101,
+          "p50_ns": 30,
+          "p95_ns": 30,
+          "max_ns": 31,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_range1",
+          "samples": 101,
+          "p50_ns": 70,
+          "p95_ns": 110,
+          "max_ns": 321,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 24156,
+          "p95_ns": 28102,
+          "max_ns": 91488,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "managed_empty_1080x16",
+          "samples": 101,
+          "p50_ns": 31137,
+          "p95_ns": 47011,
+          "max_ns": 171539,
+          "cpp_allocs_per_call": 6.0,
+          "cpp_bytes_per_call": 128.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile16",
+          "samples": 101,
+          "p50_ns": 133772,
+          "p95_ns": 301635,
+          "max_ns": 1122184,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "external_rows_1920x1080_tile64",
+          "samples": 101,
+          "p50_ns": 156676,
+          "p95_ns": 262066,
+          "max_ns": 823402,
+          "cpp_allocs_per_call": 0.0,
+          "cpp_bytes_per_call": 0.0
+        },
+        {
+          "case": "synthetic_cpu_fanout3_fanin",
+          "samples": 101,
+          "p50_ns": 658975,
+          "p95_ns": 1099759,
+          "max_ns": 1660736,
+          "cpp_allocs_per_call": 42.0,
+          "cpp_bytes_per_call": 1176.0
+        },
+        {
+          "idle_window_ms": 150,
+          "aura_worker_records": 4,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0,
+          "process_pss_kb": 34116
+        },
+        {
+          "gpu_chain": "unrun",
+          "FlashPE": "unavailable",
+          "GitLab_backend": "unavailable"
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "fixed",
+      "repetition": 1,
+      "started_utc": "2026-10-21T00:08:26Z",
+      "exit_code": 0,
+      "file": "final-idle-fixed-1.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=183 process_voluntary_context_switches=184 process_involuntary_context_switches=1\nwindow=budget_one_pending ms=200 modeled_queries=185 process_voluntary_context_switches=196 process_involuntary_context_switches=1\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=286272\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1645\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=1\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1652\nrestart_task_ns=150056\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 183,
+          "process_voluntary_context_switches": 184,
+          "process_involuntary_context_switches": 1
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 185,
+          "process_voluntary_context_switches": 196,
+          "process_involuntary_context_switches": 1
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 286272
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1645
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 1
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1652
+        },
+        {
+          "restart_task_ns": 150056
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "after",
+      "repetition": 1,
+      "started_utc": "2026-10-21T00:08:29Z",
+      "exit_code": 0,
+      "file": "final-idle-after-1.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=97 process_voluntary_context_switches=98 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=97 process_voluntary_context_switches=108 process_involuntary_context_switches=2\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=497461\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1641\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1648\nrestart_task_ns=159881\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 97,
+          "process_voluntary_context_switches": 98,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 97,
+          "process_voluntary_context_switches": 108,
+          "process_involuntary_context_switches": 2
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 497461
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1641
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1648
+        },
+        {
+          "restart_task_ns": 159881
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "before",
+      "repetition": 1,
+      "started_utc": "2026-10-21T00:08:32Z",
+      "exit_code": 0,
+      "file": "final-idle-before-1.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=728 process_voluntary_context_switches=737 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=185 process_voluntary_context_switches=250 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=822431\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1625\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=2 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1625\nrestart_task_ns=29054\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 728,
+          "process_voluntary_context_switches": 737,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 185,
+          "process_voluntary_context_switches": 250,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 822431
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1625
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 2,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1625
+        },
+        {
+          "restart_task_ns": 29054
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "after",
+      "repetition": 2,
+      "started_utc": "2026-10-21T00:08:34Z",
+      "exit_code": 0,
+      "file": "final-idle-after-2.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=96 process_voluntary_context_switches=98 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=98 process_voluntary_context_switches=109 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=2039352\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1645\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=5 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1652\nrestart_task_ns=123627\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 96,
+          "process_voluntary_context_switches": 98,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 98,
+          "process_voluntary_context_switches": 109,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 2039352
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1645
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 5,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1652
+        },
+        {
+          "restart_task_ns": 123627
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "before",
+      "repetition": 2,
+      "started_utc": "2026-10-21T00:08:37Z",
+      "exit_code": 0,
+      "file": "final-idle-before-2.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=506 process_voluntary_context_switches=513 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=185 process_voluntary_context_switches=207 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=761649\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1629\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1629\nrestart_task_ns=102811\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 506,
+          "process_voluntary_context_switches": 513,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 185,
+          "process_voluntary_context_switches": 207,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 761649
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1629
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1629
+        },
+        {
+          "restart_task_ns": 102811
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "fixed",
+      "repetition": 2,
+      "started_utc": "2026-10-21T00:08:40Z",
+      "exit_code": 0,
+      "file": "final-idle-fixed-2.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=185 process_voluntary_context_switches=186 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=186 process_voluntary_context_switches=195 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=577061\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1641\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=5 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1648\nrestart_task_ns=124197\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 185,
+          "process_voluntary_context_switches": 186,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 186,
+          "process_voluntary_context_switches": 195,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 577061
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1641
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 5,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1648
+        },
+        {
+          "restart_task_ns": 124197
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "before",
+      "repetition": 3,
+      "started_utc": "2026-10-21T00:08:42Z",
+      "exit_code": 0,
+      "file": "final-idle-before-3.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=590 process_voluntary_context_switches=596 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=186 process_voluntary_context_switches=230 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=873509\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1641\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1641\nrestart_task_ns=170498\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 590,
+          "process_voluntary_context_switches": 596,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 186,
+          "process_voluntary_context_switches": 230,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 873509
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1641
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1641
+        },
+        {
+          "restart_task_ns": 170498
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "fixed",
+      "repetition": 3,
+      "started_utc": "2026-10-21T00:08:45Z",
+      "exit_code": 0,
+      "file": "final-idle-fixed-3.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=186 process_voluntary_context_switches=187 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=186 process_voluntary_context_switches=194 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=26731\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1701\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1708\nrestart_task_ns=202335\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 186,
+          "process_voluntary_context_switches": 187,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 186,
+          "process_voluntary_context_switches": 194,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 26731
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1701
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1708
+        },
+        {
+          "restart_task_ns": 202335
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "after",
+      "repetition": 3,
+      "started_utc": "2026-10-21T00:08:48Z",
+      "exit_code": 0,
+      "file": "final-idle-after-3.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=97 process_voluntary_context_switches=98 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=98 process_voluntary_context_switches=106 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=416479\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1637\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1644\nrestart_task_ns=143206\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 97,
+          "process_voluntary_context_switches": 98,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 98,
+          "process_voluntary_context_switches": 106,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 416479
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1637
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1644
+        },
+        {
+          "restart_task_ns": 143206
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "fixed",
+      "repetition": 4,
+      "started_utc": "2026-10-21T00:08:50Z",
+      "exit_code": 0,
+      "file": "final-idle-fixed-4.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=185 process_voluntary_context_switches=186 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=187 process_voluntary_context_switches=198 process_involuntary_context_switches=1\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=947420\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1637\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=5 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1644\nrestart_task_ns=141824\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 185,
+          "process_voluntary_context_switches": 186,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 187,
+          "process_voluntary_context_switches": 198,
+          "process_involuntary_context_switches": 1
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 947420
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1637
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 5,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1644
+        },
+        {
+          "restart_task_ns": 141824
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "after",
+      "repetition": 4,
+      "started_utc": "2026-10-21T00:08:53Z",
+      "exit_code": 0,
+      "file": "final-idle-after-4.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=97 process_voluntary_context_switches=98 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=98 process_voluntary_context_switches=105 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=2144592\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1637\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1644\nrestart_task_ns=151198\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 97,
+          "process_voluntary_context_switches": 98,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 98,
+          "process_voluntary_context_switches": 105,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 2144592
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1637
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1644
+        },
+        {
+          "restart_task_ns": 151198
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "before",
+      "repetition": 4,
+      "started_utc": "2026-10-21T00:08:56Z",
+      "exit_code": 0,
+      "file": "final-idle-before-4.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=546 process_voluntary_context_switches=550 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=187 process_voluntary_context_switches=231 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=1053960\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1629\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=2 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1629\nrestart_task_ns=74272\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 546,
+          "process_voluntary_context_switches": 550,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 187,
+          "process_voluntary_context_switches": 231,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 1053960
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1629
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 2,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1629
+        },
+        {
+          "restart_task_ns": 74272
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "after",
+      "repetition": 5,
+      "started_utc": "2026-10-21T00:08:59Z",
+      "exit_code": 0,
+      "file": "final-idle-after-5.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=97 process_voluntary_context_switches=98 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=98 process_voluntary_context_switches=105 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=1090451\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1641\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1648\nrestart_task_ns=143537\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 97,
+          "process_voluntary_context_switches": 98,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 98,
+          "process_voluntary_context_switches": 105,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 1090451
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1641
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1648
+        },
+        {
+          "restart_task_ns": 143537
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "before",
+      "repetition": 5,
+      "started_utc": "2026-10-21T00:09:01Z",
+      "exit_code": 7,
+      "file": "final-idle-before-5.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=602 process_voluntary_context_switches=606 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=0 process_voluntary_context_switches=64 process_involuntary_context_switches=0\nmodeled_completion_timeout=1 recovery=real_cpu_task\nmodeled_completion_valid=0\nmodeled_ready_to_task_ns=5000259619\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1634\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1634\nrestart_task_ns=31938\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 602,
+          "process_voluntary_context_switches": 606,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 64,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "modeled_completion_timeout": 1,
+          "recovery": "real_cpu_task"
+        },
+        {
+          "modeled_completion_valid": 0
+        },
+        {
+          "modeled_ready_to_task_ns": 5000259619
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1634
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1634
+        },
+        {
+          "restart_task_ns": 31938
+        }
+      ]
+    },
+    {
+      "kind": "idle",
+      "variant": "fixed",
+      "repetition": 5,
+      "started_utc": "2026-10-21T00:09:09Z",
+      "exit_code": 0,
+      "file": "final-idle-fixed-5.txt",
+      "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=185 process_voluntary_context_switches=185 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=180 process_voluntary_context_switches=188 process_involuntary_context_switches=2\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=2160971\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1633\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1605\nrestart_task_ns=91869\n",
+      "records": [
+        {
+          "scope": "host_cpu_modeled_external_event",
+          "gpu_hardware": "unrun"
+        },
+        {
+          "window": "external_pending",
+          "ms": 200,
+          "modeled_queries": 185,
+          "process_voluntary_context_switches": 185,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "window": "budget_one_pending",
+          "ms": 200,
+          "modeled_queries": 180,
+          "process_voluntary_context_switches": 188,
+          "process_involuntary_context_switches": 2
+        },
+        {
+          "modeled_completion_valid": 1
+        },
+        {
+          "modeled_ready_to_task_ns": 2160971
+        },
+        {
+          "stage": "before_idle",
+          "worker_records": 4,
+          "process_threads": 5,
+          "process_pss_kb": 1633
+        },
+        {
+          "window": "idle",
+          "ms": 200,
+          "modeled_queries": 0,
+          "process_voluntary_context_switches": 1,
+          "process_involuntary_context_switches": 0
+        },
+        {
+          "stage": "after_idle_2300ms",
+          "worker_records": 0,
+          "process_threads": 1,
+          "process_pss_kb": 1605
+        },
+        {
+          "restart_task_ns": 91869
+        }
+      ]
+    }
+  ],
+  "supplemental_prior_measurements": {
+    "reason": "retain negative measurements from before final fast path and ownership-return/retirement fixes; do not mix their CPU timing with final source",
+    "source_archive": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/pre-fastpath-xflow.cpp",
+    "source_sha256": "fb067906edc67312b971fcb0ba184223f34b924c8aee4f574d7a2ed2bb45458d",
+    "runs": [
+      {
+        "variant": "fixed",
+        "repetition": 1,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-fixed-1.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=182 process_voluntary_context_switches=182 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=186 process_voluntary_context_switches=196 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=602039\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1645\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1652\nrestart_task_ns=212500\n"
+      },
+      {
+        "variant": "after",
+        "repetition": 1,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-after-1.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=97 process_voluntary_context_switches=98 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=97 process_voluntary_context_switches=105 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=466704\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1637\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=5 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1644\nrestart_task_ns=159540\n"
+      },
+      {
+        "variant": "before",
+        "repetition": 1,
+        "exit_code": 7,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-before-1.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=651 process_voluntary_context_switches=656 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=0 process_voluntary_context_switches=63 process_involuntary_context_switches=0\nmodeled_completion_timeout=1 recovery=real_cpu_task\nmodeled_completion_valid=0\nmodeled_ready_to_task_ns=5000528921\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1634\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1634\nrestart_task_ns=103086\n"
+      },
+      {
+        "variant": "after",
+        "repetition": 2,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-after-2.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=97 process_voluntary_context_switches=98 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=97 process_voluntary_context_switches=108 process_involuntary_context_switches=1\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=661598\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1705\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=5 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1712\nrestart_task_ns=174373\n"
+      },
+      {
+        "variant": "before",
+        "repetition": 2,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-before-2.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=734 process_voluntary_context_switches=740 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=185 process_voluntary_context_switches=249 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=560000\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1633\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1633\nrestart_task_ns=131873\n"
+      },
+      {
+        "variant": "fixed",
+        "repetition": 2,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-fixed-2.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=181 process_voluntary_context_switches=182 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=182 process_voluntary_context_switches=192 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=241354\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1641\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1648\nrestart_task_ns=172170\n"
+      },
+      {
+        "variant": "before",
+        "repetition": 3,
+        "exit_code": 7,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-before-3.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=555 process_voluntary_context_switches=559 process_involuntary_context_switches=1\nwindow=budget_one_pending ms=200 modeled_queries=0 process_voluntary_context_switches=64 process_involuntary_context_switches=0\nmodeled_completion_timeout=1 recovery=real_cpu_task\nmodeled_completion_valid=0\nmodeled_ready_to_task_ns=5000323443\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1638\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1638\nrestart_task_ns=94122\n"
+      },
+      {
+        "variant": "fixed",
+        "repetition": 3,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-fixed-3.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=184 process_voluntary_context_switches=185 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=184 process_voluntary_context_switches=195 process_involuntary_context_switches=2\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=225550\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1629\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1636\nrestart_task_ns=149746\n"
+      },
+      {
+        "variant": "after",
+        "repetition": 3,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-after-3.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=96 process_voluntary_context_switches=97 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=98 process_voluntary_context_switches=106 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=1720066\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1633\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1640\nrestart_task_ns=163677\n"
+      },
+      {
+        "variant": "fixed",
+        "repetition": 4,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-fixed-4.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=183 process_voluntary_context_switches=184 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=183 process_voluntary_context_switches=191 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=112490\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1617\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=5 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1624\nrestart_task_ns=128945\n"
+      },
+      {
+        "variant": "after",
+        "repetition": 4,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-after-4.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=97 process_voluntary_context_switches=98 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=97 process_voluntary_context_switches=107 process_involuntary_context_switches=1\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=415016\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1701\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1708\nrestart_task_ns=269802\n"
+      },
+      {
+        "variant": "before",
+        "repetition": 4,
+        "exit_code": 7,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-before-4.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=473 process_voluntary_context_switches=484 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=0 process_voluntary_context_switches=42 process_involuntary_context_switches=0\nmodeled_completion_timeout=1 recovery=real_cpu_task\nmodeled_completion_valid=0\nmodeled_ready_to_task_ns=5000507347\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1694\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1694\nrestart_task_ns=165169\n"
+      },
+      {
+        "variant": "after",
+        "repetition": 5,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-after-5.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=97 process_voluntary_context_switches=98 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=98 process_voluntary_context_switches=107 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=2083174\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1633\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1640\nrestart_task_ns=201494\n"
+      },
+      {
+        "variant": "before",
+        "repetition": 5,
+        "exit_code": 7,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-before-5.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=642 process_voluntary_context_switches=645 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=0 process_voluntary_context_switches=64 process_involuntary_context_switches=1\nmodeled_completion_timeout=1 recovery=real_cpu_task\nmodeled_completion_valid=0\nmodeled_ready_to_task_ns=5000281879\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1634\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=4 process_threads=5 process_pss_kb=1634\nrestart_task_ns=35593\n"
+      },
+      {
+        "variant": "fixed",
+        "repetition": 5,
+        "exit_code": 0,
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-idle-final-fixed-5.txt",
+        "raw": "scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\nwindow=external_pending ms=200 modeled_queries=174 process_voluntary_context_switches=176 process_involuntary_context_switches=0\nwindow=budget_one_pending ms=200 modeled_queries=184 process_voluntary_context_switches=191 process_involuntary_context_switches=0\nmodeled_completion_valid=1\nmodeled_ready_to_task_ns=662730\nstage=before_idle worker_records=4 process_threads=5 process_pss_kb=1617\nwindow=idle ms=200 modeled_queries=0 process_voluntary_context_switches=1 process_involuntary_context_switches=0\nstage=after_idle_2300ms worker_records=0 process_threads=1 process_pss_kb=1624\nrestart_task_ns=171263\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-after-1.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=307905\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=60 max_ns=70 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=17987 p95_ns=28763 max_ns=117568 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=30706 p95_ns=130447 max_ns=737854 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=190297 p95_ns=333543 max_ns=805456 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=184058 p95_ns=284770 max_ns=475758 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=1005769 p95_ns=1878696 max_ns=3136785 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34048\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-after-2.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=294034\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=40 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=70 p95_ns=80 max_ns=120 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=17977 p95_ns=32268 max_ns=117297 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=29715 p95_ns=85720 max_ns=2028532 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=189897 p95_ns=342267 max_ns=922192 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=203688 p95_ns=348536 max_ns=2109574 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=954832 p95_ns=1738425 max_ns=7163924 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34048\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-after-3.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=223217\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=50 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=70 p95_ns=80 max_ns=90 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24176 p95_ns=25729 max_ns=59881 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31237 p95_ns=43736 max_ns=114492 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=203066 p95_ns=273704 max_ns=362297 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=218229 p95_ns=301255 max_ns=455788 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=975022 p95_ns=1984165 max_ns=4257666 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34116\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-after-4.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=228970\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=61 max_ns=110 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24177 p95_ns=34212 max_ns=100852 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31237 p95_ns=51067 max_ns=242466 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=192120 p95_ns=306252 max_ns=536290 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=200062 p95_ns=336979 max_ns=1254814 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=938096 p95_ns=1711374 max_ns=3146801 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34048\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-after-5.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=410830\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=60 max_ns=61 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=23285 p95_ns=42494 max_ns=213262 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=32589 p95_ns=201695 max_ns=1097247 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=200493 p95_ns=432814 max_ns=738315 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=225295 p95_ns=348066 max_ns=1240207 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=1073982 p95_ns=1981181 max_ns=3574707 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34052\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-before-1.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=582840\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=60 max_ns=61 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=19219 p95_ns=31738 max_ns=54863 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=38238 p95_ns=219541 max_ns=1216256 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=239061 p95_ns=312742 max_ns=347585 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=231800 p95_ns=419172 max_ns=831806 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=971607 p95_ns=1953368 max_ns=7126874 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34040\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-before-2.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=245380\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=230 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=70 p95_ns=80 max_ns=90 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24056 p95_ns=38348 max_ns=123195 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31006 p95_ns=117217 max_ns=1138088 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=188584 p95_ns=518783 max_ns=8133879 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=207102 p95_ns=343708 max_ns=627297 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=899729 p95_ns=1601888 max_ns=2982077 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34040\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-before-3.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=396999\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=60 max_ns=61 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=17847 p95_ns=30816 max_ns=146035 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=29845 p95_ns=267228 max_ns=1172119 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=201114 p95_ns=319953 max_ns=444281 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=196487 p95_ns=318270 max_ns=620867 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=1117227 p95_ns=5080870 max_ns=9149792 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34052\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-before-4.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=359673\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=160 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=50 p95_ns=60 max_ns=80 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=17627 p95_ns=31107 max_ns=99550 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=30927 p95_ns=104097 max_ns=1166997 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=190358 p95_ns=325011 max_ns=638483 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=201894 p95_ns=330138 max_ns=528968 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=1001422 p95_ns=1438692 max_ns=1734614 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34040\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      },
+      {
+        "phase": "pre_dispatch_fastpath_and_handoff_fixes",
+        "file": "pre-fastpath-cpu-before-5.txt",
+        "raw": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=307024\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=50 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=70 p95_ns=80 max_ns=110 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=23786 p95_ns=28643 max_ns=89545 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=30456 p95_ns=1122775 max_ns=1180602 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=193351 p95_ns=472203 max_ns=4371224 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=229396 p95_ns=508939 max_ns=1723221 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=1042675 p95_ns=1750703 max_ns=4099655 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34044\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n"
+      }
+    ],
+    "initial_timeout": "Initial B2 full-budget-change probe timed out after 20 seconds; stdout had been buffered. Rerun with unbuffered output and explicit timeout/recovery reporting to identify the stalled stage. This is a failed measurement, not a successful low-wakeup result.\n",
+    "opencl_prior_failure_log": {
+      "path": "/workspace/.cloud-build/flow-validation/B3-2026-10-20/opencl-timing-failure.log",
+      "sha256": "8e78a3f686fc344922175520fa1d46329c1242d23f822eb886a040141f7f3d63"
+    }
+  },
+  "remaining": [
+    "R01/X13 multi-tile fixed overhead not closed; B6 follow-up",
+    "R03 queue comparison B6; full lock audit and source split B4",
+    "device/FlashPE validation deferred to user; no overall completion claim"
+  ]
+}

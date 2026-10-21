@@ -510,10 +510,20 @@ TEST(XOpenCL, PartialSubmissionFlushQueryAndKernelReuse)
         if (scenario == 2) model.mFailFlush.store(1, std::memory_order_relaxed);
         if (scenario == 3) model.mFailQuery.store(1, std::memory_order_relaxed);
         if (scenario == 4) model.mExecution.store(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, std::memory_order_relaxed);
+        std::atomic<bool> submitted{false};
         auto task = au::flow::XFlow::get().enqueue([&]() -> int {
-            return au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add", gSource, nullptr,
+            const int code = au::gpu::CLWrapper::get().setNDRange({64}).enqueue("add", gSource, nullptr,
                 au::gpu::buffer(au::mm::readWriteAccess(block.ptr, block.size)), static_cast<unsigned char>(7));
+            // Publish native submission before testing that its unfinished
+            // events keep the task alive; a short wait timeout alone proves
+            // nothing about whether this task has started on a busy host.
+            submitted.store(true, std::memory_order_release);
+            return code;
         });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!submitted.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        EXPECT_TRUE(submitted.load(std::memory_order_acquire));
         EXPECT_EQ(au::flow::XFlow::get().waitFor(task, 3), au::err::kErrorTimeout);
         EXPECT_GT(model.mEvents.load(std::memory_order_relaxed), 0);
         model.mReady.store(true, std::memory_order_release);

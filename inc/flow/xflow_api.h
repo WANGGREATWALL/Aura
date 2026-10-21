@@ -86,6 +86,9 @@ int au_flow_wait_all(void) AU_FLOW_NOEXCEPT;
 int au_flow_tiled(size_t range, size_t tile, au_flow_tile invoke,
                   void* payload) AU_FLOW_NOEXCEPT;
 int au_flow_affinity(uint32_t mode, const uint32_t* cpus, size_t count) AU_FLOW_NOEXCEPT;
+/* Enumerates live slots, not a permanent contiguous ID range. After idle
+ * retirement a slot may be reused by a new thread; query retired slots returns
+ * NotReady. A native affinity query pins the live thread until it returns. */
 int au_flow_workers(au_flow_worker* out, size_t capacity, size_t* count) AU_FLOW_NOEXCEPT;
 int au_flow_worker_affinity(uint32_t worker, uint32_t* cpus, size_t capacity,
                             size_t* count) AU_FLOW_NOEXCEPT;

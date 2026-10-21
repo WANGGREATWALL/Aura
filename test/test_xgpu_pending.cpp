@@ -2,10 +2,14 @@
 #include "gpu/xopencl_api.h"
 #include "flow/xflow.h"
 #include "flow/testing.h"
+#include "sys/flow_runtime.h"
+#include <vector>
 #include "mm/access.h"
 #include "mm/xaccess.h"
 #include "mm/xmemory.h"
 #include "gtest/gtest.h"
+#include <functional>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -250,12 +254,13 @@ TEST(XGpu, WorkerResourceWaitCooperatesAtSingleWorkerBudget)
         std::size_t mBudget;
         ~Restore() { (void)au::flow::testing::setBudget(mBudget); }
     } restore{budget};
+    for (bool managed : {false, true}) {
     PendingModel model;
     au::gpu::detail::PendingRegistry registry;
     au::mm::MemBlock memory; ASSERT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, memory), 0);
     const auto access = au::mm::writeAccess(memory.ptr, memory.size);
     std::atomic<bool> published{false};
-    auto task = au::flow::XFlow::get().enqueue([&]() -> int {
+    const auto launch = [&]() -> int {
         std::unique_ptr<PendingPayload> payload(new PendingPayload(model));
         au::gpu::detail::PreparedSubmission submission;
         int code = submission.prepare(registry, gPendingOps, payload.get(), 17);
@@ -265,6 +270,11 @@ TEST(XGpu, WorkerResourceWaitCooperatesAtSingleWorkerBudget)
         if (!code) code = raw->mAccess.commit(submission.fence());
         if (code) { submission.cancel({code, 0, au::flow::ErrorDomain::Memory}); return code; }
         submission.publish(); published.store(true, std::memory_order_release);
+        return 0;
+    };
+    if (!managed) ASSERT_EQ(launch(), 0);
+    auto task = au::flow::XFlow::get().enqueue([&]() -> int {
+        if (managed) { const int code = launch(); if (code) return code; }
         au::mm::CpuAccessScope cpu;
         return cpu.begin({au::mm::readAccess(memory.ptr, memory.size)});
     });
@@ -279,4 +289,131 @@ TEST(XGpu, WorkerResourceWaitCooperatesAtSingleWorkerBudget)
     ASSERT_EQ(au::flow::XFlow::get().wait(ready, &result), 0); EXPECT_EQ(result.mCode, 0);
     EXPECT_EQ(model.mDestroyed.load(std::memory_order_relaxed), 1);
     EXPECT_EQ(au::mm::free(memory.ptr), 0);
+    }
+}
+
+TEST(XGpu, ConcurrentStandaloneFenceWaitersAndDrainersCompleteOnce)
+{
+    PendingModel model;
+    au::gpu::detail::PendingRegistry registry;
+    au::gpu::detail::PreparedSubmission submission;
+    std::unique_ptr<PendingPayload> payload(new PendingPayload(model));
+    ASSERT_EQ(submission.prepare(registry, gPendingOps, payload.get(), 17), 0);
+    (void)payload.release();
+    const auto fence = submission.fence();
+    submission.publish();
+    std::array<std::thread, 5> callers;
+    std::array<int, 5> codes{{99, 99, 99, 99, 99}};
+    for (std::size_t i = 0; i < callers.size(); ++i) callers[i] = std::thread([&, i] {
+        codes[i] = i < 3 ? fence->wait().mCode : registry.drain().mCode;
+    });
+    const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!model.mQueries.load(std::memory_order_relaxed) && std::chrono::steady_clock::now() < end)
+        std::this_thread::yield();
+    model.mReady.store(true, std::memory_order_release);
+    for (auto& caller : callers) caller.join();
+    for (int code : codes) EXPECT_EQ(code, 0);
+    EXPECT_EQ(model.mFinalized.load(std::memory_order_relaxed), 1);
+    EXPECT_EQ(model.mDestroyed.load(std::memory_order_relaxed), 1);
+    EXPECT_EQ(registry.size(), 0u);
+}
+
+TEST(XGpu, DeepManagedFenceWaitStillMakesProgressAtDispatchDepthLimit)
+{
+    const auto budget = au::flow::testing::budget();
+    ASSERT_EQ(au::flow::testing::setBudget(1), 0);
+    PendingModel model;
+    model.mReady.store(true, std::memory_order_release);
+    au::gpu::detail::PendingRegistry registry;
+    au::mm::MemBlock memory;
+    ASSERT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, memory), 0);
+    const auto access = au::mm::writeAccess(memory.ptr, memory.size);
+    std::function<int(unsigned int)> descend;
+    descend = [&](unsigned int depth) -> int {
+        if (depth < 31) return au::flow::XFlow::get().enqueue([&, depth]() -> int { return descend(depth + 1); }).wait();
+        std::unique_ptr<PendingPayload> payload(new PendingPayload(model));
+        au::gpu::detail::PreparedSubmission submission;
+        int code = submission.prepare(registry, gPendingOps, payload.get(), 17);
+        if (code) return code;
+        auto* raw = payload.release();
+        code = raw->mAccess.begin(&access, 1, 17);
+        if (!code) code = raw->mAccess.commit(submission.fence());
+        if (code) { submission.cancel({code, 0, au::flow::ErrorDomain::Memory}); return code; }
+        submission.publish();
+        au::mm::CpuAccessScope cpu;
+        return cpu.begin({au::mm::readAccess(memory.ptr, memory.size)});
+    };
+    auto root = au::flow::XFlow::get().enqueue([&]() -> int { return descend(0); });
+    EXPECT_EQ(root.waitFor(5000), 0);
+    EXPECT_EQ(model.mDestroyed.load(std::memory_order_relaxed), 1);
+    EXPECT_EQ(au::mm::free(memory.ptr), 0);
+    EXPECT_EQ(au::flow::testing::setBudget(budget), 0);
+}
+
+TEST(XGpu, ReturningFromManagedFenceWaitHandsOffRemainingEvents)
+{
+    auto& flow = au::flow::XFlow::get();
+    std::vector<std::uint32_t> cpus;
+    ASSERT_EQ(au::sys::flow::allowedCpus(cpus), 0);
+    if (cpus.size() < 2) GTEST_SKIP() << "Needs capacity for a resumed callable and a query worker";
+    const auto budget = au::flow::testing::budget();
+    ASSERT_EQ(au::flow::testing::setBudget(1), 0);
+    PendingModel first, second;
+    au::gpu::detail::PendingRegistry registry;
+    au::mm::MemBlock a, b;
+    ASSERT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, a), 0);
+    ASSERT_EQ(au::mm::alloc(64, au::mm::MemType::Pss, b), 0);
+    std::atomic<bool> published{false}, resumed{false}, release{false};
+    const auto launch = [&](PendingModel& model, const au::mm::MemBlock& memory) -> int {
+        std::unique_ptr<PendingPayload> payload(new PendingPayload(model));
+        au::gpu::detail::PreparedSubmission submission;
+        int code = submission.prepare(registry, gPendingOps, payload.get(), 17);
+        if (code) return code;
+        auto* raw = payload.release();
+        const auto access = au::mm::writeAccess(memory.ptr, memory.size);
+        code = raw->mAccess.begin(&access, 1, 17);
+        if (!code) code = raw->mAccess.commit(submission.fence());
+        if (code) { submission.cancel({code, 0, au::flow::ErrorDomain::Memory}); return code; }
+        submission.publish();
+        return 0;
+    };
+    auto root = flow.enqueue([&]() -> int {
+        int code = launch(first, a);
+        if (!code) code = launch(second, b);
+        if (code) return code;
+        published.store(true, std::memory_order_release);
+        au::mm::CpuAccessScope cpu;
+        code = cpu.begin({au::mm::readAccess(a.ptr, a.size)});
+        if (!code) code = cpu.finish();
+        if (code) return code;
+        resumed.store(true, std::memory_order_release);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!release.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        return release.load(std::memory_order_acquire) ? 0 : 99;
+    });
+    const auto querying = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while ((!published.load(std::memory_order_acquire) || first.mQueries.load(std::memory_order_relaxed) < 3 ||
+            second.mQueries.load(std::memory_order_relaxed) < 2 || au::flow::testing::runtimeStats().mPollOwner != 0) &&
+           std::chrono::steady_clock::now() < querying) std::this_thread::yield();
+    EXPECT_TRUE(published.load(std::memory_order_acquire));
+    EXPECT_EQ(au::flow::testing::runtimeStats().mPollOwner, 0);
+    first.mReady.store(true, std::memory_order_release);
+    const auto returned = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!resumed.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < returned)
+        std::this_thread::yield();
+    EXPECT_TRUE(resumed.load(std::memory_order_acquire));
+    const au::flow::AffinityPolicy restore{au::flow::AffinityMode::SystemDefault, nullptr, 0};
+    EXPECT_EQ(flow.setAffinity(restore), 0);
+    second.mReady.store(true, std::memory_order_release);
+    const auto completed = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!second.mFinalized.load(std::memory_order_relaxed) && std::chrono::steady_clock::now() < completed)
+        std::this_thread::yield();
+    EXPECT_EQ(second.mFinalized.load(std::memory_order_relaxed), 1);
+    release.store(true, std::memory_order_release);
+    EXPECT_EQ(root.waitFor(5000), 0);
+    (void)root.wait();
+    EXPECT_EQ(au::mm::free(a.ptr), 0);
+    EXPECT_EQ(au::mm::free(b.ptr), 0);
+    EXPECT_EQ(au::flow::testing::setBudget(budget), 0);
 }

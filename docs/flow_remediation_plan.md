@@ -2,7 +2,7 @@
 
 创建日期：2026-10-20（北京时间）。源码起点：`aa3b3ae`（Aura dev）。
 
-本文汇总本次 GPT 与 Claude Opus 评审的 28 项问题、后续 11 项补充讨论及实施中新增的 X12/X13，是后续任务的追踪入口。现有实现和历史测试证据见 [flow_implementation.md](flow_implementation.md)。本文中的计划、设计结论、实际执行和设备证据分别记录，不以设计完成代替代码或验收完成。
+本文汇总本次 GPT 与 Claude Opus 评审的 28 项问题、后续 11 项补充讨论及实施中新增的 X12/X13/X14，是后续任务的追踪入口。现有实现和历史测试证据见 [flow_implementation.md](flow_implementation.md)。本文中的计划、设计结论、实际执行和设备证据分别记录，不以设计完成代替代码或验收完成。
 
 ## 1 范围、状态与关闭规则
 
@@ -52,9 +52,9 @@
 | --- | --- | --- | --- | --- |
 | R01 | tiled 根与 helper 重复走通用 submit；容器分配属实 | 轻量同步 Job、固定数量工作记录和专用接受路径，跳过不适用的通用 DAG 容器；保留关闭/错误/收尾约束 | 固定开销及分配测量；无 helper、并发关闭、栈借用和失败降级测试 | B2 行为 HOST_VERIFIED；IN_PROGRESS：多 tile 空循环退化见 X13，B3/B6 继续 |
 | R02 | helper 逐 tile 回队；caller 自己处理的 tile 不入队 | 有界批量执行，按竞争/批量让出；批量值通过测量选定 | 区间恰好一次、最小失败 offset、参与者上限、多个循环及普通任务公平性；对比基线 | B2 / HOST_VERIFIED（见 B1/B2 报告） |
-| R03 | WorkSemaphore、亲核检查与扩容存在多次锁操作；队列净收益未测 | 策略版本快速判断、按就绪发布/批量需求扩容；与 mutex+侵入式 FIFO 对照，禁止接受后因 deque 分配失败丢任务 | 记录锁/分配/队列等待与 p95；fan-out 无新 enqueue 仍能扩容 | B3、B6 / TODO |
-| R04 | 多个 worker 可进入 1 ms 查询，但不必然是所有 worker | 单查询者、统一等待、完整协作 wait 通知；固定间隔与退避对照，standalone drain 另测 | 无丢唤醒、无事件时无周期查询、GPU 查询公平；完成延迟/唤醒数据 | B3 / TODO |
-| R05 | worker 高水位保留，预算外 10 ms 唤醒 | 默认 2 s 退休到 0；GPU 在途保留推进者；查询/退休/重建代际一致 | 超时退休、GPU 保活、并发新提交、最后退出、亲核查询和 shutdown 测试；线程/PSS/首帧数据 | B3 / TODO |
+| R03 | WorkSemaphore、亲核检查与扩容存在多次锁操作；队列净收益未测 | 策略版本快速判断、按就绪发布/批量需求扩容；与 mutex+侵入式 FIFO 对照，禁止接受后因 deque 分配失败丢任务 | 记录锁/分配/队列等待与 p95；fan-out 无新 enqueue 仍能扩容 | B3 热路径 HOST_VERIFIED；队列对照留 B6 / TODO |
+| R04 | 多个 worker 可进入 1 ms 查询，但不必然是所有 worker | 单查询者、统一等待、完整协作 wait 通知；固定间隔与退避对照，standalone drain 另测 | 无丢唤醒、无事件时无周期查询、GPU 查询公平；完成延迟/唤醒数据 | B3 / HOST_VERIFIED（见 B3 报告；设备性能 USER_VALIDATION） |
+| R05 | worker 高水位保留，预算外 10 ms 唤醒 | 默认 2 s 退休到 0；GPU 在途保留推进者；查询/退休/重建代际一致 | 超时退休、GPU 保活、并发新提交、最后退出、亲核查询和 shutdown 测试；线程/PSS/首帧数据 | B3 / HOST_VERIFIED（见 B3 报告；设备性能 USER_VALIDATION） |
 | R06 | reaches 每访问一个节点扫描 mActive，锁内多次遍历 | 活动 children 邻接关系，合并重复搜索，减少锁内分配；不削弱间接环检查 | 交叉 wait、协作栈、祖先、簇包含、深图等不回归；记录锁持有时间 | B4 / TODO |
 | R07 | 多种环检测具有不同职责，不可按数量删除 | 保留 Draft、提交、结构化与 wait 检查；减少重复搜索；明确各自不变量 | 从未提交的引用环不泄漏；提交/等待环不执行半图或挂死 | B4 / TODO；删除三套检查不采纳 |
 | R08 | Core 职责过多，diagnostics 已部分分离 | 按图/执行器/外部完成/tiled 职责拆分，共享私有状态边界清晰；不设 400 行硬指标，不引入无必要的动态抽象 | 状态所有者和锁边界可审查；行为测试一致；与格式改动分开 | B4 / TODO |
@@ -64,7 +64,7 @@
 | R12 | 核心直接接入 mm 上下文及初始化 | 评估小型私有上下文桥，隔离集成职责；保留 registry/析构顺序，不新增通用插件注册框架 | CPU 任务路径、mm 错误回传、清理重入、退出及双 so 隔离测试 | B4 / TODO |
 | R13 | trace 首次约 14 MB、高水位记录和诊断子边保留 | 保留 DOT；时间线可裁剪，生产默认不启用；动态历史用轻量快照，不用裸 ID 丢失元数据；是否移除时间线按实际需求作明确结论 | 关闭时无 trace 存储、捕获结束可释放；并发导出/UTF-8/动态 DAG；驻留测量 | B6 / TODO |
 | R14 | 默认测试配置会把故障钩子编入 aura；发布开关易误用 | 正常 aura 无故障宏，单独 aura_testing 变体；子项目测试默认关闭并尊重父工程 | 默认/Release/子项目 production 编译命令和符号无测试钩子；测试变体故障用例真实执行 | B0 / CLOSED（主机证据见 B0 报告） |
-| R15 | 深度、批量、重试和时间常量分散 | 按含义具名，说明边界和调优依据；不同含义不合并成通用 8 | 边界测试覆盖；查询/退休与调优文档同源 | B2、B3、B4 / TODO |
+| R15 | 深度、批量、重试和时间常量分散 | 按含义具名，说明边界和调优依据；不同含义不合并成通用 8 | 边界测试覆盖；查询/退休与调优文档同源 | B2/B3 部分 HOST_VERIFIED；其余 B4 / TODO |
 | R16 | 仅 Android/Linux 负载不等于取消 Aura 跨平台目标 | 保留 sys 平台隔离，明确支持与未验证范围，不删除 Apple/Windows 分支 | Linux/Android 必验；其他平台明确未测，不能伪称通过 | B5、B7 / DECISION_RECORDED：不缩小平台目标 |
 | R17 | XImage 按值捕获仍借用，异步迁移有 UAF 风险 | 公开示例明确 owning move 与 borrowed move；资源身份/租约显式适配，不用结束时 registry 检查伪造保护 | 复制/移动/提前丢句柄/在途资源测试；无隐式深拷贝或改变借用语义 | B5 / TODO |
 | R18 | 过期原始 C handle 可指向复用槽位，正常 Task 拥有引用不受此问题影响 | 文档声明 raw handle 生命周期；验证合法引用阻止复用。不承诺失效指针可安全探测；若将来强化需稳定表+generation+pin | 合法复制/移动/释放/复用、跨 owner 检查；不调用悬空句柄来宣称安全 | B5 / TODO；本轮不改句柄 ABI |
@@ -83,19 +83,20 @@
 
 | ID | 补充约束/问题 | 处理与验收 | 批次 / 状态 |
 | --- | --- | --- | --- |
-| X01 | 控制与工作共用等待入口但不共用许可 | 独立 control epoch；控制变化 notify_all；工作项才增减 workCount；shutdown 无伪许可；休眠前竞态模型 | B3 / TODO |
-| X02 | 查询者交接通知与休眠原子性 | 交接/退出/预算变化唤醒；普通 poll 不广播；过期代际不能接管新槽；无事件零查询 | B3 / TODO |
+| X01 | 控制与工作共用等待入口但不共用许可 | 独立 control epoch；控制变化 notify_all；工作项才增减 workCount；shutdown 无伪许可；休眠前竞态模型 | B3 / HOST_VERIFIED（见 B3 报告；设备性能 USER_VALIDATION） |
+| X02 | 查询者交接通知与休眠原子性 | 交接/退出/预算变化唤醒；普通 poll 不广播；过期代际不能接管新槽；无事件零查询 | B3 / HOST_VERIFIED（见 B3 报告；设备性能 USER_VALIDATION） |
 | X03 | 深栈串行 tiled 绕过 Loop::step | 所有回调入口统一 TileContext RAII；保存 Loop 错误入口/offset；串行/嵌套/异常一致 | B2 / HOST_VERIFIED（见 B1/B2 报告） |
 | X04 | 违规提交错误在外部 caller 的空 gFrame 丢失 | 用循环错误接收入口，兼顾公开适配的失败早退；错误按最小执行失败 offset 汇总 | B2 / HOST_VERIFIED（见 B1/B2 报告） |
-| X05 | 协作执行无关任务被误认为 tile | 保存/清除/恢复 depth 与 TileContext；无关任务可正常提交，其错误不污染外层循环 | B2 已 HOST_VERIFIED；B3 的等待改造仍 TODO |
+| X05 | 协作执行无关任务被误认为 tile | 保存/清除/恢复 depth 与 TileContext；无关任务可正常提交，其错误不污染外层循环 | B2/B3 / HOST_VERIFIED（上下文隔离与通知等待回归） |
 | X06 | shutdown 只等 helper 会漏 caller；新 Job 与关闭竞态 | Job 接受与 Stopping 同一线性化协议；RAII 排空整个调用；无 helper 与最后 helper 提前结束均测试 | B2 / HOST_VERIFIED（见 B1/B2 报告） |
-| X07 | 最后 worker 退休与新提交、GPU 进度、TID 复用 | 创建中/运行/退休/退出/已回收槽明确状态；锁外 join；保留完成推进者；2 秒后零驻留 | B3 / TODO |
+| X07 | 最后 worker 退休与新提交、GPU 进度、TID 复用 | 创建中/运行/退休/退出/已回收槽明确状态；锁外 join；保留完成推进者；2 秒后零驻留 | B3 / HOST_VERIFIED（见 B3 报告；设备性能 USER_VALIDATION） |
 | X08 | Aura 栈不能用替换 flow 文件方式移入旧 caddies | 三引擎独立微基准；只做原始 FlashPE 与最终候选端到端对照；记录集成与数据路径变化 | B1、B7 / USER_VALIDATION |
 | X09 | 候选必须有原始业务对照，GPU 传输差异不能伪称调度收益 | 固定输入/算法/内存/NDRange，记录所有不可统一之处；验输出；设备/主机时钟不直接相减 | B1、B7 / USER_VALIDATION |
 | X10 | 旧源码已从 dev 删除、另外两个版本与 SDK 不在本环境 | 原实现通过固定历史提交读取，不把旧头恢复进生产；提供 GitLab/FlashPE refs 与访问；NDK/ADB/设备只走支持通道 | B1 / BLOCKED_EXTERNAL：未提供外部源码 |
 | X11 | 默认测试构建不应改变生产库 | 单独编译 instrumented 变体；生产 benchmark/普通消费者链接 aura，故障测试链接 aura_testing；BUILD_TESTING OFF 不生成变体 | B0 / CLOSED（主机证据见 B0 报告） |
 | X12 | helper 通用 wait 若提前失败，忽略结果会让栈上 Loop 提前释放 | 专用不可提前失败 join；接受时已有 parent→helper 完成依赖，回调等待仍走环检查；祖先等待/协作/关闭及 sanitizers 回归 | B2 / HOST_VERIFIED |
 | X13 | B2 去分配后多 tile 空循环 p50 仍高于原实现，部分行循环/扇出分位数波动 | 保存全部正反结果；K=1/K=8/逐个发布实测，保留 K=8；后续定位接受、唤醒、join 成本，B3/B6 同基准回测，不以分配替代延迟验收 | B2、B3、B6 / IN_PROGRESS；尚未通过性能收口 |
+| X14 | B2 预算下调后可能丢失周期查询推进，剩余挂起事件不再完成 | 控制广播与领导权交接；协作 wait/fence 返回用户 CPU 代码前释放身份；交接与退休裁定串行化，必要时补消费者。保留旧版失败样本，加入预算/CPU/退休交接测试 | B3 / HOST_VERIFIED；设备进度/功耗 USER_VALIDATION |
 
 ## 5 分轮任务与退出条件
 
@@ -140,14 +141,18 @@
 
 ### B3：统一等待、单查询者、亲核与 2 秒退休
 
-- [ ] WorkGate/控制世代与工作计数统一睡眠协议；关闭迁移控制通知。
-- [ ] 协作 wait 同时感知目标完成、就绪工作、控制与用户超时，去掉依赖固定 1 ms 才取得进度的路径。
-- [ ] 单查询者及领导权交接、查询公平；只在在途工作时计时；固定间隔/退避测量决定参数。
-- [ ] 原子策略版本快速判断；就绪 fan-out 仍扩容；预算外 worker 事件停车。
-- [ ] 默认 2 秒退休、零空闲常驻；槽位 generation、查询 pin、锁外 join、最后 worker 竞争与 GPU 推进。
-- [ ] deterministic 休眠/交接/退出竞争测试和长时间压力；设备唤醒、PSS、首帧与尾延迟对比。
+- [x] WorkGate/控制世代与工作计数统一睡眠协议；关闭迁移控制通知。
+- [x] 协作 wait 同时感知目标完成、就绪工作、控制与用户超时，去掉依赖固定 1 ms 才取得进度的路径。
+- [x] 单查询者及领导权交接、查询公平；只在在途工作时计时；生产构建对照固定 1 ms 与 200–2000 µs 退避，记录延迟取舍。
+- [x] 原子策略版本快速判断；就绪 fan-out 仍扩容；预算外 worker 事件停车。
+- [x] 默认 2 秒退休、零空闲常驻；槽位 generation、查询 pin、锁外 join、最后 worker 竞争与 GPU 推进。
+- [x] 可控休眠/交接/退出竞争测试；2,000 根任务、5 次真实退休/重建及并发策略/亲核查询的主机压力，ASan/LSan、TSan 回归。
+- [x] 主机生产基准记录查询、context switch、线程、PSS 和退休后首次任务；同一 CPU 基准回测 R01/X13。
+- [ ] 设备长时压力、真实 GPU/唤醒、PSS、首帧与尾延迟阈值验收（USER_VALIDATION）。
 
 退出：无丢工作/丢控制通知/永久等待；GPU 在途持续推进；空闲实际退休；主机数据与 B1 可比，设备阈值由用户后续验证。
+
+状态：B3 代码、主机回归及生产基准已完成，详见 [B3 报告](flow_validation/B3-2026-10-20.md)。R03 的队列对照、R19 的全局锁审计仍分别归 B6/B4；R01/X13 的延迟收口继续追踪，设备指标仍由用户验收。本批未 commit/push。
 
 ### B4：图与核心职责整理
 
@@ -188,7 +193,7 @@
 - [ ] 默认/生产/CPU-only/OpenCL/C/C++11/双 so/关闭/故障测试，ASan/LSan 与可用环境 TSan；未支持项单列。
 - [ ] 正常退出与 SDK 调用全部返回后卸载；驱动挂起不伪造完成或强制释放。
 - [ ] 更新本表全部状态、链接提交与原始证据，区分保留决策、主机通过和设备通过。
-- [ ] 最终报告逐项交代 全部 R/X 项（含新增 X12/X13），没有无解释的 TODO；外部阻塞存在时不宣称整体完成。
+- [ ] 最终报告逐项交代 全部 R/X 项（含新增 X12/X13/X14），没有无解释的 TODO；外部阻塞存在时不宣称整体完成。
 
 ## 6 验收矩阵
 
@@ -216,6 +221,13 @@
 本轮 B0 主机验证已完成：[构建修复与隔离报告](flow_validation/B0-2026-10-20.md)。CPU-only 154/154 单测和 10/10 CTest；OpenCL 167/167 单测、13 项 CTest 通过、1 项真实 GPU skipped。R14/X11 已关闭；R27 实现及主机检查完成，Android 实际链接由用户验证。该记录是 B0 时点证据，后续进度如下。
 
 
-2026-10-20 B1/B2：[主机基准与同步 Job 报告](flow_validation/B1-B2-2026-10-20.md)，[原始测量/manifest](flow_validation/B1-B2-2026-10-20-data.json)。B1 可用主机基准完成；B2 契约、Job 接受/关闭、所有 tile 路径、专用 helper/8-tile 批量与不可提前失败 join 已实现并验证。CPU 159/159、OpenCL 172/172；CPU/OpenCL CTest 分别 10 通过、13 通过+1真实硬件 skipped；ASan/LSan 13/13、TSan 10/10 通过。变更仍在本地工作区，没有 commit/push。
+2026-10-20 B1/B2：[主机基准与同步 Job 报告](flow_validation/B1-B2-2026-10-20.md)，[原始测量/manifest](flow_validation/B1-B2-2026-10-20-data.json)。B1 可用主机基准完成；B2 契约、Job 接受/关闭、所有 tile 路径、专用 helper/8-tile 批量与不可提前失败 join 已实现并验证。CPU 159/159、OpenCL 172/172；CPU/OpenCL CTest 分别 10 通过、13 通过+1真实硬件 skipped；ASan/LSan 13/13、TSan 10/10 通过。B0–B2 随后按用户要求提交并推送到 dev：`900a738`。该提交不包含 B3。
 
 新增 X12 已修正内部等待提前失败的生命周期风险。新增 X13 记录多 tile 空循环 p50 退化和部分负载分位数变差；完整保留数据，不能据单 tile 更快/去分配宣布性能验收完成。B3 开始时先保留该基准与 X13，等待/唤醒/查询者/退休改造后回测；B6 最终决定机制取舍并收口。B4-B7 的未实施事项继续维持 TODO。
+
+
+2026-10-21 B3：[统一等待与 worker 生命周期报告](flow_validation/B3-2026-10-20.md)，[五轮原始数据与 manifest](flow_validation/B3-2026-10-20-data.json)。完成工作/控制分离、协作 wait/fence 通知、单周期查询者与交接、策略版本快速判断、预算停车、2 秒退休和槽位/query pin/join 协议。CPU 172/172、OpenCL 模型 185/185；CTest 分别 11 通过、14 通过+1硬件 skipped；ASan/LSan 14/14、TSan 11/11，最终测试时序屏障补跑 OpenCL ASan 1/1；正常 Release 符号与严格 C11/C++11 检查通过。本批代码和文档均未 commit/push。
+
+生产模型五轮：B3 在途 200 ms 查询次数中位数 97，固定单查询者 1 ms 实验 185，B2 590；这不是实际设备唤醒计数。B3 2.3 秒空闲后 worker 0 / 进程线程 1，未观察到 PSS 下降；重建和完成延迟代价均记录。新增 X14 追踪预算下调后的查询停滞：B2 最终 5 轮 1 次、早期 5 轮 4 次失败均保留；B3 两组最终均 5/5 正常完成，相关交接/退休竞争测试通过。
+
+R01/X13 尚未收口：B3 CPU 回测同时包含改善和退化，不以主机有限样本宣布全面性能提升。后续顺序仍为 B4 → B5 → B6 → B7；设备长时稳定性、真实 GPU/功耗与 FlashPE 用户验收不阻塞本地代码推进，也不被记为已完成。

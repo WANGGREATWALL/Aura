@@ -2,12 +2,14 @@
 #include "log/xerror.h"
 #include "log/xlogger.h"
 #include "mm/access_context.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <thread>
 #include <utility>
 
 namespace {
+constexpr auto kRetryMinimum = std::chrono::microseconds(200);
+constexpr auto kRetryMaximum = std::chrono::microseconds(2000);
 struct FinalizingFrame { au::gpu::detail::PendingRegistry* mRegistry; FinalizingFrame* mPrevious; };
 thread_local FinalizingFrame* gFinalizingFrame = nullptr;
 }
@@ -21,6 +23,10 @@ struct CompletionState {
     // Registry/token own the live record; the fence only has a weak reference.
     std::weak_ptr<au::gpu::detail::Pending> mPending;
     std::atomic<bool> mDone{false};
+    std::mutex mMutex;
+    std::condition_variable mChanged;
+    std::size_t mWaiters = 0;
+    bool mManaged = false; // Immutable before fence/token publication.
     au::flow::detail::ExternalStatus mStatus;
     std::uint64_t mCause = 0;
 };
@@ -78,7 +84,14 @@ public:
         mOps.mDestroy(payload); // Drop native/resource leases before publishing safe completion.
         if (!status.mCode) status = extent.mError;
         mState->mStatus = status;
-        mState->mDone.store(true, std::memory_order_release); // Publishes status and all cleanup effects to fence waiters.
+        bool waiting;
+        {
+            std::lock_guard<std::mutex> lock(mState->mMutex);
+            mState->mDone.store(true, std::memory_order_release); // Publish status/cleanup before either wake channel.
+            waiting = mState->mManaged && mState->mWaiters;
+        }
+        mState->mChanged.notify_all();
+        if (waiting) au::flow::detail::notifyExternalWaiters();
     }
     int poll(bool* done, au::flow::detail::ExternalStatus* status) noexcept
     {
@@ -122,18 +135,45 @@ au::mm::detail::FenceStatus waitFence(void* payload) noexcept
 {
     auto& state = *static_cast<std::shared_ptr<au::gpu::detail::CompletionState>*>(payload);
     au::flow::detail::CpuSlicePause waiting(!state->mDone.load(std::memory_order_acquire));
-    while (!state->mDone.load(std::memory_order_acquire)) { // Status is immutable after this acquire succeeds.
+    struct Waiter {
+        au::gpu::detail::CompletionState* mState;
+        explicit Waiter(au::gpu::detail::CompletionState* state) noexcept : mState(state)
+        {
+            std::lock_guard<std::mutex> lock(mState->mMutex);
+            ++mState->mWaiters;
+        }
+        ~Waiter() noexcept
+        {
+            {
+                std::lock_guard<std::mutex> lock(mState->mMutex);
+                --mState->mWaiters;
+            }
+            mState->mChanged.notify_all();
+            au::flow::detail::leaveExternalWait();
+        }
+    } waiter(state.get());
+    auto delay = kRetryMinimum;
+    const auto ready = [](void* payload) noexcept {
+        return static_cast<au::gpu::detail::CompletionState*>(payload)->mDone.load(std::memory_order_acquire);
+    };
+    while (!state->mDone.load(std::memory_order_acquire)) {
+        if (state->mManaged && au::flow::detail::assistExternalWait(ready, state.get())) continue;
+        // Explicit outside callers may query managed fences too. In particular,
+        // completion and cleanup must remain possible on the thread calling wait.
         if (auto record = state->mPending.lock()) {
             bool done = false; au::flow::detail::ExternalStatus status;
             (void)record->poll(&done, &status);
             if (done) break;
-            // A native successor can reach device completion before its
-            // predecessor's host record is queried. Advance the registry after
-            // leaving this query gate, never recursively through a fence chain.
             if (!au::flow::detail::cleanupActive()) record->mRegistry->pollSome();
         }
-        if (au::flow::detail::assistExternalWait()) continue;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1)); // Only a caller actively waiting on an in-flight fence sleeps.
+        if (!state->mManaged && au::flow::detail::assistExternalWait(ready, state.get(),
+                static_cast<std::uint64_t>(delay.count()))) {
+            delay = std::min(kRetryMaximum, delay * 2);
+            continue;
+        }
+        std::unique_lock<std::mutex> lock(state->mMutex);
+        state->mChanged.wait_for(lock, delay, [&] { return state->mDone.load(std::memory_order_acquire); });
+        delay = std::min(kRetryMaximum, delay * 2);
     }
     const auto status = state->mStatus;
     return {status.mCode, status.mNativeCode, status.mCauseTaskId ? status.mCauseTaskId : state->mCause,
@@ -153,6 +193,7 @@ void au::gpu::detail::PendingRegistry::add(const std::shared_ptr<au::gpu::detail
     pending->mPrevious = mTail;
     if (mTail) mTail->mNext = pending.get(); else mHead = pending.get();
     mTail = pending.get(); ++mCount;
+    ++mRevision; mChanged.notify_all();
 }
 void au::gpu::detail::PendingRegistry::retire(au::gpu::detail::Pending* pending) noexcept
 {
@@ -163,6 +204,7 @@ void au::gpu::detail::PendingRegistry::retire(au::gpu::detail::Pending* pending)
         if (pending->mNext) pending->mNext->mPrevious = pending->mPrevious; else mTail = pending->mPrevious;
         pending->mPrevious = nullptr; pending->mNext = nullptr;
         --mCount;
+        ++mRevision; mChanged.notify_all();
         if (!mFailure.mCode && pending->mState->mStatus.mCode) mFailure = pending->mState->mStatus;
         retired = std::move(pending->mKeepAlive);
     }
@@ -194,16 +236,26 @@ void au::gpu::detail::PendingRegistry::pollSome(std::size_t limit) noexcept
 au::flow::detail::ExternalStatus au::gpu::detail::PendingRegistry::drain() noexcept
 {
     if (finalizingHere()) return {au::flow::kErrorWouldDeadlock, 0, au::flow::ErrorDomain::Flow};
-    for (;;) {
-        std::size_t count;
-        {
-            std::lock_guard<std::mutex> lock(mMutex);
-            count = mCount;
-            if (!count) { const auto status = mFailure; mFailure = {}; return status; }
-        }
-        pollSome(count);
-        if (size()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::unique_lock<std::mutex> lock(mMutex);
+    mChanged.wait(lock, [this] { return !mDraining; });
+    mDraining = true; // One explicit drain caller owns the retry timer.
+    auto delay = kRetryMinimum;
+    while (mCount) {
+        const auto count = mCount;
+        const auto revision = mRevision;
+        lock.unlock();
+        pollSome(count); // No registry/lifecycle mutex held during driver calls or cleanup.
+        lock.lock();
+        if (mRevision != revision) delay = kRetryMinimum;
+        if (mCount) mChanged.wait_for(lock, delay, [this, revision] { return mRevision != revision; });
+        delay = std::min(kRetryMaximum, delay * 2);
     }
+    const auto status = mFailure;
+    mFailure = {};
+    mDraining = false;
+    lock.unlock();
+    mChanged.notify_all();
+    return status;
 }
 au::gpu::detail::PreparedSubmission::~PreparedSubmission() noexcept
 { if (mPending && !mPublished) cancel({au::err::kErrorAborted, 0, au::flow::ErrorDomain::OpenCL}); }
@@ -225,6 +277,7 @@ int au::gpu::detail::PreparedSubmission::prepare(au::gpu::detail::PendingRegistr
         if (code) return code;
         if (pending->mToken) (void)tokenOwner.release();
         pending->mCleanupToken = pending->mToken;
+        state->mManaged = pending->mToken != nullptr;
         fence->mPayload = fenceOwner.release(); fence->mWait = &waitFence; fence->mDestroy = &destroyFence;
         fence->mReady = &readyFence;
         fence->mContext = context; fence->mHostCompletion = hostCompletion;
