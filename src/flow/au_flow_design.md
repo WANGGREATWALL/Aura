@@ -8,7 +8,7 @@
 - `inc/flow/xflow.h`：C++11 header-only `Flow/Task/Tasks`、int/void 归一化、参数所有权与链式构建。
 - `src/flow/xflow_core.h`：私有数据与声明；`xflow.cpp`：全部 C++17 调度实现与 C 入口。
 
-两个内部文件合计 **497 行**，包括声明、注释、空行和平台分支，不将调度逻辑搬到其他模块。没有 slab、闭包池、无锁队列、故障桩或额外执行器文件。flow 唯一的 Aura 运行时依赖是 `au::perf`；`sys/xvisibility.h` 只提供 C 兼容可见性宏。亲核原生调用按本次要求内聚在实现文件。
+两个内部文件按仓库 `.clang-format` 排版后合计 **778 行**，包括声明、注释、空行和平台分支。原先 497 行的紧凑排版按规范展开，没有新增调度逻辑，也不将逻辑搬到其他模块。没有 slab、闭包池、无锁队列、故障桩或额外执行器文件。flow 唯一的 Aura 运行时依赖是 `au::perf`；`sys/xvisibility.h` 只提供 C 兼容可见性宏。亲核原生调用按本次要求内聚在实现文件。
 
 flow 与 mm/gpu/cv 的实现**双向无依赖**。GPU/MM/CV、既有 SYS 实现及 test_xmemory.cpp 恢复为 `e6ab9b8` 的原文件，不替这些模块引入新语义。原 gpu_helper 仍按该基线保留，不加入 Aura 的默认构建。资源访问、设备完成、内存释放由业务自行协调。
 
@@ -137,7 +137,7 @@ ctest --test-dir build --output-on-failure
 | ASan/LSan | 1/1，detect_leaks=1:halt_on_error=1 |
 | TSan | 1/1，halt_on_error=1 |
 | 严格语言边界 | C99 / C++11 / 内部 C++17，-Wall -Wextra -Werror -pedantic 通过 |
-| 核心体积 | xflow.cpp 413 行 + xflow_core.h 84 行 = 497 行 |
+| 核心体积 | 按 .clang-format 排版：xflow.cpp 675 行 + xflow_core.h 103 行 = 778 行 |
 | 文件与依赖 | src/flow 仅设计文档及两个内部文件；无旧 flow 宏/头/运行时依赖 |
 | 范围隔离 | GPU/MM/CV、既有 SYS 实现及内存测试与 e6ab9b8 无差异；仅新增 SYS 可见性头 |
 
