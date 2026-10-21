@@ -4,9 +4,7 @@
 #include "flow/testing.h"
 #include "flow/task_errors.h"
 #include "flow/completion.h"
-#include "file/xfile.h"
 #include "mm/registry.h"
-#include "json/xjson.h"
 #include "sys/flow_runtime.h"
 #include "gtest/gtest.h"
 
@@ -251,20 +249,19 @@ TEST(XFlow, BuilderFailuresKeepFirstCauseAndNeverChangeAcceptedResults)
     std::atomic<int> calls{0};
     auto body = [&]() -> int { calls.fetch_add(1, std::memory_order_relaxed); return 0; };
     au::flow::Task invalid, task = flow.makeTask(body);
-    EXPECT_EQ(task.setName(nullptr), au::err::kErrorNullPointer);
     EXPECT_EQ(invalid.precede(task), au::err::kErrorInvalidHandle); // Each operation still reports its own error.
     EXPECT_EQ(task.precede(task), au::flow::kErrorCycleDetected);
-    EXPECT_EQ(code(flow.enqueue(task)), au::err::kErrorNullPointer);
+    EXPECT_EQ(code(flow.enqueue(task)), au::err::kErrorInvalidHandle);
     au::flow::Tasks group;
-    EXPECT_EQ(group.handle().setName(nullptr), au::err::kErrorNullPointer);
+    EXPECT_EQ(group.handle().precede(group.handle()), au::flow::kErrorCycleDetected);
     EXPECT_EQ(group.add(invalid), au::err::kErrorInvalidHandle);
-    EXPECT_EQ(code(flow.enqueue(group)), au::err::kErrorNullPointer);
+    EXPECT_EQ(code(flow.enqueue(group)), au::flow::kErrorCycleDetected);
     EXPECT_EQ(calls.load(std::memory_order_relaxed), 0);
 
     au::flow::Tasks accepted{flow.makeTask(body)};
     ASSERT_EQ(code(flow.enqueue(accepted)), 0);
     EXPECT_EQ(accepted.add(invalid), au::err::kErrorInvalidHandle);
-    EXPECT_EQ(accepted.handle().setName(nullptr), au::err::kErrorStateInvalid);
+    EXPECT_EQ(accepted.handle().precede(accepted.handle()), au::err::kErrorStateInvalid);
     EXPECT_EQ(accepted.code(), 0); EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
 }
 
@@ -884,79 +881,6 @@ TEST(XFlow, SingleWorkerAndAllParticipantsMakeProgress)
     EXPECT_EQ(covered.load(std::memory_order_relaxed), budget * 111);
 }
 
-TEST(XFlow, DotAndTraceSnapshots)
-{
-    au::flow::XFlow& flow = au::flow::XFlow::get();
-    const int tracing = flow.setTracing(true);
-    if (tracing == au::err::kErrorNotSupported)
-        GTEST_SKIP() << "Timeline compiled out; DOT-only covered separately";
-    ASSERT_EQ(tracing, 0);
-    au::flow::Task work = flow.makeTask([]() -> int { return 0; });
-    ASSERT_EQ(work.setName("quoted\\\"name"), 0);
-    EXPECT_EQ(code(flow.enqueue(work)), 0);
-    EXPECT_EQ(flow.setTracing(false), 0);
-    ASSERT_EQ(flow.dumpDot(work, "flow-test.dot"), 0);
-    ASSERT_EQ(flow.dumpTrace("flow-test.json"), 0);
-    std::string dot, trace;
-    ASSERT_EQ(au::file::read("flow-test.dot", dot), 0);
-    ASSERT_EQ(au::file::read("flow-test.json", trace), 0);
-    EXPECT_NE(dot.find("digraph AuraFlow"), std::string::npos);
-    EXPECT_NE(trace.find("traceEvents"), std::string::npos);
-    EXPECT_NE(trace.find("callable wall"), std::string::npos);
-    au::json::XJson parsed = au::json::XJson::parse(trace);
-    ASSERT_TRUE(parsed.isValid());
-    EXPECT_TRUE(parsed["traceEvents"].isArray());
-    EXPECT_GT(parsed["traceEvents"].getArraySize(), 0u);
-    EXPECT_EQ(au::file::removeFile("flow-test.dot"), 0);
-    EXPECT_EQ(au::file::removeFile("flow-test.json"), 0);
-}
-
-TEST(XFlow, CapturedStructuredChildrenAndNestedClustersRemainExportable)
-{
-    auto& flow = au::flow::XFlow::get();
-    const int tracing = flow.setTracing(true);
-    if (tracing == au::err::kErrorNotSupported)
-        GTEST_SKIP() << "Timeline compiled out; DOT-only covered separately";
-    ASSERT_EQ(tracing, 0);
-    au::flow::Tasks outer, inner;
-    ASSERT_EQ(outer.setName("outer"), 0); ASSERT_EQ(inner.setName("inner"), 0);
-    auto parent = flow.makeTask([&]() -> int {
-        auto child = flow.makeTask([]() -> int { return 0; });
-        std::string name = "dynamic \"child\"\nline";
-        for (unsigned int i = 0; i < 40; ++i) name += u8"界";
-        const int named = child.setName(name.c_str()); if (named) return named;
-        const auto submitted = flow.enqueue(child); if (submitted.submissionCode()) return submitted.submissionCode();
-        return flow.wait(submitted);
-    });
-    ASSERT_EQ(parent.setName("parent \"label\""), 0); ASSERT_EQ(inner.add(parent), 0); ASSERT_EQ(outer.add(std::move(inner)), 0);
-    auto group = flow.enqueue(outer); EXPECT_EQ(code(group), 0);
-    EXPECT_EQ(flow.setTracing(false), 0);
-    ASSERT_EQ(flow.dumpDot(outer, "flow-nested.dot"), 0); ASSERT_EQ(flow.dumpTrace("flow-nested.json"), 0);
-    std::string dot, trace; ASSERT_EQ(au::file::read("flow-nested.dot", dot), 0); ASSERT_EQ(au::file::read("flow-nested.json", trace), 0);
-    EXPECT_NE(dot.find("subgraph cluster_" + std::to_string(group.id())), std::string::npos);
-    EXPECT_NE(dot.find("label=\"inner\""), std::string::npos); EXPECT_NE(dot.find("structured child"), std::string::npos);
-    EXPECT_NE(dot.find("dynamic \\\"child\\\"\\nline"), std::string::npos);
-    const auto json = au::json::XJson::parse(trace); ASSERT_TRUE(json.isValid());
-    const auto events = json["traceEvents"];
-    int begins = 0, ends = 0; bool sawName = false, sawTruncation = false;
-    for (std::size_t i = 0; i < events.getArraySize(); ++i) {
-        const auto event = events[i];
-        const auto label = event["args"]["taskName"].getString();
-        if (label.find("dynamic \"child\"\nline") == 0) {
-            EXPECT_TRUE(event["args"]["taskNameTruncated"].getBool());
-            EXPECT_GE(label.size(), 3u); EXPECT_EQ(label.substr(label.size() - 3), u8"界"); sawTruncation = true;
-        }
-        if (event["args"]["task"].getString() != std::to_string(parent.id())) continue;
-        if (event["args"]["taskName"].getString() == "parent \"label\"") sawName = true;
-        if (event["name"].getString() == "CPU slice") {
-            if (event["ph"].getString() == "B") ++begins;
-            if (event["ph"].getString() == "E") ++ends;
-        }
-    }
-    EXPECT_TRUE(sawName); EXPECT_TRUE(sawTruncation); EXPECT_GE(begins, 2); EXPECT_EQ(begins, ends); // Explicit wait splits the parent slice even if child already finished.
-    EXPECT_EQ(au::file::removeFile("flow-nested.dot"), 0); EXPECT_EQ(au::file::removeFile("flow-nested.json"), 0);
-}
-
 namespace {
 struct FakeExternal {
     std::atomic<bool> mDone{false};
@@ -1039,6 +963,27 @@ TEST(XFlow, PollingExternalCompletionAndNativeErrors)
     EXPECT_EQ(flow.waitFor(immediate, 10000, &result), au::err::kErrorPlatformAPI);
     EXPECT_EQ(result.mCode, au::err::kErrorPlatformAPI); EXPECT_EQ(result.mNativeCode, -5);
     EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::OpenCL); EXPECT_EQ(result.mCauseTaskId, immediate.id());
+    au::flow::Task generic = flow.enqueue([&]() -> int {
+        std::unique_ptr<FakeExternal> payload(new FakeExternal());
+        payload->mReleased                = &released;
+        au::flow::detail::ExternalOps ops = fakeOps();
+        ops.mPoll                         = [](void*, bool* done, au::flow::detail::ExternalStatus*) noexcept -> int {
+            *done = true;
+            return au::err::kErrorPlatformAPI;
+        };
+        au::flow::detail::ExternalToken* token    = nullptr;
+        const int                        prepared = au::flow::detail::prepareExternal(ops, payload.get(), &token);
+        if (prepared || !token)
+            return prepared ? prepared : 1;
+        (void)payload.release();
+        au::flow::detail::pollExternal(token);
+        au::flow::detail::leaveExternalRegistrar(token);
+        return 0;
+    });
+    EXPECT_EQ(generic.wait(&result), au::err::kErrorPlatformAPI);
+    EXPECT_EQ(result.mDomain, au::flow::ErrorDomain::Flow);  // An unspecified provider is not implicitly OpenCL.
+    EXPECT_EQ(result.mCauseTaskId, generic.id());
+    EXPECT_EQ(released.load(std::memory_order_relaxed), 2);
 }
 
 TEST(XFlow, BodyFailureStillWaitsForExternalMemoryLease)

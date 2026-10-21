@@ -41,7 +41,6 @@ void Core::activate(Node* node, Node** continuation) noexcept
         bodyEnd(node, 0);
         return;
     }
-    trace(node, "ready", 'i');
     // Only the dispatching worker may retain one immediate successor. No
     // permit was posted for it, and the accepted reference keeps it alive.
     // Older queued work and deferred device polls take precedence; the outer
@@ -58,8 +57,6 @@ void Core::activate(Node* node, Node** continuation) noexcept
 void Core::bodyEnd(Node* node, int code, Node** continuation) noexcept
 {
     node->mErrors.body(code);
-    if (node->mDiagnostic)
-        node->mDiagnostic->mHistory->state(node->mDiagnostic->mRecord, au::flow::TaskState::Waiting);
     node->mState.store(au::flow::TaskState::Waiting, std::memory_order_release);  // Body cannot run again.
     if (node->mOutstanding.fetch_sub(1, std::memory_order_acq_rel) == 1)
         finish(node, continuation);  // Gather child/event writes.
@@ -80,9 +77,6 @@ void Core::finish(Node* node, Node** continuation) noexcept
             node->mClosure.clear();  // No locks; cleanup cannot extend a closed body reservation.
         }
         node->mResult = node->mErrors.complete(node->mId);
-        if (node->mDiagnostic)
-            node->mDiagnostic->mHistory->complete(node->mDiagnostic->mRecord, node->mResult);
-        trace(node, "Task", 'e', node->mResult.mCode);
         bool cooperative;
         {
             std::lock_guard<std::mutex> lock(node->mWaitMutex);

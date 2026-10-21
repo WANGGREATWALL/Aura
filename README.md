@@ -97,11 +97,11 @@ The current flow review and staged acceptance checklist is tracked in
 Public API usage, `parallelFor`, state queries, structured children and image/handle
 lifetimes are explained in [flow_migration.md](docs/flow_migration.md); its
 [C++11 production examples](test/flow_migration.cpp) run as `flow_migration` in CTest.
-DOT-only history uses `setGraphCapture(true)` before root submission. Timeline
-collection stays off at runtime; compile it out with `-DENABLE_FLOW_TRACE=OFF`,
-or set `-DFLOW_TRACE_EVENTS_PER_LANE=1024` (1–65536). Stop, export, then
-`resetTrace()` to release a capture window. Queue/pool decisions and measurement
-limits are recorded in the [B6 report](docs/flow_validation/B6-2026-10-21.md).
+Flow remains part of Aura and may use its common services. Its core uses a generic
+external-completion protocol; OpenCL types and driver calls stay in the GPU provider.
+Flow trace, DOT export and task naming were removed in B7; flow C ABI is now **v2**.
+Rebuild consumers with matching headers and libraries. Changes and validation limits
+are recorded in the [B7 report](docs/flow_validation/B7-2026-10-21.md).
 
 ### Design Philosophy
 * **Minimal Dependencies**: Strictly avoids heavy external frameworks.

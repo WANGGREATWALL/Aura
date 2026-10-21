@@ -125,13 +125,15 @@ TEST_F(XFlowRuntime, CompletionBeforeCooperativeSleepIsNotLost)
 {
     fresh(2);
     auto& flow = au::flow::XFlow::get();
-    std::atomic<bool> go{false}, targetEntered{false}, targetRelease{false};
+    std::atomic<bool> go{false}, parentEntered{false}, targetEntered{false}, targetRelease{false};
     au::flow::Task target;
     auto parent = flow.makeTask([&]() -> int {
+        parentEntered.store(true, std::memory_order_release);
         if (!await([&] { return go.load(std::memory_order_acquire); })) return 99;
         return target.wait();
     });
     EXPECT_EQ(flow.enqueue(parent).submissionCode(), 0);
+    EXPECT_TRUE(await([&] { return parentEntered.load(std::memory_order_acquire); }));
     target = flow.enqueue([&]() -> int {
         targetEntered.store(true, std::memory_order_release);
         return await([&] { return targetRelease.load(std::memory_order_acquire); }) ? 0 : 99;
@@ -144,6 +146,26 @@ TEST_F(XFlowRuntime, CompletionBeforeCooperativeSleepIsNotLost)
     EXPECT_EQ(target.waitFor(5000), 0); // Completion/control publication precedes actual gate sleep.
     paused.mRelease.store(true, std::memory_order_release);
     EXPECT_EQ(parent.waitFor(5000), 0);
+    EXPECT_FALSE(paused.mTimedOut.load(std::memory_order_acquire));
+}
+
+TEST_F(XFlowRuntime, EnqueueDuringReadyToBusyHandoffStillGrows)
+{
+    fresh(2);
+    auto&             flow = au::flow::XFlow::get();
+    std::atomic<bool> secondEntered{false};
+    auto              first = flow.makeTask(
+        [&]() -> int { return await([&] { return secondEntered.load(std::memory_order_acquire); }) ? 0 : 99; });
+    RuntimeBlock paused(au::flow::testing::RuntimePoint::BeforeBusy, first.id());
+    EXPECT_EQ(flow.enqueue(first).submissionCode(), 0);
+    EXPECT_TRUE(await([&] { return paused.mEntered.load(std::memory_order_acquire); }));
+    auto second = flow.enqueue([&]() -> int {
+        secondEntered.store(true, std::memory_order_release);
+        return 0;
+    });
+    paused.mRelease.store(true, std::memory_order_release);
+    EXPECT_EQ(first.waitFor(5000), 0);
+    EXPECT_EQ(second.waitFor(5000), 0);
     EXPECT_FALSE(paused.mTimedOut.load(std::memory_order_acquire));
 }
 

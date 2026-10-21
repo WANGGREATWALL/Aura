@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <mutex>
 
-#include "flow/xflow.h"
+#include "flow/xflow_api.h"
+#include "flow/xflow_types.h"
 namespace au {
 namespace flow AU_LOCAL {
 namespace detail {

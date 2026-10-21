@@ -14,7 +14,6 @@ namespace {
 au::gpu::detail::NativeApi gApi;
 std::atomic<int> gNative{0}, gEvents{0}, gProfileQueries{0}, gManagedCode{91};
 std::atomic<bool> gExitGate{false};
-int gExpectedProfileQueries = 8;
 struct Event { std::atomic<int> mReferences{1}; };
 template<class T> T create(cl_int* code) { *code = 0; gNative.fetch_add(1, std::memory_order_relaxed); return reinterpret_cast<T>(new int(0)); }
 template<class T> cl_int release(T object) { delete reinterpret_cast<int*>(object); gNative.fetch_sub(1, std::memory_order_relaxed); return 0; }
@@ -60,7 +59,7 @@ void openExitGate() { gExitGate.store(true, std::memory_order_release); }
 void verifyTeardown()
 {
     if (gNative.load(std::memory_order_relaxed) || gEvents.load(std::memory_order_relaxed) ||
-        gProfileQueries.load(std::memory_order_relaxed) != gExpectedProfileQueries || gManagedCode.load(std::memory_order_relaxed)) {
+        gProfileQueries.load(std::memory_order_relaxed) != 0 || gManagedCode.load(std::memory_order_relaxed)) {
         std::fprintf(stderr, "teardown native=%d events=%d profiling=%d managed=%d\n", gNative.load(std::memory_order_relaxed),
             gEvents.load(std::memory_order_relaxed), gProfileQueries.load(std::memory_order_relaxed), gManagedCode.load(std::memory_order_relaxed));
         std::abort();
@@ -80,11 +79,6 @@ int main()
     gApi.mRetainEvent = &retainEvent; gApi.mReleaseEvent = &releaseEvent; gApi.mGetEventProfilingInfo = &profiling; gApi.mFlush = &flush;
     if (au::gpu::detail::setNativeApi(0, &gApi) || au::gpu::detail::setNativeApi(1, &gApi)) return 2;
     if (au::gpu::CLWrapper::get().init({}, true) || au::gpu::OpenCLWrapper::get().init({}, true)) return 3;
-    const int tracing = au::flow::XFlow::get().setTracing(true);
-    if (tracing && tracing != au::err::kErrorNotSupported)
-        return 4;
-    if (tracing == au::err::kErrorNotSupported)
-        gExpectedProfileQueries = 0;
     if (au::gpu::OpenCLWrapper::get().setNDRange({1}).enqueue("empty", "__kernel void empty() {}", nullptr)) return 5;
     auto task = au::flow::XFlow::get().enqueue([]() -> int {
         while (!gExitGate.load(std::memory_order_acquire)) std::this_thread::yield();

@@ -81,7 +81,6 @@ struct NativeModel {
     }
     static cl_int CL_API_CALL platformInfo(cl_platform_id, cl_platform_info, std::size_t capacity, void* output, std::size_t* size)
     { return stringInfo("Aura.model.platform", capacity, output, size); }
-    std::atomic<bool> mProfileFails{false};
     static cl_int CL_API_CALL platforms(cl_uint count, cl_platform_id* output, cl_uint* size)
     { if (size) *size = 1; if (count && output) *output = reinterpret_cast<cl_platform_id>(1); return 0; }
     static cl_int CL_API_CALL devices(cl_platform_id, cl_device_type, cl_uint count, cl_device_id* output, cl_uint* size)
@@ -301,18 +300,6 @@ struct NativeModel {
         for (auto* event : unknown) { (void)execute(event); releaseEvent(reinterpret_cast<cl_event>(event)); }
         return 0;
     }
-    static cl_int CL_API_CALL profile(cl_event, cl_profiling_info query, std::size_t size, void* output, std::size_t*)
-    {
-        if (sCurrent->mProfileFails.load(std::memory_order_relaxed)) return CL_PROFILING_INFO_NOT_AVAILABLE;
-        if (size != sizeof(cl_ulong)) return CL_INVALID_VALUE;
-        switch (query) {
-        case CL_PROFILING_COMMAND_QUEUED: *static_cast<cl_ulong*>(output) = 1001; return 0;
-        case CL_PROFILING_COMMAND_SUBMIT: *static_cast<cl_ulong*>(output) = 1101; return 0;
-        case CL_PROFILING_COMMAND_START: *static_cast<cl_ulong*>(output) = 1201; return 0;
-        case CL_PROFILING_COMMAND_END: *static_cast<cl_ulong*>(output) = 1301; return 0;
-        default: return CL_INVALID_VALUE;
-        }
-    }
     static int access(int, unsigned int, bool start, int* native) noexcept
     {
         const int ordinal = (start ? sCurrent->mStarts : sCurrent->mEnds).fetch_add(1, std::memory_order_relaxed) + 1;
@@ -337,7 +324,7 @@ struct NativeModel {
     }
     static void* CL_API_CALL lookup(cl_platform_id, const char* name)
     { return sCurrent->mArm && std::strcmp(name, "clImportMemoryARM") == 0 ? reinterpret_cast<void*>(&import) : nullptr; }
-    explicit NativeModel(bool arm = false, bool profiling = false) : mArm(arm)
+    explicit NativeModel(bool arm = false) : mArm(arm)
     {
         sCurrent = this;
         mApi.mGetPlatformInfo = &platformInfo;
@@ -355,9 +342,8 @@ struct NativeModel {
         mApi.mEnqueueWriteImage = &writeImage; mApi.mEnqueueReadImage = &readImage; mApi.mEnqueueNDRangeKernel = &enqueue;
         mApi.mGetEventInfo = &eventInfo; mApi.mWaitForEvents = &wait; mApi.mRetainEvent = &retainEvent; mApi.mReleaseEvent = &releaseEvent; mApi.mFlush = &flush;
         mApi.mFinish = &finish;
-        mApi.mGetEventProfilingInfo = &profile;
         EXPECT_EQ(au::gpu::detail::setNativeApi(0, &mApi), 0); EXPECT_EQ(au::gpu::detail::setNativeApi(1, &mApi), 0);
-        EXPECT_EQ(au::gpu::CLWrapper::get().init({}, profiling), 0); EXPECT_EQ(au::gpu::OpenCLWrapper::get().init({}, profiling), 0);
+        EXPECT_EQ(au::gpu::CLWrapper::get().init(), 0); EXPECT_EQ(au::gpu::OpenCLWrapper::get().init(), 0);
         au::sys::memory::setAccessHook(&access);
     }
     ~NativeModel()
@@ -569,35 +555,6 @@ TEST(XOpenCL, ConcurrentLaunchesKeepArgumentsAndRangesIndependent)
         EXPECT_EQ(au::mm::free(memory[i].ptr), 0);
     }
     EXPECT_EQ(au::gpu::CLWrapper::get().finish(), 0);
-}
-
-TEST(XOpenCL, ProfilingKeepsClockDomainsAndUnavailableExplicit)
-{
-    const int tracing = au::flow::XFlow::get().setTracing(true);
-    if (tracing == au::err::kErrorNotSupported)
-        GTEST_SKIP() << "Timeline profiling compiled out";
-    ASSERT_EQ(tracing, 0);
-    struct Reset { ~Reset() { (void)au::flow::XFlow::get().setTracing(false); } } reset;
-    for (int scenario = 0; scenario < 3; ++scenario) {
-        NativeModel model(false, scenario != 1);
-        model.mProfileFails.store(scenario == 2, std::memory_order_relaxed);
-        au::mm::MemBlock memory; ASSERT_EQ(au::mm::alloc(16, au::mm::MemType::Pss, memory), 0);
-        std::memset(memory.ptr, 1, memory.size);
-        auto task = au::flow::XFlow::get().enqueue([&]() -> int {
-            return au::gpu::CLWrapper::get().setNDRange({16}).enqueue("add", gSource, nullptr,
-                au::gpu::buffer(au::mm::readWriteAccess(memory.ptr, memory.size)), static_cast<unsigned char>(1));
-        });
-        au::flow::TaskResult result{}; ASSERT_EQ(au::flow::XFlow::get().wait(task, &result), 0);
-        EXPECT_EQ(result.mCode, 0); // Optional profiling failure cannot turn a correct kernel into failed work.
-        EXPECT_EQ(au::mm::free(memory.ptr), 0);
-    }
-    ASSERT_EQ(au::flow::XFlow::get().dumpTrace("/tmp/aura-flow-gpu-trace.json"), 0);
-    std::string trace; ASSERT_EQ(au::file::read("/tmp/aura-flow-gpu-trace.json", trace), 0);
-    EXPECT_NE(trace.find("\"clockDomain\":\"opencl-device\""), std::string::npos);
-    EXPECT_NE(trace.find("\"gpuDurationNs\":100"), std::string::npos);
-    EXPECT_NE(trace.find("\"gpuQueuedNs\":1001"), std::string::npos);
-    EXPECT_NE(trace.find("\"profileAvailable\":false"), std::string::npos);
-    EXPECT_NE(trace.find("\"profileNativeCode\":-7"), std::string::npos);
 }
 
 TEST(XOpenCL, EmptyKernelAndRejectedCallsRemainObservable)

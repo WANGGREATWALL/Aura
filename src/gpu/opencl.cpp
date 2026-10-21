@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <array>
 #include <condition_variable>
-#include <chrono>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -27,8 +26,6 @@
 #include <vector>
 
 namespace {
-std::uint64_t nowUs() noexcept
-{ return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); }
 au::flow::detail::ExternalStatus nativeStatus(cl_int code) noexcept
 {
     if (!code) return {};
@@ -135,7 +132,6 @@ struct State {
     Object<cl_command_queue> mQueue;
     cl_platform_id mPlatform = nullptr;
     cl_device_id mDevice = nullptr;
-    bool mProfiling = false;
     au::sys::opencl::ImportCapabilities mImports;
     std::uintptr_t mGeneration = 0;
     std::mutex mCacheMutex;
@@ -194,11 +190,8 @@ struct Submission {
     std::vector<Object<cl_mem>> mNative;
     std::vector<std::size_t> mArgumentTransfers;
     Object<cl_event> mEvent;
-    Object<cl_event> mKernelEvent;
     std::shared_ptr<NativeEventLease> mNativeFence; // Fence/submitter race over an immutable event lease, without mm leases.
     std::vector<cl_event> mWaitEvents; // Previous fences in DeviceAccess retain all handles, including duplicates removed here.
-    au::flow::detail::ExternalProfile mProfile;
-    bool mTrace = false;
     bool mKernelAccepted = false;
     bool mAccessPrepared = false;
     bool mNeedsQueueProof = false; // A nonconforming success-without-event cannot be treated as a rejected command.
@@ -232,7 +225,6 @@ struct Submission {
         // clGetEventInfo is deliberately not a host synchronization point. Wait
         // even after observing CL_COMPLETE before consuming readback bytes.
         if (!self.mNeedsQueueProof) code = api.mWaitForEvents(1, &self.mEvent.mValue);
-        if (self.mTrace) self.mProfile.mHostObservedUs = nowUs();
         *done = true; // The native execution status already proved termination.
         *status = predecessor.mCode ? predecessor : nativeStatus(execution < 0 ? execution : code);
         return 0;
@@ -241,24 +233,6 @@ struct Submission {
     {
         auto& self = *static_cast<Submission*>(payload);
         auto status = incoming;
-        if (self.mTrace && self.mKernelAccepted) {
-            if (self.mState->mProfiling && self.mKernelEvent.mValue && !self.mProfile.mNativeCode) {
-                cl_ulong times[4]{};
-                const cl_profiling_info queries[]{CL_PROFILING_COMMAND_QUEUED, CL_PROFILING_COMMAND_SUBMIT,
-                    CL_PROFILING_COMMAND_START, CL_PROFILING_COMMAND_END};
-                for (std::size_t i = 0; i < 4; ++i) {
-                    const int native = self.mState->mApi->mGetEventProfilingInfo(self.mKernelEvent.mValue, queries[i],
-                        sizeof(times[i]), &times[i], nullptr);
-                    if (native) { self.mProfile.mNativeCode = native; break; }
-                }
-                if (!self.mProfile.mNativeCode && times[0] <= times[1] && times[1] <= times[2] && times[2] <= times[3]) {
-                    self.mProfile.mAvailable = true;
-                    self.mProfile.mQueuedNs = times[0]; self.mProfile.mSubmitNs = times[1];
-                    self.mProfile.mStartNs = times[2]; self.mProfile.mEndNs = times[3];
-                } else if (!self.mProfile.mNativeCode) self.mProfile.mNativeCode = CL_INVALID_VALUE;
-            } else if (!self.mProfile.mNativeCode) self.mProfile.mNativeCode = CL_PROFILING_INFO_NOT_AVAILABLE;
-            au::flow::detail::recordExternalProfile(self.mProfile); // Device durations and host observation bounds, no invented clock alignment.
-        }
         for (auto& transfer : self.mTransfers) {
             if (!status.mCode && self.mKernelAccepted && !transfer.mImported && (transfer.mMode & AU_MM_WRITE)) {
                 int native = 0;
@@ -284,8 +258,6 @@ struct Submission {
         for (auto& native : self.mNative) { const auto release = nativeStatus(native.reset()); if (!status.mCode) status = release; }
         const auto eventRelease = nativeStatus(self.mEvent.reset());
         if (!status.mCode) status = eventRelease;
-        const auto kernelEventRelease = nativeStatus(self.mKernelEvent.reset());
-        if (!status.mCode) status = kernelEventRelease;
         const int cleanup = self.mAccess.releaseCompleted({status.mCode, status.mNativeCode, 0,
             status.mDomain == au::flow::ErrorDomain::OpenCL});
         if (!status.mCode && cleanup) status = {cleanup, self.mAccess.nativeCode(), au::flow::ErrorDomain::Memory};
@@ -467,7 +439,7 @@ public:
             if (!au::gpu::CLSymbols::isLoaded()) return au::err::kErrorNotSupported;
             api = &defaults;
         }
-        auto state = std::make_shared<State>(); state->mApi = api; state->mProfiling = profiling;
+        auto state = std::make_shared<State>(); state->mApi = api;
         // The owner address distinguishes simultaneous sibling contexts. This
         // generation prevents resource cache reuse after reinitialization.
         state->mGeneration = generation;
@@ -537,7 +509,7 @@ Backend* backend(unsigned int id)
     // Construct the native loader before wrapper states, so it outlives native
     // object teardown at normal static destruction too.
     (void)au::gpu::CLSymbols::isLoaded();
-    (void)au::flow::detail::tracingEnabled(); // Ensure core/mm outlive both backend destructors, without creating workers.
+    au::flow::detail::initializeExecutor(); // Executor/mm outlive both backends; no workers are created.
     static std::array<Backend, 2> instances;
     return &instances[id];
 }
@@ -739,7 +711,6 @@ au::flow::detail::ExternalStatus enqueueCommands(Submission& submission, const :
 {
     const auto& api = *submission.mState->mApi;
     const auto queue = submission.mState->mQueue.mValue;
-    if (submission.mTrace) submission.mProfile.mHostSubmitUs = nowUs();
     auto accept = [&](cl_int code, cl_event event) -> au::flow::detail::ExternalStatus {
         if (code) { if (event) (void)api.mReleaseEvent(event); return nativeStatus(code); }
         if (!event) {
@@ -770,11 +741,6 @@ au::flow::detail::ExternalStatus enqueueCommands(Submission& submission, const :
         submission.mEvent.mValue ? &submission.mEvent.mValue : (submission.mWaitEvents.empty() ? nullptr : submission.mWaitEvents.data()), &event);
     auto status = accept(native, event); if (status.mCode) return status;
     submission.mKernelAccepted = true;
-    if (submission.mTrace && submission.mState->mProfiling) {
-        const int retained = api.mRetainEvent(submission.mEvent.mValue);
-        if (!retained) submission.mKernelEvent = Object<cl_event>(submission.mEvent.mValue, api.mReleaseEvent);
-        else submission.mProfile.mNativeCode = retained; // Profiling availability must not change computation success.
-    }
     for (auto& transfer : submission.mTransfers) if (!transfer.mImported && (transfer.mMode & AU_MM_WRITE)) {
         event = nullptr;
         if (transfer.mImage) {
@@ -854,7 +820,6 @@ extern "C" int au_gpu_enqueue(std::uint32_t id, const ::au_gpu_range* range, con
         instance->mPending.pollSome();
         entry.mState->pruneResources();
         auto payload = std::make_unique<Submission>(); payload->mState = entry.mState;
-        payload->mTrace = au::flow::detail::tracingEnabled(); payload->mProfile.mTask = au::flow::detail::currentTaskId();
         auto status = getProgram(entry.mState, name, source, nullptr, payload->mProgram);
         if (!status.mCode) status = leaseKernel(*payload, name);
         if (!status.mCode) {

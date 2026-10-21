@@ -32,9 +32,7 @@ bool finalState(au::flow::TaskState state) noexcept { return state >= au::flow::
 
 Core::Core() noexcept
 {
-    // Construct mm first so structured cleanup during static shutdown never
-    // discovers an already destroyed owner registry. No workers are created.
-    initializeMemoryContext();
+    initializeMemoryContext();  // Memory cleanup must outlive accepted work; no workers are created.
     if (au::sys::flow::allowedCpus(mAllowed) != 0) {
         // A query failure must not turn a usable CPU scheduler into an error.
         mBudget.store(1, std::memory_order_relaxed);  // Not shared during construction.
@@ -57,15 +55,10 @@ NodeRef Core::make(Kind kind)
             throw CreateFailure{au::err::kErrorOverflow};
     } while (
         !mNextId.compare_exchange_weak(id, id + 1, std::memory_order_relaxed));  // Saturate; never wrap to a stale ID.
-    auto node   = NodeRef::adopt(mNodes.create(this, id, kind));
-    node->mName = std::to_string(id);  // Cold label creation; the owner also handles construction rollback.
-    return node;
+    return NodeRef::adopt(mNodes.create(this, id, kind));
 }
 
-void Core::recycle(Node* node) noexcept
-{
-    mNodes.destroy(node);  // Diagnostic history contains values, never executable descendants.
-}
+void Core::recycle(Node* node) noexcept { mNodes.destroy(node); }
 void retain(Node* node) noexcept
 {
     if (node)

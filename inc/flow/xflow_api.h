@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define AURA_FLOW_ABI_VERSION 1u
+#define AURA_FLOW_ABI_VERSION 2u
 
 #ifdef __cplusplus
 #define AU_FLOW_NOEXCEPT noexcept
@@ -84,7 +84,6 @@ uint64_t au_flow_id(au_flow_handle handle) AU_FLOW_NOEXCEPT;
 uint32_t au_flow_state(au_flow_handle handle) AU_FLOW_NOEXCEPT;
 int      au_flow_submission(au_flow_handle handle) AU_FLOW_NOEXCEPT;
 int      au_flow_result_get(au_flow_handle handle, au_flow_result* out) AU_FLOW_NOEXCEPT;
-int      au_flow_name(au_flow_handle handle, const char* name) AU_FLOW_NOEXCEPT;
 int      au_flow_builder_error(au_flow_handle handle, int code) AU_FLOW_NOEXCEPT;
 /* after must be Draft. Always check the return code: accepted endpoints cannot
  * be changed or rejected retroactively. Draft targets preserve the first build
@@ -114,17 +113,6 @@ int au_flow_affinity(uint32_t mode, const uint32_t* cpus, size_t count) AU_FLOW_
  * NotReady. A native affinity query pins the live thread until it returns. */
 int au_flow_workers(au_flow_worker* out, size_t capacity, size_t* count) AU_FLOW_NOEXCEPT;
 int au_flow_worker_affinity(uint32_t worker, uint32_t* cpus, size_t capacity, size_t* count) AU_FLOW_NOEXCEPT;
-int au_flow_tracing(int enabled) AU_FLOW_NOEXCEPT;
-/* Independent DOT history (values, no execution-node owners). Legacy tracing
- * also toggles graph capture. Enable before root submission; descendants inherit
- * the accepted scope's choice. Toggling does not retrofit old roots or discard
- * already captured history. */
-int au_flow_graph_capture(int enabled) AU_FLOW_NOEXCEPT;
-/* Requires tracing disabled; detaches stored timeline. Concurrent readers or
- * writers safely finish on their pinned old window. Does not clear DOT history. */
-int au_flow_trace_reset(void) AU_FLOW_NOEXCEPT;
-int au_flow_dot(au_flow_handle handle, const char* path) AU_FLOW_NOEXCEPT;
-int au_flow_trace(const char* path) AU_FLOW_NOEXCEPT;
 int au_flow_shutdown(void) AU_FLOW_NOEXCEPT;
 
 #ifdef __cplusplus

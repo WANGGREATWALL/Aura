@@ -4,14 +4,14 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
-#include <string>
 #include <utility>
 #include <vector>
 
-#include "flow/diagnostics.h"
 #include "flow/ready_queue.h"
 #include "flow/task_errors.h"
-#include "flow/xflow.h"
+#include "flow/xflow_api.h"
+#include "flow/xflow_types.h"
+#include "log/xerror.h"
 
 namespace au {
 namespace flow AU_LOCAL {
@@ -111,15 +111,11 @@ struct Node
     std::atomic<int>                 mSubmission{au::err::kErrorNotReady};
     Closure                          mClosure;
     bool (*mContinue)(void*) noexcept = nullptr;  // Private tiled helper continuation, never an ordinary Task.
-    std::string                   mName;
-    std::vector<NodeRef>          mPreds;
-    std::vector<NodeRef>          mMembers;
-    NodeRef                       mEntry;
-    NodeRef                       mGate;
-    NodeRef                       mParent;
-    std::unique_ptr<CapturedNode> mDiagnostic;  // Value history only; never keeps a child Node alive.
-    bool mGraphCaptured = false;  // Immutable after acceptance; tracing opt-in is inherited by structured descendants.
-    std::atomic<std::size_t> mGraphDropped{0};
+    std::vector<NodeRef>     mPreds;
+    std::vector<NodeRef>     mMembers;
+    NodeRef                  mEntry;
+    NodeRef                  mGate;
+    NodeRef                  mParent;
     Node*                    mGroup      = nullptr;  // Borrowed; group owns its draft members.
     int                      mBuildError = 0;
     std::atomic<Edge*>       mSuccessors{nullptr};

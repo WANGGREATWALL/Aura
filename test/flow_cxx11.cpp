@@ -9,7 +9,7 @@
 #include "flow/xflow.h"
 #include "gpu/xopencl.h"
 
-static_assert(AURA_FLOW_ABI_VERSION == 1u, "flow C ABI version must remain 1");
+static_assert(AURA_FLOW_ABI_VERSION == 2u, "flow C ABI version must remain 2");
 static_assert(std::is_standard_layout<au::flow::TaskResult>::value, "result must retain standard layout");
 static_assert(std::is_standard_layout<au::flow::WorkerInfo>::value, "worker must retain standard layout");
 static_assert(sizeof(au::flow::TaskResult) == sizeof(au_flow_result), "C/C++ result size");
@@ -169,8 +169,8 @@ int main(int argc, char**)
         return 18;
     if (flow.parallelizeTiledTasks(31, 3, ordinaryTile))
         return 19;
-    au::flow::Tasks named;
-    if (named.setName("named group") || flow.enqueue(named).wait())
+    au::flow::Tasks emptyGroup;
+    if (flow.enqueue(emptyGroup).wait())
         return 20;
     if (flow.shutdown())
         return 6;

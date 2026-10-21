@@ -59,11 +59,7 @@ set(AURA_SOURCES
     src/flow/task_errors.cpp
     src/flow/executor.cpp
     src/flow/external_completion.cpp
-    src/flow/core_diagnostics.cpp
-    src/flow/graph_history.cpp
     src/flow/tiled.cpp
-    src/flow/testing.cpp
-    src/flow/diagnostics.cpp
     src/gpu/pending.cpp
     src/gpu/arguments.cpp
     src/file/xpath.cpp
@@ -90,11 +86,6 @@ set(AURA_SOURCES
 # ============================================================================
 option(ENABLE_OPENCL "Build optional dynamically loaded OpenCL 1.2 support" OFF)
 option(ENABLE_OPENCL_HARDWARE_TESTS "Run optional GPU hardware integration tests" OFF)
-option(ENABLE_FLOW_TRACE "Compile optional bounded flow timeline recording" ON)
-set(FLOW_TRACE_EVENTS_PER_LANE "1024" CACHE STRING "Timeline events per worker/external lane (1..65536)")
-if(NOT FLOW_TRACE_EVENTS_PER_LANE MATCHES "^[1-9][0-9]*$" OR FLOW_TRACE_EVENTS_PER_LANE GREATER 65536)
-    message(FATAL_ERROR "FLOW_TRACE_EVENTS_PER_LANE must be an integer in 1..65536")
-endif()
 find_package(Threads REQUIRED)
 
 # Production and fault-injection variants share all non-testing configuration.
@@ -102,8 +93,6 @@ find_package(Threads REQUIRED)
 function(aura_add_library target)
     add_library(${target} STATIC ${AURA_SOURCES})
     target_compile_definitions(${target} PUBLIC AURA_STATIC)
-    target_compile_definitions(${target} PRIVATE AURA_FLOW_TRACE_ENABLED=$<BOOL:${ENABLE_FLOW_TRACE}>
-        AURA_FLOW_TRACE_CAPACITY=${FLOW_TRACE_EVENTS_PER_LANE})
     target_compile_features(${target} PRIVATE cxx_std_17 INTERFACE cxx_std_11)
     set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON
         CXX_VISIBILITY_PRESET hidden C_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
@@ -152,6 +141,7 @@ option(ENABLE_TEST_XFLOW     "Enable xflow unit test"     ON)
 if(AURA_TESTS_ENABLED)
     aura_add_library(aura_testing)
     if(ENABLE_TEST_XFLOW)
+        target_sources(aura_testing PRIVATE src/flow/testing.cpp)
         target_compile_definitions(aura_testing PRIVATE AURA_FLOW_TESTING=1)
     endif()
     if(ENABLE_OPENCL)
@@ -209,7 +199,7 @@ aura_add_test(ximage)
 aura_add_test(xflow)
 if(ENABLE_TEST_XFLOW)
     list(APPEND AURA_TEST_SOURCES test/test_flow_runtime.cpp test/test_flow_public.cpp
-        test/test_flow_mechanisms.cpp test/test_flow_diagnostics.cpp)
+        test/test_flow_mechanisms.cpp)
 endif()
 if(ENABLE_TEST_XFLOW AND ENABLE_TEST_XMEMORY)
     list(APPEND AURA_TEST_SOURCES test/test_xgpu_pending.cpp)
@@ -291,12 +281,6 @@ if(ENABLE_TEST_XFLOW)
     target_link_libraries(flow_migration_test PRIVATE aura)
     add_test(NAME flow_migration COMMAND flow_migration_test)
     set_tests_properties(flow_migration PROPERTIES TIMEOUT 30)
-    add_executable(flow_trace_optional_test test/flow_trace_optional.cpp)
-    set_target_properties(flow_trace_optional_test PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED YES CXX_EXTENSIONS NO)
-    target_compile_definitions(flow_trace_optional_test PRIVATE AURA_EXPECT_TRACE=$<BOOL:${ENABLE_FLOW_TRACE}>)
-    target_link_libraries(flow_trace_optional_test PRIVATE aura)
-    add_test(NAME flow_trace_optional COMMAND flow_trace_optional_test)
-    set_tests_properties(flow_trace_optional PROPERTIES TIMEOUT 30)
     if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$" AND NOT MSVC AND NOT CMAKE_CROSSCOMPILING)
         add_test(NAME flow_callable_contract COMMAND ${CMAKE_COMMAND}
             -DCOMPILER=${CMAKE_CXX_COMPILER} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
@@ -345,27 +329,13 @@ endif() # AURA_TESTS_ENABLED
 
 option(ENABLE_FLOW_BENCHMARKS "Build optional host flow measurement executable" OFF)
 if(ENABLE_FLOW_BENCHMARKS)
-    add_executable(flow_benchmark test/flow_benchmark.cpp)
-    target_link_libraries(flow_benchmark PRIVATE aura)
-    target_compile_features(flow_benchmark PRIVATE cxx_std_17)
-    add_executable(flow_microbenchmark test/flow_microbenchmark.cpp)
-    target_link_libraries(flow_microbenchmark PRIVATE aura)
-    target_compile_features(flow_microbenchmark PRIVATE cxx_std_17)
-    add_executable(flow_idle_benchmark test/flow_idle_benchmark.cpp)
-    target_include_directories(flow_idle_benchmark PRIVATE src)
-    target_link_libraries(flow_idle_benchmark PRIVATE aura)
-    target_compile_features(flow_idle_benchmark PRIVATE cxx_std_17)
-    add_executable(flow_mechanism_benchmark test/flow_mechanism_benchmark.cpp)
-    target_include_directories(flow_mechanism_benchmark PRIVATE src)
-    target_link_libraries(flow_mechanism_benchmark PRIVATE aura)
-    target_compile_features(flow_mechanism_benchmark PRIVATE cxx_std_17)
-    foreach(benchmark IN ITEMS flow_gpu_gap_benchmark flow_diagnostics_benchmark flow_payload_benchmark)
+    foreach(benchmark IN ITEMS flow_microbenchmark flow_idle_benchmark flow_mechanism_benchmark
+            flow_gpu_gap_benchmark flow_payload_benchmark)
         add_executable(${benchmark} test/${benchmark}.cpp)
         target_include_directories(${benchmark} PRIVATE src)
         target_link_libraries(${benchmark} PRIVATE aura)
         target_compile_features(${benchmark} PRIVATE cxx_std_17)
     endforeach()
-    target_compile_definitions(flow_diagnostics_benchmark PRIVATE AURA_B6_DIAGNOSTICS=1)
     if(TARGET aura_testing AND ENABLE_TEST_XFLOW)
         # Algorithm/lock-duration diagnostic; production timings remain in the
         # separate benchmarks linked to aura.
@@ -388,7 +358,7 @@ if(ENABLE_ASAN AND ENABLE_TSAN)
 endif()
 
 if(ENABLE_ASAN)
-    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_migration_test flow_trace_optional_test flow_mechanism_benchmark flow_gpu_gap_benchmark flow_diagnostics_benchmark flow_payload_benchmark flow_benchmark flow_microbenchmark flow_idle_benchmark flow_graph_benchmark)
+    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_migration_test flow_mechanism_benchmark flow_gpu_gap_benchmark flow_payload_benchmark flow_microbenchmark flow_idle_benchmark flow_graph_benchmark)
         if(TARGET ${target})
             target_compile_options(${target} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
             target_link_options(${target} PRIVATE -fsanitize=address)
@@ -398,7 +368,7 @@ if(ENABLE_ASAN)
 endif()
 
 if(ENABLE_TSAN)
-    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_migration_test flow_trace_optional_test flow_mechanism_benchmark flow_gpu_gap_benchmark flow_diagnostics_benchmark flow_payload_benchmark flow_benchmark flow_microbenchmark flow_idle_benchmark flow_graph_benchmark)
+    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_migration_test flow_mechanism_benchmark flow_gpu_gap_benchmark flow_payload_benchmark flow_microbenchmark flow_idle_benchmark flow_graph_benchmark)
         if(TARGET ${target})
             target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer -g)
             target_link_options(${target} PRIVATE -fsanitize=thread)

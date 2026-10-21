@@ -2,7 +2,6 @@
 
 #include "flow/core.h"
 #include "flow/graph_search.h"
-#include "perf/xperf.h"
 
 namespace au {
 namespace flow AU_LOCAL {
@@ -43,7 +42,7 @@ int Core::WorkerAdmission::accept(int* native) noexcept
 #ifdef AURA_FLOW_TESTING
     if (!code)
         runtimePoint(au::flow::testing::RuntimePoint::AfterAdmission,
-                     gWorker < 0 ? kExternalTraceLane : static_cast<std::size_t>(gWorker));
+                     gWorker < 0 ? kMaxWorkers : static_cast<std::size_t>(gWorker));
 #endif
     return code;
 }
@@ -77,7 +76,7 @@ struct WorkerEntry
 
 void Core::publishReady(Node* node) noexcept
 {
-    mReadyCount.fetch_add(1, std::memory_order_relaxed);  // Scaling hint only.
+    mReadyCount.fetch_add(1, std::memory_order_seq_cst);  // Orders enqueue against dispatch's busy handoff.
     mReady.push(&node->mReady);
     mWork.post();
     grow();
@@ -108,7 +107,7 @@ bool Core::helpOne(bool blocking, std::chrono::steady_clock::time_point deadline
     if (blocking) {
 #ifdef AURA_FLOW_TESTING
         runtimePoint(au::flow::testing::RuntimePoint::BeforeSleep,
-                     gWorker < 0 ? kExternalTraceLane : static_cast<std::size_t>(gWorker));
+                     gWorker < 0 ? kMaxWorkers : static_cast<std::size_t>(gWorker));
 #endif
         const auto wake = mWork.acquireUntil(epoch, deadline, eligible);
 #ifdef AURA_FLOW_TESTING
@@ -146,7 +145,7 @@ bool Core::helpOne(bool blocking, std::chrono::steady_clock::time_point deadline
         if (++attempts == kQueueProbeLimit) {
 #ifdef AURA_FLOW_TESTING
             runtimePoint(au::flow::testing::RuntimePoint::QueueProbeMiss,
-                         gWorker < 0 ? kExternalTraceLane : static_cast<std::size_t>(gWorker));
+                         gWorker < 0 ? kMaxWorkers : static_cast<std::size_t>(gWorker));
 #endif
             mWork.post();  // Preserve the real permit; recheck target/control/timeout outside this bounded probe.
             return false;
@@ -181,11 +180,8 @@ bool Core::helpOne(bool blocking, std::chrono::steady_clock::time_point deadline
 
 void Core::run(Node* node, Node** continuation) noexcept
 {
-    CpuSlicePause  outerSlice;
     TileSuspension tileSuspension;
     NodeRef        pin(node);
-    if (node->mDiagnostic)
-        node->mDiagnostic->mHistory->state(node->mDiagnostic->mRecord, au::flow::TaskState::Running);
     node->mState.store(au::flow::TaskState::Running, std::memory_order_release);
     Frame frame{node, gFrame};
     if (frame.mPrevious) {
@@ -195,32 +191,26 @@ void Core::run(Node* node, Node** continuation) noexcept
     gFrame = &frame;
     ExecutionErrors memoryErrors(this);
     ++gDepth;
+#ifdef AURA_FLOW_TESTING
+    runtimePoint(au::flow::testing::RuntimePoint::BeforeBusy, static_cast<std::size_t>(gWorker));
+#endif
     // External tiled callers provide extra capacity, not busy pool workers.
-    if (gWorker >= 0)
-        mBusy.fetch_add(1, std::memory_order_relaxed);  // Scaling hint; cooperative stacks may overlap.
-    if (mPendingExternalCount.load(std::memory_order_acquire))
-        grow();  // Preserve a query consumer when dispatch takes its leader.
+    if (gWorker >= 0) {
+        mBusy.fetch_add(1, std::memory_order_seq_cst);
+        // Enqueue can see this worker between ready-pop and busy publication.
+        // Recheck after the handoff. SC ready/busy increments and demand loads
+        // prevent both sides missing each other; covered demand takes no lock.
+        grow();
+    }
     int code = 0;
-    trace(node, "callable wall", 'B');  // Includes all waits inside the function.
-    frame.mCpuActive = true;
-    trace(node, "CPU slice", 'B');  // Excludes known waits; not OS scheduled CPU time.
     if (node->mClosure.mInvoke) {
         try {
-            if (mDiagnostics.enabled()) {
-                au::perf::XPerfScoped scope(node->mName);
-                code = node->mClosure.mInvoke(node->mClosure.mPayload);
-            } else
-                code = node->mClosure.mInvoke(node->mClosure.mPayload);
+            code = node->mClosure.mInvoke(node->mClosure.mPayload);
         } catch (...) {
             code = au::flow::kErrorUnhandledException;
             node->mErrors.exception();
         }
     }
-    if (frame.mCpuActive) {
-        trace(node, "CPU slice", 'E', code);
-        frame.mCpuActive = false;
-    }
-    trace(node, "callable wall", 'E', code);
     memoryErrors.restore();
     if (gWorker >= 0)
         mBusy.fetch_sub(1, std::memory_order_relaxed);
@@ -228,7 +218,7 @@ void Core::run(Node* node, Node** continuation) noexcept
     gFrame = frame.mPrevious;
     if (node->mContinue && node->mContinue(node->mClosure.mPayload)) {
         node->mState.store(au::flow::TaskState::Ready, std::memory_order_release);
-        mReadyCount.fetch_add(1, std::memory_order_relaxed);  // Helper yields after a bounded tile batch.
+        mReadyCount.fetch_add(1, std::memory_order_seq_cst);  // Same enqueue/busy handoff as publishReady.
         mReady.push(&node->mReady);
         mWork.post();
         grow();
@@ -256,7 +246,6 @@ void Core::leaveCooperativeWait() noexcept
 
 int Core::wait(Node* node, std::uint64_t timeout, au_flow_result* out) noexcept
 {
-    CpuSlicePause waiting;
     if (!owns(node))
         return au::err::kErrorInvalidHandle;
     NodeRef pin(node);
@@ -363,7 +352,7 @@ std::size_t Core::eligibleWorkers() const noexcept
 std::size_t Core::workDemand() const noexcept
 {
     return std::min(mBudget.load(std::memory_order_acquire),
-                    mReadyCount.load(std::memory_order_relaxed) + mBusy.load(std::memory_order_relaxed) +
+                    mReadyCount.load(std::memory_order_seq_cst) + mBusy.load(std::memory_order_seq_cst) +
                         (mPendingExternalCount.load(std::memory_order_acquire) ? 1 : 0));
 }
 

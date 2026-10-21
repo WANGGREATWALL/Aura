@@ -134,7 +134,6 @@ void releaseFlow(void* payload) noexcept { delete static_cast<PendingOwner*>(pay
 au::mm::detail::FenceStatus waitFence(void* payload) noexcept
 {
     auto& state = *static_cast<std::shared_ptr<au::gpu::detail::CompletionState>*>(payload);
-    au::flow::detail::CpuSlicePause waiting(!state->mDone.load(std::memory_order_acquire));
     struct Waiter {
         au::gpu::detail::CompletionState* mState;
         explicit Waiter(au::gpu::detail::CompletionState* state) noexcept : mState(state)

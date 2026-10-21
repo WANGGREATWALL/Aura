@@ -37,8 +37,9 @@ int measure()
 int main()
 {
     au::perf::Config::get().setEnabled(false);
-    (void)au::flow::XFlow::get().setTracing(false);
-    std::printf("scope=host_async_closure_creation_submit_wait trace=off cpp_allocation_counts_measured_separately\n");
+    std::printf(
+        "scope=host_async_closure_creation_submit_wait diagnostics=removed "
+        "cpp_allocation_counts_measured_separately\n");
     if (measure<32>() || measure<128>() || measure<768>() || measure<3072>())
         return 1;
     return au::flow::XFlow::get().shutdown();

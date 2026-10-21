@@ -1,15 +1,17 @@
 #ifndef AURA_FLOW_EXECUTION_CONTEXT_H_
 #define AURA_FLOW_EXECUTION_CONTEXT_H_
 
+#include <atomic>
+#include <utility>
+
 #include "flow/completion.h"
-#include "flow/node.h"
 #include "mm/access_context.h"
 
 namespace au {
 namespace flow AU_LOCAL {
 namespace detail {
-// Private fixed integration bridge; mm lifetime and error routing are kept
-// here rather than exposed as a configurable scheduler plugin interface.
+class Core;
+struct Node;
 Core& core() noexcept;
 void  initializeMemoryContext() noexcept;
 class ExecutionErrors
@@ -29,7 +31,6 @@ struct Frame
 {
     Node*  mNode;
     Frame* mPrevious;
-    bool   mCpuActive = false;  // Logical callable slice, suspended at known scheduler/device waits.
 };
 // One invocation, owned by the thread currently executing a tile. The loop
 // gathers these records only after every participant has joined.
@@ -51,7 +52,6 @@ struct TileContext
 extern thread_local Frame*       gFrame;
 extern thread_local int          gWorker;
 extern thread_local unsigned int gDepth;
-extern thread_local unsigned int gTileDepth;
 extern thread_local TileContext* gTileContext;
 extern thread_local unsigned int gCleanupDepth;
 extern thread_local Node*        gFinish;
@@ -65,44 +65,29 @@ extern thread_local unsigned int gCompletionBurst;
 class TileSuspension
 {
 public:
-    TileSuspension() noexcept : mContext(gTileContext), mDepth(gTileDepth)
-    {
-        gTileContext = nullptr;
-        gTileDepth   = 0;
-    }
-    ~TileSuspension() noexcept
-    {
-        gTileContext = mContext;
-        gTileDepth   = mDepth;
-    }
+    TileSuspension() noexcept : mContext(std::exchange(gTileContext, nullptr)) {}
+    ~TileSuspension() noexcept { gTileContext = mContext; }
     TileSuspension(const TileSuspension&)            = delete;
     TileSuspension& operator=(const TileSuspension&) = delete;
 
 private:
     TileContext* mContext;
-    unsigned int mDepth;
 };
 
 class TileExtent
 {
 public:
-    TileExtent(TileContext* context) noexcept : mPrevious(gTileContext), mDepth(gTileDepth), mErrors(&core())
-    {
-        gTileContext = context;
-        ++gTileDepth;
-    }
+    TileExtent(TileContext* context) noexcept : mPrevious(gTileContext), mErrors(&core()) { gTileContext = context; }
     ~TileExtent() noexcept
     {
         mErrors.restore();
         gTileContext = mPrevious;
-        gTileDepth   = mDepth;
     }
     TileExtent(const TileExtent&)            = delete;
     TileExtent& operator=(const TileExtent&) = delete;
 
 private:
     TileContext*    mPrevious;
-    unsigned int    mDepth;
     ExecutionErrors mErrors;
 };
 

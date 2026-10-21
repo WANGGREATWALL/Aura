@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "flow/constants.h"
-#include "flow/diagnostics.h"
 #include "flow/execution_context.h"
 #include "flow/external_token.h"
 #include "flow/node.h"
@@ -76,13 +75,6 @@ public:
         Node*              mGate;
         std::vector<Node*> mPreds;
     };
-    struct CapturePreparation
-    {
-        std::shared_ptr<GraphHistory>              mHistory;
-        std::unique_ptr<GraphHistory::Batch>       mBatch;
-        std::vector<std::unique_ptr<CapturedNode>> mNodes;
-    };
-    CapturePreparation prepareCapture(const std::vector<Prepared>& batch, Node* parent) noexcept;
     struct EdgeOwner
     {
         Core* mCore;
@@ -163,30 +155,13 @@ public:
     int  affinity(std::uint32_t mode, const std::uint32_t* cpus, std::size_t count) noexcept;
     int  workers(au_flow_worker* out, std::size_t capacity, std::size_t* count) noexcept;
 
-    int  workerAffinity(std::uint32_t id, std::uint32_t* cpus, std::size_t capacity, std::size_t* count) noexcept;
-    int  dot(Node* top, const char* path) noexcept;
-    bool tracingEnabled() const noexcept { return mDiagnostics.enabled(); }
-    int  tracing(bool enabled) noexcept
-    {
-        const int code = mDiagnostics.setEnabled(enabled);
-        if (!code)
-            mCaptureGraph.store(enabled, std::memory_order_relaxed);  // Legacy combined switch.
-        return code;
-    }
-    int captureGraph(bool enabled) noexcept
-    {
-        mCaptureGraph.store(enabled, std::memory_order_relaxed);
-        return 0;
-    }
-    int resetTrace() noexcept { return mDiagnostics.reset(); }
-    int dumpTrace(const char* path) const noexcept { return mDiagnostics.dumpTrace(path); }
+    int workerAffinity(std::uint32_t id, std::uint32_t* cpus, std::size_t capacity, std::size_t* count) noexcept;
 #ifdef AURA_FLOW_TESTING
     int                             queueHooks(const QueueHooks& hooks) noexcept;
     au::flow::testing::RuntimeStats runtimeStats() noexcept;
     std::size_t                     testBudget() const noexcept;
     int                             testBudget(std::size_t budget) noexcept;
 #endif
-    void trace(Node* node, const char* name, char phase, int code = 0) noexcept;
     class JobScope
     {
     public:
@@ -207,8 +182,7 @@ public:
     std::size_t acceptHelpers(NodeRef* helpers, std::size_t count) noexcept;
     void        joinHelper(Node* node) noexcept;
 
-    int  tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* payload) noexcept;
-    void externalProfile(const ExternalProfile& profile) noexcept;
+    int tiled(std::size_t range, std::size_t tile, au_flow_tile invoke, void* payload) noexcept;
 
 private:
     enum class Phase
@@ -291,8 +265,6 @@ private:
 #ifdef AURA_FLOW_TESTING
     std::atomic<std::uint64_t> mWaitTimeouts{0}, mControlWakes{0}, mWorkWakes{0}, mPollPasses{0}, mRetirements{0};
 #endif
-    Diagnostics       mDiagnostics;
-    std::atomic<bool> mCaptureGraph{false};  // Independent DOT capture; no timeline allocation.
 };
 Core& core() noexcept;
 

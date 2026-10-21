@@ -2,7 +2,7 @@
 #include "gpu/xopencl_api.h"
 #include "mm/xaccess_api.h"
 
-_Static_assert(AURA_FLOW_ABI_VERSION == 1u, "flow ABI version");
+_Static_assert(AURA_FLOW_ABI_VERSION == 2u, "flow ABI version");
 _Static_assert(AU_FLOW_INVALID == 0 && AU_FLOW_REJECTED == 9, "flow state numbering");
 
 static int work(void* payload)

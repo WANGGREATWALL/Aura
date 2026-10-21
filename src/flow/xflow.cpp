@@ -1,3 +1,5 @@
+#include "flow/xflow.h"
+
 #include "flow/core.h"
 
 au::flow::XFlow& au::flow::XFlow::get() noexcept
@@ -133,22 +135,6 @@ int au_flow_result_get(au_flow_handle handle, au_flow_result* out) noexcept
     *out = node->mResult;
     return 0;
 }
-int au_flow_name(au_flow_handle handle, const char* name) noexcept
-{
-    auto* node = static_cast<au::flow::detail::Node*>(handle);
-    if (!au::flow::detail::core().owns(node))
-        return au::err::kErrorInvalidHandle;
-    if (node->mState.load(std::memory_order_acquire) != au::flow::TaskState::Draft)
-        return au::err::kErrorStateInvalid;
-    if (!name)
-        return au::flow::detail::core().builderError(node, au::err::kErrorNullPointer);
-    try {
-        node->mName = name;
-        return 0;
-    } catch (...) {
-        return au::flow::detail::core().builderError(node, au::err::kErrorNoMemory);
-    }
-}
 int au_flow_precede(au_flow_handle before, au_flow_handle after) noexcept
 {
     return au::flow::detail::core().precede(static_cast<au::flow::detail::Node*>(before),
@@ -212,12 +198,4 @@ int au_flow_worker_affinity(uint32_t id, uint32_t* cpus, size_t capacity, size_t
 {
     return au::flow::detail::core().workerAffinity(id, cpus, capacity, count);
 }
-int au_flow_tracing(int enabled) noexcept { return au::flow::detail::core().tracing(enabled != 0); }
-int au_flow_graph_capture(int enabled) noexcept { return au::flow::detail::core().captureGraph(enabled != 0); }
-int au_flow_trace_reset() noexcept { return au::flow::detail::core().resetTrace(); }
-int au_flow_dot(au_flow_handle handle, const char* path) noexcept
-{
-    return au::flow::detail::core().dot(static_cast<au::flow::detail::Node*>(handle), path);
-}
-int au_flow_trace(const char* path) noexcept { return au::flow::detail::core().dumpTrace(path); }
 int au_flow_shutdown() noexcept { return au::flow::detail::core().shutdown(); }

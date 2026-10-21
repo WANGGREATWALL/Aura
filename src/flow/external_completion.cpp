@@ -76,7 +76,7 @@ bool Core::consumeExternal(ExternalToken* token) noexcept
         if (query) {
             const bool first = token->mParent->mErrors.scoped(
                 token->mParent->mId, query,
-                status.mDomain == au::flow::ErrorDomain::None ? au::flow::ErrorDomain::OpenCL : status.mDomain,
+                status.mDomain == au::flow::ErrorDomain::None ? au::flow::ErrorDomain::Flow : status.mDomain,
                 status.mNativeCode, status.mCauseTaskId);
             if (first)
                 XLOG_E("au::flow external query failed task=%llu code=%d native=%d\n",
@@ -214,26 +214,9 @@ int prepareExternal(const ExternalOps& ops, void* payload, ExternalToken** out) 
     return core().prepareExternal(ops, payload, out);
 }
 std::uint64_t currentTaskId() noexcept { return gFrame ? gFrame->mNode->mId : 0; }
-bool          tracingEnabled() noexcept { return core().tracingEnabled(); }
+void          initializeExecutor() noexcept { (void)core(); }
 bool          cleanupActive() noexcept { return gCleanupDepth != 0; }
-void*         pauseCpuSlice() noexcept
-{
-    auto* frame = gFrame;
-    if (!frame || !frame->mCpuActive)
-        return nullptr;
-    core().trace(frame->mNode, "CPU slice", 'E');
-    frame->mCpuActive = false;
-    return frame;
-}
-void resumeCpuSlice(void* cookie) noexcept
-{
-    auto* frame = static_cast<Frame*>(cookie);
-    if (!frame || frame != gFrame || frame->mCpuActive)
-        return;
-    frame->mCpuActive = true;
-    core().trace(frame->mNode, "CPU slice", 'B');
-}
-bool assistExternalWait(bool (*ready)(void*) noexcept, void* payload, std::uint64_t retryMicroseconds) noexcept
+bool          assistExternalWait(bool (*ready)(void*) noexcept, void* payload, std::uint64_t retryMicroseconds) noexcept
 {
     if (!gFrame || gWorker < 0 || gCleanupDepth || gDepth >= kMaxDispatchDepth)
         return false;
@@ -254,7 +237,6 @@ void cleanupExternal(ExternalToken* token, void (*fn)(void*) noexcept, void* pay
     if (fn)
         fn(payload);
 }
-void recordExternalProfile(const ExternalProfile& profile) noexcept { core().externalProfile(profile); }
 void recordExternalError(const ExternalStatus& status) noexcept
 {
     core().scopedError(status.mCode, status.mDomain, status.mNativeCode, status.mCauseTaskId);

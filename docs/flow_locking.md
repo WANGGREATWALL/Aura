@@ -1,6 +1,6 @@
 # au::flow 私有状态、锁关系与调用边界
 
-本表更新至 B6，前序 B4 起点 `f0f523c`、B6 起点 `e343789`。它描述当前实现的同步协议及审查结果，不把 TSan 通过当成并发证明。C ABI、C++11 外观和普通任务结构化完成语义不变。
+本表更新至 B7，B7 起点 `f08c09b`；前序 B4/B6 起点分别为 `f0f523c`/`e343789`。它描述当前实现的同步协议及审查结果，不把 TSan 通过当成并发证明。普通任务结构化完成语义不变；B7 删除诊断 API 并将 C ABI 升为 2。
 
 ## 状态所有者
 
@@ -12,8 +12,7 @@
 | `executor.cpp` | 就绪分派、协作等待、worker 槽位、策略、退休和 shutdown |
 | `external_completion.cpp`、`external_token.h` | 外部 token、待查询列表、周期查询身份；不持提供方资源所有权以外的原生回调 |
 | `tiled.cpp` | 栈上 Loop、轻量 Job、helper 接受/收尾；所有参与者返回后才能销毁 Loop |
-| `execution_context.*` | 唯一的 flow/mm 集成桥；TLS 的保存/恢复、错误路由、cleanup 的不可等待范围 |
-| `core_diagnostics.cpp`、`diagnostics.*`、`graph_history.cpp` | 值历史、调度快照与可裁剪时间线窗口；文件输出在调度锁外 |
+| `execution_context.*` | TLS 保存/恢复、私有 mm 错误桥与初始化顺序、cleanup 的不可等待范围 |
 | `testing.*`、`testing_internal.h` | 测试专用故障/时序 seam 与计数；正常 aura 不编译这些实现 |
 
 Core 仍负责跨职责不变量的协调；没有新增虚接口、全局注册框架、共享所有权图或单独分配的 Pimpl。文件拆分不代表存在多个可以独立关闭的调度器。
@@ -37,23 +36,21 @@ Core 仍负责跨职责不变量的协调；没有新增虚接口、全局注册
 
 | 锁 | 保护内容 | 锁内禁止内容 |
 | --- | --- | --- |
-| Core `mMutex`（graph） | Phase、accepted/Job/root/order、活动链表、Node parent/children、wait/executing 边、接受时安装的诊断记录、遍历 scratch | 分派、协作等待、native join、GPU/mm/provider 调用、Closure/最后一个 owning handle 的用户析构 |
+| Core `mMutex`（graph） | Phase、accepted/Job/root/order、活动链表、Node parent/children、wait/executing 边、遍历 scratch | 分派、协作等待、native join、GPU/mm/provider 调用、Closure/最后一个 owning handle 的用户析构 |
 | Core `mWorkerMutex` | worker 槽位状态、代际、TID pin、admission/joiner、策略快照和退休裁定 | join、驱动、用户代码；`startWorker` 显式解锁再 join，随后重新检查预算/关闭 |
 | Core `mExternalMutex` | 待查询 token 链表及长度更新 | poll/finalize/release；先摘链，解锁后才调用提供方 |
 | TaskErrors `mMutex` | body/scoped/inherited/Skipped 候选和选择规则 | 日志、资源释放、回调、其他节点错误合并；每次只锁一个节点 |
 | Node `mWaitMutex` | 终态发布与协作等待者登记，配合原子的 TaskState | 协作执行、graph 检查、native join、control 通知 |
 | WorkSemaphore `mMutex` | 真实队列项许可、控制世代、进入睡眠的谓词检查 | 任何反向调用 Core 或提供方的等待谓词 |
 | Node/Edge/External 三类 slab、一类 64 字节 payload slab 的 mutex | 各自空闲槽位链表与页安装 | 对象构造/析构、用户 deleter；Slab 先解锁再 placement new，先析构再回收槽位 |
-| Diagnostics `mMutex` | 串行化 enable/disable/reset；首次准备和原子安装窗口 | 文件 I/O、调度、驱动；record/dump 以 atomic shared_ptr 操作 pin 窗口，旧窗口析构在控制锁外 |
-| GraphHistory `mMutex` | 链头发布、每条值记录的状态/code/cause、ID 查询 | Core 锁、用户代码、I/O；snapshot 在锁内只取得不可变链头/可变完成字段，字符串/容器复制在锁外 |
 | GPU PendingRegistry `mMutex` | 在途记录链表、drain 领导者、revision、累计失败 | query/finalize/原生资源 release；`pollSome` 持有 shared pin 后解锁，drain 在锁外查询 |
 | GPU CompletionState `mMutex` | done 发布与 fence waiter 登记 | 驱动/资源销毁、Core 协作分派或通知；通知在解锁后发送 |
 | mm Registry `mMutex` | 地址/身份表与 lease 快照 | 用户资源释放、fence wait、调用调度器；移出的记录和旧 lease 在锁外释放 |
 | mm `mAccessMutex` | 资源访问版本、CPU/device 预留和 fence 快照 | 驱动 cache START/END、fence wait、调度器错误 sink；先解锁，再等待或报告 |
 
-Draft 的 `precede/add` 现在也取得 graph mutex，因为遍历 scratch 可经过共享的 accepted 前驱。调用方仍须串行化**同一个 Draft** 的编辑、命名、提交、abandon 和 handle 销毁；这次改造没有把整个 builder API 变成可以无条件并发使用的对象。
+Draft 的 `precede/add` 现在也取得 graph mutex，因为遍历 scratch 可经过共享的 accepted 前驱。调用方仍须串行化**同一个 Draft** 的编辑、提交、abandon 和 handle 销毁；这次改造没有把整个 builder API 变成可以无条件并发使用的对象。
 
-冷路径仍有分配，例如 Draft 边容器增长、DOT 快照和策略复制。本表没有宣称所有锁内代码都无分配；B4 消除的是环/等待搜索的临时分配与全局活动扫描。图的所有权边、OOM 回滚和提交检查依然保留。
+冷路径仍有分配，例如 Draft 边容器增长与策略复制。本表没有宣称所有锁内代码都无分配；B4 消除的是环/等待搜索的临时分配与全局活动扫描。图的所有权边、OOM 回滚和提交检查依然保留。
 
 ## 函数前置条件与释放边界
 
@@ -74,8 +71,6 @@ Draft 的 `precede/add` 现在也取得 graph mutex，因为遍历 scratch 可�
 | `startWorker` | 传入已持有 worker mutex 的 unique_lock；join 时暂时释放，恢复后重新裁定状态 |
 | `retire`、`releasePoller` | 退休内部 worker → graph；释放查询者身份与退休通过 worker mutex 串行化，通知在释放 worker mutex 后发送 |
 | `applyPolicy/affinity/workerAffinity` | worker 锁内复制策略或 pin 槽位，原生亲核读写在锁外。query pin 退出前不得退休/复用该代际 |
-| `prepareCapture`、history publish/update | 预分配和结构复制在 graph 锁外；接受时安装 CapturedNode，提交 latch 释放前发布批次。History 锁不嵌套 Core/TaskErrors/wait 锁，不保留执行 Node 引用 |
-| `dot/trace/tracing/resetTrace/dumpTrace` | DOT pin 当前合法句柄与共享值历史；静态依赖在接受后冻结，Draft 仍由调用者串行化。导出/I/O 在 Core 锁外；时间线 reset 需关闭，旧读写通过共享 pin 收尾 |
 | `ExecutionErrors`、`TileExtent/CleanupExtent` | 保存/恢复 TLS；mm sink 按上下文写本线程 tile 错误或取得该 TaskErrors mutex，不取得全局 graph mutex |
 | 测试 `runtimePoint/runtimeHook` | hook 调用不持 Core 或 seam mutex；注销等待已进入 hook 的读者退出。hook 不能从自身同步注销自己 |
 
@@ -100,6 +95,8 @@ B4 同时把 `prepareExternal` 的溢出回滚移到 graph guard 之外，即使
 验证覆盖图/组/交叉 wait/协作栈、失败与资源来源、深链回收、动态注册、双 so、关闭、ASan/LSan 与 TSan。命令、实际通过/跳过结果、图临界区测量及限制见 B4 验证报告；未运行的目标设备不能由本锁表替代。
 
 
-B6 的历史批次在发布后不再移动或修改结构字段，发布前分配的 CapturedNode 借用其中稳定记录；GraphHistory 所有者覆盖该借用生命周期。历史不含 NodeRef，执行 Node 的释放不会使 DOT 元数据悬空。快照在短锁下取得 head 后由调用者 pin 整个 history，链表只增加头且已发布 next 不变；状态/code/cause 逐条锁读，容器分配与字符串复制在锁外。共享历史可能包含祖先/兄弟，最终导出按请求句柄可达范围过滤。
+B7 删除全部 trace/DOT 历史、锁与导出路径，不保留诊断状态或占位 host。execution_context 的私有 mm 桥继续保证 registry 先于 Core 构造、后于 Core 析构，错误 sink 按作用域安装/恢复。GPU 提供方先初始化 executor 再建立 backend 静态状态，析构时顺序相反。桥和提供方调用均不持 graph/worker mutex；核心无需 GPU 头或原生资源类型。
 
-时间线采用不可覆盖的窗口；atomic shared_ptr 操作提供跨 reset/record/export 的存储 pin，而非声称无锁。关闭热路径不取 pin。reset 只摘下当前窗口，不等待所有旧 pin 或强制回收 OS 页；用户配置调用需要顺序语义时自行串行化。并发回归与 TSan 的通过支持实现检查，不替代上述生命周期协议。
+就绪计数与 busy 计数的增加及 workDemand 对它们的读取使用 seq_cst：发布者与 worker 在 ready-pop→busy 的交接中至少一方观察到另一方的需求增加，不能各自以旧值漏掉扩容。分派在登记 busy 后重查 grow，容量满足时只做原子快速判断；不恢复每次调度必取 worker mutex 的旧实现。减少计数仍是 relaxed 提示；若工作已被另一消费者取走，已有进展，无需额外扩容。SC 排序解决的是跨两个原子的交接，不代替队列数据发布或 worker 生命周期锁。
+
+helper 接受仍由原 Job/graph 协议保护；固定批次先推入所有真实 ready 项，再一次 post(accepted) 与 grow。真实许可不提前于对应项发布；控制世代与工作计数仍分离。删除未被逻辑读取的 gTileDepth，TileContext 成为唯一 tile 判定/错误入口，Task 协作深度 gDepth 继续独立限制栈增长。

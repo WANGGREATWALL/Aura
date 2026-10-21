@@ -14,11 +14,7 @@ Core::CleanupExtent::~CleanupExtent() noexcept
     --gCleanupDepth;
     gFrame = mFrame.mPrevious;
 }
-void initializeMemoryContext() noexcept
-{
-    // Construct first; structured static cleanup must outlive all Core work.
-    (void)au::mm::Registry::instance();
-}
+void initializeMemoryContext() noexcept { (void)au::mm::Registry::instance(); }
 ExecutionErrors::ExecutionErrors(Core* core, bool mayWait) noexcept
     : mPrevious(au::mm::detail::setAccessErrorSink(
           {[](void* payload, int code, int native, std::uint64_t cause, bool device) noexcept {
@@ -39,7 +35,6 @@ void ExecutionErrors::restore() noexcept
 thread_local Frame*       gFrame           = nullptr;
 thread_local int          gWorker          = -1;
 thread_local unsigned int gDepth           = 0;
-thread_local unsigned int gTileDepth       = 0;
 thread_local TileContext* gTileContext     = nullptr;
 thread_local unsigned int gCleanupDepth    = 0;
 thread_local Node*        gFinish          = nullptr;

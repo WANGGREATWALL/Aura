@@ -62,7 +62,6 @@ int main(int argc, char** argv)
     const bool changeBudget = argc < 2 || std::strcmp(argv[1], "--skip-budget-change") != 0;
     auto& flow = au::flow::XFlow::get();
     au::perf::Config::get().setEnabled(false);
-    (void)flow.setTracing(false);
     std::printf("scope=host_cpu_modeled_external_event context_switches_are_not_wakeups gpu_hardware=unrun\n");
     std::atomic<bool> release{false};
     std::atomic<unsigned int> entered{0};

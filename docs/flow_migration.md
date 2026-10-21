@@ -1,6 +1,10 @@
 # au::flow 公共接口与迁移
 
-适用于 Aura 1.5.0 / flow C ABI v1。C++11 外观入口为 `flow/xflow.h`，历史 `flow/xthread_flow.h` 仍可用。整改状态见 [清单](flow_remediation_plan.md)，可编译运行的完整例子见 [flow_migration.cpp](../test/flow_migration.cpp)；该例子使用生产 `aura`，不依赖故障钩子。
+适用于 Aura 1.5.0 / flow C ABI v2。C++11 外观入口为 `flow/xflow.h`，历史 `flow/xthread_flow.h` 仍可用。整改状态见 [清单](flow_remediation_plan.md)，可编译运行的完整例子见 [flow_migration.cpp](../test/flow_migration.cpp)；该例子使用生产 `aura`，不依赖故障钩子。
+
+flow 继续作为 Aura 内部模块构建和链接，可使用 au::log/perf/file 等基础能力。核心不包含 GPU 原生类型或驱动调用，GPU 提供方通过私有通用外部完成协议接入。mm 错误上下文桥保留在 execution_context 中，不增加独立包或 host 注册框架。
+
+**B7 兼容性变更：删除 trace、DOT 导出及专用任务命名，C ABI 升为 2。** 需要匹配新版头文件和库，重新编译消费端；不能声称所有旧二进制兼容。其余结果/worker 结构布局、错误值及执行/等待契约不变。移除清单见第 9 节。
 
 ## 1 常用入口与依赖
 
@@ -30,7 +34,7 @@ return flow.enqueue(graph).wait();
 
 不能分别 enqueue 两个仍互相依赖的 Draft，期望调度器自动收集整张图。`Tasks` 是 move-only builder；`handle()` 返回拥有引用的 Task，可用于等待或连接。提交后图冻结；编辑、提交、abandon 与销毁同一个 Draft builder 必须由调用方串行化。
 
-**每次 `precede/add/setName` 都应检查返回值。** Draft 目标保存第一次构建错误，提交不会把残缺图当成功；这并不允许调用方忽略已接受目标上的错误。目标已接受时不能补边，失败只返回错误，不污染前驱，也不追溯拒绝正在执行或已完成的目标。一次错误操作返回它自己的错误，稍后提交 Draft 时报告保存的首错，两者可以不同。
+**每次 `precede/add` 都应检查返回值。** Draft 目标保存第一次构建错误，提交不会把残缺图当成功；这并不允许调用方忽略已接受目标上的错误。目标已接受时不能补边，失败只返回错误，不污染前驱，也不追溯拒绝正在执行或已完成的目标。一次错误操作返回它自己的错误，稍后提交 Draft 时报告保存的首错，两者可以不同。
 
 本轮**不纳入 `operator>>` / Chain**，这是 R21 的明确取舍，不是遗漏：
 
@@ -101,13 +105,13 @@ return result.mCode;                  /* 任务可能失败，operation 仍是 0
 
 `au_flow_make/group` 成功返回一份拥有引用。`au_flow_handle` 赋值只复制指针；需要另一份拥有引用时显式 `au_flow_retain`，每份最终 `au_flow_release`。跨线程传递须在原拥有者仍保活时 retain，并自行同步发布。合法拥有引用阻止节点槽位被复用；C++ Task 的复制/移动/析构自动执行该协议。
 
-除 API 定义的空句柄行为外，查询/操作需要对应 Aura 实例中的活句柄。各算法 `.so` 实例隔离；已知存活但属另一实例的句柄不允许参与本实例图。**任意伪造、已最终 release 或所属 `.so` 已卸载的指针不属于可安全探测的输入。** 即使 owner 相同，过期地址也可能已被新节点复用。本轮保持 ABI v1，不增加伪安全的“读指针内 ID”检查；未来若强化需稳定句柄表、generation 及访问 pin。
+除 API 定义的空句柄行为外，查询/操作需要对应 Aura 实例中的活句柄。各算法 `.so` 实例隔离；已知存活但属另一实例的句柄不允许参与本实例图。**任意伪造、已最终 release 或所属 `.so` 已卸载的指针不属于可安全探测的输入。** 即使 owner 相同，过期地址也可能已被新节点复用。句柄表示不变，不增加伪安全的“读指针内 ID”检查；未来若强化需稳定句柄表、generation 及访问 pin。
 
 接受后的任务不因调用方丢句柄而取消。未提交 Draft 的最后引用释放会回收其闭包及依赖引用；Draft 环检测继续防止强引用环。不要通过调用悬空句柄来验证安全性。
 
 ## 6 parallelFor 与旧接口
 
-新增 `XFlow::parallelFor(range, tile, f)` 是 `parallelizeTiledTasks` 的 header-only 薄别名，未新增 C 符号、未改 ABI v1，也没有新增整套宏。旧方法、历史 include、`XTHREAD_PARALLELIZE_TILED_TASK_QUOTE/ASSIGN/END` 均保留。
+新增 `XFlow::parallelFor(range, tile, f)` 是 `parallelizeTiledTasks` 的 header-only 薄别名，本身未新增 C 符号或改变布局，也没有新增整套宏。旧方法、历史 include、`XTHREAD_PARALLELIZE_TILED_TASK_QUOTE/ASSIGN/END` 均保留。
 
 ```cpp
 int code = flow.parallelFor(height, 16, [&](std::size_t offset, std::size_t count) {
@@ -154,35 +158,13 @@ rg -n 'XTHREAD_PARALLELIZE|parallelizeTiledTasks|addPipeline|\.get\(' <FlashPE�
 rg -n 'XImage|enqueue|std::move|decoderedA0' <相关算法目录>
 ```
 
-对每个 addPipeline/get 核对旧 future 的返回/异常/生命周期语义，再选择 enqueue/wait；`get()` 也可能属于完全不同的类型。对每个 tiled 宏核对 `_i/_ti`、异步发布、共享状态与错误处理。Aura flow 与 mm/gpu 完成协议有关，不能仅拷贝 flow 文件就假设仍是同一内存路径。候选接入后需测业务输出、错误路径、帧耗时 p50/p95；这不由主机例子或微基准替代。
+对每个 addPipeline/get 核对旧 future 的返回/异常/生命周期语义，再选择 enqueue/wait；`get()` 也可能属于完全不同的类型。对每个 tiled 宏核对 `_i/_ti`、异步发布、共享状态与错误处理。flow 的 mm 访问桥和 GPU 提供方有既有资源协议，不能仅拷贝 flow 文件就假设仍是同一内存路径；这不要求核心依赖 GPU 实现。候选接入后需测业务输出、错误路径、帧耗时 p50/p95；这不由主机例子或微基准替代。
 
 
-## 9 DOT 与可裁剪的时间线
+## 9 B7 删除的诊断能力
 
-`setGraphCapture(true)` / C `au_flow_graph_capture(1)` 独立启用 DOT 动态历史，不分配时间线。**在提交根任务前启用**：根接受时固定选择，后代继承；中途启用不会补录旧根的后代，中途关闭不会中断已捕获作用域或抹掉历史。静态依赖/簇仍可导出；动态图为逐节点快照，不承诺一个全图线性化时刻。诊断 OOM 只增加 dropped，不拒绝本来有效的计算。
+删除 C++ `Task/Tasks::setName`、`setTracing`、`setGraphCapture`、`resetTrace`、`dumpDot`、`dumpTrace`；删除 C `au_flow_name`、`au_flow_tracing`、`au_flow_graph_capture`、`au_flow_trace_reset`、`au_flow_dot`、`au_flow_trace`。旧调用点需移除，而非依赖成功空实现。
 
-历史保存 ID、完整名称、结构、状态、错误和根因，不保存 NodeRef、闭包或资源租约。它仍占用内存，直到最后一个相关捕获句柄释放；没有无界常驻全局历史。正常静态任务依赖与结构化执行引用继续按原契约保活任务。
+同时删除图历史、trace 缓冲、CPU slice 统计、自动任务 perf scope、GPU 时间线上报、额外 profiling event 引用和相应专用测试/基准。`ENABLE_FLOW_TRACE` 与 `FLOW_TRACE_EVENTS_PER_LANE` 不再提供。实际 DAG 建图/执行、环检测、依赖和错误来源照常保留。调用方仍可在业务算子里使用 au::perf 或外部工具；GPU 原生队列 profiling 配置独立保留。
 
-`setTracing(bool)` / C `au_flow_tracing` 保留时间线与新根图捕获的组合开关；需要独立控制时随后设置 `setGraphCapture`。跨线程切换、导出和 reset 有内存安全保证；应用若依赖多个配置调用的先后效果，应自行串行化这些调用。
-
-| 构建选项 | 默认 | 行为 |
-| --- | --- | --- |
-| ENABLE_FLOW_TRACE | ON | 保留可选时间线实现；运行时仍默认关闭 |
-| FLOW_TRACE_EVENTS_PER_LANE | 1024 | 每 lane 1–65536 条，9 个 lane；仅配置存储容量，不限制任务数 |
-
-默认 x86_64 存储约 1.69 MiB（旧版约 13.50 MiB），首次启用才分配；未启用时无 slot 存储。使用有界、不可覆盖的采集窗口，满后增加 dropped。**不采用环形覆盖**，避免导出读取正在覆写的槽位，也不承诺长会话自动保留最新事件。需要连续长时分析时使用 Perfetto 等外部工具，或按以下顺序分窗口捕获：
-
-```cpp
-int code = flow.setTracing(true);
-if (code) return code;
-// 提交并等待本次希望捕获的工作。
-code = flow.setTracing(false);  // 停止记录，保留窗口以供导出。
-if (code) return code;
-code = flow.dumpTrace("capture.json");
-if (code) return code;
-return flow.resetTrace();       // 下次 enable 创建新窗口；不清除 DOT。
-```
-
-reset（C `au_flow_trace_reset`）要求采集已关闭，否则返回 StateInvalid；关闭本身不释放窗口。reset 摘下当前存储，已进入的记录/导出在自己的旧窗口 pin 上安全完成，最后一个 pin 释放后回收；不保证 OS PSS 同步降到零。采集切换可能留下部分片段。trace 关闭的热路径只检查开关，opt-in 记录会取得存储 pin。
-
-`ENABLE_FLOW_TRACE=OFF` 时，启用时间线和 dumpTrace 返回 NotSupported，关闭与 reset 成功，DOT-only 仍可用；不要忽略启用失败而当作已开始记录。两项新增 C 函数是 ABI v1 的增量符号，原结果/句柄布局未改。旧消费者可链接新库；使用新函数的消费者需配套新库。
+本次删除是用户明确的范围调整，取代 B6 保留 DOT/可选 timeline 的决定。B0–B6 报告是历史证据，其诊断 API 和 ABI v1 描述不适用于当前版本。将来只有明确需求再讨论恢复，当前不保留诊断占位、开关或插件接口。

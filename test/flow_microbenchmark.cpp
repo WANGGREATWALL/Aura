@@ -168,8 +168,7 @@ int main()
 {
     au::perf::Config::get().setEnabled(false);
     auto& flow = au::flow::XFlow::get();
-    if (flow.setTracing(false)) return 1;
-    std::printf("scope=host_cpu trace=off perf_output=off timer=steady_clock samples=%zu allocation_samples=%zu\n",
+    std::printf("scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=%zu allocation_samples=%zu\n",
         kSamples, kAllocationSamples);
     const auto cold = Clock::now();
     if (flow.parallelizeTiledTasks(1080, 16, [](std::size_t, std::size_t) {})) return 2;

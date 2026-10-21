@@ -58,17 +58,19 @@ std::size_t Core::acceptHelpers(NodeRef* helpers, std::size_t count) noexcept
             node->mState.store(au::flow::TaskState::Ready, std::memory_order_release);
         }
     }
+    mReadyCount.fetch_add(accepted, std::memory_order_seq_cst);  // Same enqueue/busy handoff as publishReady.
     for (std::size_t i = 0; i < accepted; ++i) {
-        trace(helpers[i].get(), "Task", 'b');
-        publishReady(helpers[i].get());
+        mReady.push(&helpers[i]->mReady);
     }
-    grow();
+    if (accepted) {
+        mWork.post(accepted);  // Real items only; one gate lock for the whole fixed-size batch.
+        grow();
+    }
     return accepted;
 }
 
 void Core::joinHelper(Node* node) noexcept
 {
-    CpuSlicePause waiting;
     // This edge already exists: managed helpers reserve their parent's
     // completion, and all callbacks still use the normal wait-cycle checks.
     // Re-validating it through general wait() would allocate and could fail

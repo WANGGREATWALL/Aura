@@ -6,8 +6,7 @@ namespace au {
 namespace flow {
 namespace detail {
 // Current worker/storage cap, independent of the tiled participant contract.
-constexpr std::size_t kMaxWorkers        = 8;
-constexpr std::size_t kExternalTraceLane = kMaxWorkers;
+constexpr std::size_t kMaxWorkers = 8;
 // Bounds cooperative native stack growth. A helper needs one additional frame.
 constexpr unsigned int kMaxDispatchDepth = 32;
 // Separate fairness budgets: CPU handoffs, external completion dispatch, polling

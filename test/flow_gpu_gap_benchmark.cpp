@@ -98,7 +98,6 @@ int main()
 {
     au::perf::Config::get().setEnabled(false);
     auto& flow = au::flow::XFlow::get();
-    (void)flow.setTracing(false);
     std::printf(
         "scope=host_synthetic_device_fifo hardware_gpu=unrun same_host_clock planned_deadlines_not_device_profiles "
         "stages=5 work_us=500\n");

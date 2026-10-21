@@ -101,7 +101,6 @@ int main()
 {
     auto& flow = au::flow::XFlow::get();
     au::perf::Config::get().setEnabled(false);
-    (void)flow.setTracing(false);
     if (au::flow::testing::setBudget(1))
         return 1;
     std::puts("scope=instrumented_host_completion_graph not_production_latency gpu_hardware=unrun");

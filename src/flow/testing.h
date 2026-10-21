@@ -32,7 +32,8 @@ enum class RuntimePoint
     QueryPinned,
     BeforePendingQuery,
     QueueProbeMiss,
-    AfterAdmission
+    AfterAdmission,
+    BeforeBusy
 };
 struct RuntimeHook
 {

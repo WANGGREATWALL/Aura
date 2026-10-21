@@ -1,0 +1,1485 @@
+{
+  "batch": "B7",
+  "date": "2026-10-21",
+  "timezone": "Asia/Shanghai",
+  "measured_at_utc": "2026-10-21T07:16:46.057415+00:00",
+  "baseline_commit": "f08c09b0206407cc72db6fe66854de58ce24754d",
+  "status": "Uncommitted/unpushed. User scope corrected: keep Aura integration, delete flow diagnostics; no standalone package/host framework. R01/X13 and target-environment acceptance remain open.",
+  "scope": {
+    "retained": [
+      "Aura common services",
+      "private mm error/lifetime bridge",
+      "generic external completion",
+      "real DAG execution and cycle checks",
+      "structured completion and shutdown safety"
+    ],
+    "deleted": [
+      "flow trace/timeline and CPU slice accounting",
+      "DOT graph export/history",
+      "task names and automatic task perf scope",
+      "GPU profiling forwarding/extra event retain",
+      "diagnostic options and dedicated tests/tools",
+      "temporary standalone/host experiment"
+    ],
+    "flow_C_ABI": 2
+  },
+  "results": {
+    "cpu_gtest_passed": 181,
+    "cpu_ctest_passed": 13,
+    "opencl_model_gtest_passed": 193,
+    "opencl_ctest_passed": 16,
+    "opencl_hardware_skipped": 1,
+    "asan_lsan_ctest_passed": 16,
+    "asan_options": "detect_leaks=1:halt_on_error=1",
+    "tsan_ctest_passed": 13,
+    "tsan_options": "halt_on_error=1",
+    "final_targeted_regressions": "3 tests x 3 repeats on CPU/OpenCL/ASan/TSan, all passed; final scoped formatting only",
+    "strict_C11_Cxx11_Cxx17": "compile and run passed",
+    "legacy_B6_reproduction": "expected deterministic failure; test seam only, no production fix"
+  },
+  "source_audit": {
+    "aa3b3ae": {
+      "private": {
+        "files": 9,
+        "lines": 2266,
+        "bytes": 113400,
+        "approx_tokens": 27075
+      },
+      "public": {
+        "files": 4,
+        "lines": 496,
+        "bytes": 21585,
+        "approx_tokens": 4925
+      }
+    },
+    "f08c09b": {
+      "private": {
+        "files": 29,
+        "lines": 4354,
+        "bytes": 171540,
+        "approx_tokens": 34651
+      },
+      "public": {
+        "files": 4,
+        "lines": 697,
+        "bytes": 28799,
+        "approx_tokens": 4938
+      }
+    },
+    "B7_before_trim": {
+      "private": {
+        "files": 30,
+        "lines": 4368,
+        "bytes": 172102,
+        "approx_tokens": 34654
+      },
+      "public": {
+        "files": 4,
+        "lines": 697,
+        "bytes": 28799,
+        "approx_tokens": 4938
+      }
+    },
+    "B7_trim": {
+      "private": {
+        "files": 24,
+        "lines": 3507,
+        "bytes": 136761,
+        "approx_tokens": 27027
+      },
+      "public": {
+        "files": 4,
+        "lines": 666,
+        "bytes": 26366,
+        "approx_tokens": 4704
+      }
+    }
+  },
+  "source_audit_method": "All .cpp/.h/.c under src/flow and inc/flow; includes private testing files; excludes integration/host experiment. Token regex after comment stripping, not an AST complexity metric. Prior B7 host experiment is removed from candidate, never a hidden source move.",
+  "boundary_and_footprint": {
+    "B6": {
+      "link_command": [
+        "c++",
+        "/workspace/.cloud-build/flow-b7-footprint/main.o",
+        "/workspace/.cloud-build/flow-b7-before-build/libaura.a",
+        "-pthread",
+        "-ldl",
+        "-o",
+        "/workspace/.cloud-build/flow-b7-trim-validation/footprint_B6"
+      ],
+      "archive_bytes": 1179720,
+      "text_bytes": 429039,
+      "data_bytes": 4888,
+      "bss_bytes": 11108,
+      "stripped_executable_bytes": 447344,
+      "run_exit": 0
+    },
+    "B7_before_trim": {
+      "link_command": [
+        "c++",
+        "/workspace/.cloud-build/flow-b7-footprint/main.o",
+        "/workspace/.cloud-build/flow-b7-release/libaura.a",
+        "-pthread",
+        "-ldl",
+        "-o",
+        "/workspace/.cloud-build/flow-b7-trim-validation/footprint_B7_before_trim"
+      ],
+      "archive_bytes": 1179976,
+      "text_bytes": 428431,
+      "data_bytes": 4880,
+      "bss_bytes": 11108,
+      "stripped_executable_bytes": 447344,
+      "run_exit": 0
+    },
+    "B7_trim": {
+      "link_command": [
+        "c++",
+        "/workspace/.cloud-build/flow-b7-footprint/main.o",
+        "/workspace/.cloud-build/flow-b7-trim-release/libaura.a",
+        "-pthread",
+        "-ldl",
+        "-o",
+        "/workspace/.cloud-build/flow-b7-trim-validation/footprint_B7_trim"
+      ],
+      "archive_bytes": 1036350,
+      "text_bytes": 146047,
+      "data_bytes": 2024,
+      "bss_bytes": 10608,
+      "stripped_executable_bytes": 158800,
+      "run_exit": 0
+    },
+    "same_object_sha256": "decf71bb3433a0fc84a0c61f87fc080af07a2deeca361cdaa3c1efd30c960d31",
+    "layout": {
+      "Node_bytes": 568,
+      "Frame_bytes": 16
+    },
+    "C_symbols": {
+      "ABI": 2,
+      "removed": [
+        "au_flow_dot",
+        "au_flow_graph_capture",
+        "au_flow_name",
+        "au_flow_trace",
+        "au_flow_trace_reset",
+        "au_flow_tracing"
+      ],
+      "added": [],
+      "retained": [
+        "au_flow_abandon",
+        "au_flow_add",
+        "au_flow_affinity",
+        "au_flow_builder_error",
+        "au_flow_group",
+        "au_flow_id",
+        "au_flow_make",
+        "au_flow_payload_allocate",
+        "au_flow_payload_release",
+        "au_flow_precede",
+        "au_flow_record_error",
+        "au_flow_record_exception",
+        "au_flow_release",
+        "au_flow_result_get",
+        "au_flow_retain",
+        "au_flow_shutdown",
+        "au_flow_state",
+        "au_flow_submission",
+        "au_flow_submit",
+        "au_flow_tiled",
+        "au_flow_version",
+        "au_flow_wait",
+        "au_flow_wait_all",
+        "au_flow_worker_affinity",
+        "au_flow_workers"
+      ]
+    },
+    "boundary": {
+      "strict_C11_Cxx11_Cxx17_exit": 0,
+      "no_gpu_implementation_undefined_symbols": true,
+      "no_gpu_symbols_in_minimal_consumer": true,
+      "no_diagnostic_implementation_symbols": true,
+      "flow_dependency_units": {
+        "CMakeFiles/aura.dir/src/flow/xflow.cpp.o: #deps 233, deps mtime 1792566682433501249 (VALID)": 233,
+        "CMakeFiles/aura.dir/src/flow/node.cpp.o: #deps 223, deps mtime 1792566682500038722 (VALID)": 223,
+        "CMakeFiles/aura.dir/src/flow/execution_context.cpp.o: #deps 259, deps mtime 1792566682580040375 (VALID)": 259,
+        "CMakeFiles/aura.dir/src/flow/graph_search.cpp.o: #deps 186, deps mtime 1792566682797719526 (VALID)": 186,
+        "CMakeFiles/aura.dir/src/flow/task_errors.cpp.o: #deps 109, deps mtime 1792566682728842697 (VALID)": 109,
+        "CMakeFiles/aura.dir/src/flow/task_completion.cpp.o: #deps 224, deps mtime 1792566682960048225 (VALID)": 224,
+        "CMakeFiles/aura.dir/src/flow/tiled.cpp.o: #deps 224, deps mtime 1792566683485807147 (VALID)": 224,
+        "CMakeFiles/aura.dir/src/flow/external_completion.cpp.o: #deps 249, deps mtime 1792566683480058968 (VALID)": 249,
+        "CMakeFiles/aura.dir/src/flow/graph.cpp.o: #deps 257, deps mtime 1792566683512059629 (VALID)": 257,
+        "CMakeFiles/aura.dir/src/flow/executor.cpp.o: #deps 250, deps mtime 1792566683964068967 (VALID)": 250
+      },
+      "production_no_fault_or_trace_definitions": true,
+      "production_compile_units": 36
+    }
+  },
+  "footprint_method": "Same frozen C++11 consumer object, Release O3/NDEBUG, ENABLE_OPENCL=OFF, GCC14.2, no LTO or section-GC flags. Full Aura archive compared; minimal final consumer is not the entire camera SDK. Independent packaging is not used.",
+  "host": {
+    "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+    "compiler": "c++ (Debian 14.2.0-19) 14.2.0",
+    "allowed_cpus": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "cpu_max": "400000 100000",
+    "thermal_or_frequency_locked": false
+  },
+  "configurations": {
+    "flow-b7-before-build": {
+      "BUILD_TESTING": "OFF",
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "ENABLE_ASAN": "OFF",
+      "ENABLE_OPENCL": "OFF",
+      "ENABLE_TSAN": "OFF"
+    },
+    "flow-b7-release": {
+      "BUILD_TESTING": "OFF",
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "ENABLE_ASAN": "OFF",
+      "ENABLE_OPENCL": "OFF",
+      "ENABLE_TSAN": "OFF"
+    },
+    "flow-b7-trim-release": {
+      "BUILD_TESTING": "OFF",
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "ENABLE_ASAN": "OFF",
+      "ENABLE_OPENCL": "OFF",
+      "ENABLE_TSAN": "OFF"
+    },
+    "flow-b0-cpu": {
+      "BUILD_TESTING": "ON",
+      "CMAKE_BUILD_TYPE": "Debug",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "ENABLE_ASAN": "OFF",
+      "ENABLE_OPENCL": "OFF",
+      "ENABLE_TSAN": "OFF"
+    },
+    "flow-b0-opencl": {
+      "BUILD_TESTING": "ON",
+      "CMAKE_BUILD_TYPE": "Debug",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "ENABLE_ASAN": "OFF",
+      "ENABLE_OPENCL": "ON",
+      "ENABLE_TSAN": "OFF"
+    },
+    "flow-b2-asan": {
+      "BUILD_TESTING": "ON",
+      "CMAKE_BUILD_TYPE": "Debug",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "ENABLE_ASAN": "ON",
+      "ENABLE_OPENCL": "ON",
+      "ENABLE_TSAN": "OFF"
+    },
+    "flow-b2-tsan": {
+      "BUILD_TESTING": "ON",
+      "CMAKE_BUILD_TYPE": "Debug",
+      "CMAKE_CXX_COMPILER": "/usr/bin/c++",
+      "CMAKE_CXX_FLAGS_RELEASE": "-O3 -DNDEBUG",
+      "ENABLE_ASAN": "OFF",
+      "ENABLE_OPENCL": "OFF",
+      "ENABLE_TSAN": "ON"
+    }
+  },
+  "source_sha256": {
+    "CMakeLists.txt": "15c29390643018cb535d2ff21e9705c926d4d39aa3407647d1e9a012f9408bd1",
+    "inc/flow/xflow.h": "a1283aed6b2a5a257e5e7ea71b2fccea67c4cece483402a068ccb293c3c20750",
+    "inc/flow/xflow_api.h": "38d9ac85ec4e2eefb1996fe7d322626a94090923889b92e71d24f104d03b32c2",
+    "inc/flow/xflow_types.h": "a1e84babe8452838d08b2afce4a2c7ab3cf3c7a5397dc928665d1897db2dfef6",
+    "inc/flow/xthread_flow.h": "b90879e0b4d3e119df8baa1541966be90aef4216e2119855ab0bfaf125b1cc73",
+    "src/flow/completion.h": "73fa4ae1a7ae970888d46b873968bfca88a97b84b7ccc95555c1fb3af064cf1a",
+    "src/flow/constants.h": "6a8fe5c2cdffd666e4f0d51fe7f5cfa52008fd0d4f1c1962f915637417f45a8c",
+    "src/flow/core.h": "4b60868b3db35c8bf6ab257e64a6d85708b7ce1ea333de34109eaafb827d40b6",
+    "src/flow/execution_context.cpp": "87f660d05a823af5229a008acbc809ef35f2e92f84aa647da403c3d152ccd891",
+    "src/flow/execution_context.h": "498af40fd9079b0d7bdf133f6bf2a9c68dca4b727b25275d1cf9823bb1dca479",
+    "src/flow/executor.cpp": "9d163ad4089f2b0b301986ff8a3328112356007ef23dd4c75cd6d51a9bd4909d",
+    "src/flow/external_completion.cpp": "72689320a8bd871437ee298e80dfb7749c3b05b2c120e52517d86ef8c8fb9d72",
+    "src/flow/external_token.h": "e24566570633b4901adecb21a9b0b8f0f72e86ea57087fe77d2581ecd925f637",
+    "src/flow/graph.cpp": "6805a554bfb51c253bfa5006b972e2c0a32b197af8f4e2dc3eb73d2cfcf64934",
+    "src/flow/graph_search.cpp": "6082b84b45acbdbc44c4f5d0e323e5c50c144690ba212918378c7d97ccae68b0",
+    "src/flow/graph_search.h": "9e9ab496789aba2d1f4c99a7d6a87a0c5bd72e882028d683f2f5cd12639efb98",
+    "src/flow/node.cpp": "0774dade4b36474780828ce1d1adb6a87141b196527d07c26ffd60733cae1d48",
+    "src/flow/node.h": "067a634743e31ce6a17f8bd1c698536af9e06f240884bb663014964a689ab9e0",
+    "src/flow/payload_pool.h": "f8a1b87b23b149ed81d5079b27ae75ae49e7db16f7e0a1b801042b7a3288918b",
+    "src/flow/ready_queue.h": "0722d3d049ff277548888ca44715fa89830e0521df491cb0831fd4dedcb1e688",
+    "src/flow/slab.h": "70565dd5bb495b9b6bb699681126b4aedbbc774cce7cba2655817560b7eb2973",
+    "src/flow/task_completion.cpp": "bf9d9ac61b822589860a7417b483d54b6cae44ce5466c03df0d8d4489867fb20",
+    "src/flow/task_errors.cpp": "a384d4e06eea655ed9b16a2dc47c1b0a6afbe5f3c7c4b96d983f95fa0c6ea713",
+    "src/flow/task_errors.h": "b0c00578f7bf8ba504fa5b49ceaae22ac7e935a9c9e77b7303ae4cae86d64012",
+    "src/flow/testing.cpp": "4ff1496a899d5747a7bed4b325fa2b5a2b3559fcee4d0aa6f06bc3494206f025",
+    "src/flow/testing.h": "50484ec065be550b8abac87cb920f8447b721db3f228681af4c19ed6faba002a",
+    "src/flow/testing_internal.h": "dcebc9b4cf5e40d6878066e2eb32f0e590c45eaeaaf55298e17cf3b9ff585ec4",
+    "src/flow/tiled.cpp": "ec2c7eb6a6aa7810b990aa423fb4ef6acf86de4a8da47a00263e28b69e3f2612",
+    "src/flow/xflow.cpp": "fb0a840bf421184124ded7b3d4829eaa7e706ae285978d2d62c557c9d0cb3f2f",
+    "src/gpu/arguments.cpp": "213c27bad8b6ef229ab531d0a34931b2ff59f81032a303d8c4a9cb8664654372",
+    "src/gpu/opencl.cpp": "e5c971707546e09d975e5491c451348d97b4b3e4f68664f16e9acbe9cdde0588",
+    "src/gpu/opencl_api.h": "cf1a01917916ac6c7b3663eaf5b6eb9fa2121a38066b1ec8ff0bf87eadc5409b",
+    "src/gpu/opencl_unavailable.cpp": "72b4d3364fc226eff3e04ec8e35f1fd6155880cb347bb3c3918ae0dea938a83a",
+    "src/gpu/pending.cpp": "cdb1807d32ed25baa2094b2cee1326c58ef831422430d948ee00eb94e61438d1",
+    "src/gpu/pending.h": "4b4e5fe21d82384439cb4343d50ab3e3993422c3c6e9a07a2db5d89cccad7840",
+    "src/gpu/program_cache.cpp": "767adbb20cd4defdd15a0f89dc48d924dc96a1dd1f9316a93001b857d47f0ef0",
+    "src/gpu/program_cache.h": "e0964046a87c3e4f997941e21f54bc90a33e9cdefbc41aeaf5ee3d188ca36d63",
+    "test/flow_c_api.c": "a0a45b9bcf9cff12bb270a2e80b2a9da91b26c674761d7b75d2352af30b1ac7e",
+    "test/flow_callable_contract.cmake": "2118c34d5c596cf3c7b46342f1becd0e98e1e977ec0ff1eb2858c39d26688496",
+    "test/flow_callable_contract.cpp": "c2fe9e132937c35fa7ae6fa47a477701814da83f27f61253a2343a472ef902ba",
+    "test/flow_cxx11.cpp": "cf2be51d016fbe854dedfcafafdfb3f60a0e4bb68a0219734a472d6d698e7224",
+    "test/flow_gpu_gap_benchmark.cpp": "ccb69b44547d0ba438450752e494afcaad2943840ebfd97bd6a240857e27b338",
+    "test/flow_graph_benchmark.cpp": "1675027d610faa0a522c83274be5f5732c41903bf55b001c792a9c8177655099",
+    "test/flow_idle_benchmark.cpp": "d0df3d89e9a1bbe943ef55ac89759a721c97c1df604f1f5db3de45b94c5a24a2",
+    "test/flow_isolation.cpp": "1e13a0aefdcf30dd67eef0923c80a82277c02ecc42a6a52fcad78c18cf38f249",
+    "test/flow_mechanism_benchmark.cpp": "8e85cb8897b2e50c099ef35841c0de778a84ea635fc6d6a769cb2904ab86728d",
+    "test/flow_microbenchmark.cpp": "4c28a455f21241d1a6e34a497884c426afaaa36733a4ae41cfe73ede3b306c46",
+    "test/flow_migration.cpp": "cc0f741235ed9f8ed19a7db746c2fca1012de8d61c2404cb6df5018b503aa6a6",
+    "test/flow_payload_benchmark.cpp": "b07b35b85d0ae104cd3f2388c65c734f8b80c05fd33ae76bc2b8eca1988cd18f",
+    "test/flow_plugin.cpp": "71e07a53267807d9677f0e2cf1be59d479517c7189aa08fa086f93b5ee29535b",
+    "test/flow_production_symbols.cmake": "dc8166cdabb8bc72e0f67872fff388903213439172952f83dcfbea0d361c3713",
+    "test/flow_reference_allocators.h": "f7639e84799c96cf97f8841ee1933cfd14af30b3a0c3916e4d7dd0f4eb5ddb37",
+    "test/flow_reference_queue.h": "31517a0d1c251333f426909a814d4a7e259e91014ab4091eba9822428982dcdf",
+    "test/flow_shutdown.cpp": "c3ea3e34c93dd3c81afe5cb6f9cf73385db5311642af29f845a414e13727aa73",
+    "test/main.cpp": "bb5287b71ac1603667ccf356cc259423063109d263890f9af64884474e985eb6",
+    "test/opencl_loader.cpp": "3f7f28cdecde64636d8d8c67e9027b1f454a6afa97c6399eb2ed78a0a8bdb42b",
+    "test/opencl_teardown.cpp": "340869aab47e1fef55cbc019cf761432a7381261d833c590116155a675a34cce",
+    "test/prepare_flow_graph_baseline.py": "fc1a9d633854e684afc57a969b135962bd6d9ca9206f027c5aa4857b7157d1b7",
+    "test/prepare_flow_mechanism_variant.py": "097dcd05ea61492361de854a8f813bfe1ea42b28440a0c6e7569c4009bc427e5",
+    "test/test_flow_mechanisms.cpp": "ae21e6e3b13b3c2438f02e8ab4daf0f10bb0483da679b08838fc322177db5c8d",
+    "test/test_flow_public.cpp": "4f01855966b7f2623390d4701ea939093031fd3889da6871dab62cdbf2f40736",
+    "test/test_flow_queue.cpp": "c2d1a220bfae7606f583a226a1927b4d85911a9ad2030d89db2851d6e541d0eb",
+    "test/test_flow_runtime.cpp": "4774cf9e9fa29d0bad7801483ebed1f36bae541706b17789664208cddb821bd9",
+    "test/test_helpers.h": "f2fcd0d0bfe5585212223c8e33e4f2f2ff11d5eecaf1b37dac3da7e6a1e8e7e9",
+    "test/test_xaccess.cpp": "61308d4276b7f512a768fd7b7f152dfc1b73cf1f811281880faa9dbb5f0d0850",
+    "test/test_xargs.cpp": "793819af34a1f26ccf0e652094b522e393a579fe9d9fba15e2649362a2710a9c",
+    "test/test_xbuffer.cpp": "465801598b1894fca643e227fb876d3900f2078c6ba7fe57837ad2f397d55574",
+    "test/test_xerror.cpp": "433521b4f9b340eb5fb8afb6ede587751559ad774f1bc80161495df8f8e5517c",
+    "test/test_xfile.cpp": "294b4b1276bb0966841748d156df0973fb82b1c1bc43fbc421d0911da6a359df",
+    "test/test_xflow.cpp": "42f2f094f8d54712ef4381e16643a509f35c4391e5ab8514c39931919f86a9b9",
+    "test/test_xgpu_pending.cpp": "b8e0d177f91a7ded5c4e45a233687c232ea1047cf3d4c72c2ba1c68217390c7c",
+    "test/test_ximage.cpp": "676cc021b93b4bdd40431e76fac354b691b3e16e008043a9bbb635bb8a5b21fc",
+    "test/test_xlogger.cpp": "5557b233bbcea986ab7dcdd87ee01caf149563a13cd7594ca43be5134b8ca219",
+    "test/test_xmath.cpp": "dcc987d3282a79fe515be0077942a03c014189e39c5bd162d73cff3c1c81f0cd",
+    "test/test_xmemory.cpp": "ab20178b6d309dca38dc26305b2adef5da28c1f5479083f5a4dd927e0f508227",
+    "test/test_xopencl.cpp": "fbbeaea712b9125fb8f240ad88de3047abc1ed58e55fddd394f21e83212227e5",
+    "test/test_xpath.cpp": "431f22f4b7dfd8913e944dbfb6b7ab005a21385e61a4a969a1e6cdcc0820ed62",
+    "test/test_xregex.cpp": "c097ee06df2a2d3ca52459518f5916bf4fefbee649dcac141d1ab2d66c607ff3",
+    "test/test_xsystem.cpp": "f8dd638ae5248592346d2367f512e3f43f3faf1c971c4d467dff540ca6ecf68d",
+    "test/test_xtimer.cpp": "b332d64459d16ce983df1ea7c8d7c2421606dffc06617a2bd07609ba89e8edb3",
+    "test/test_xtracer.cpp": "d9e98aaefd1b9d8f1ee5af4013965c4d89e52a00318789f8c79605a0d7ce6340"
+  },
+  "test_log_summaries": {
+    "flow-b7-trim-cpu-tests.log": {
+      "sha256": "a5932774e557664f242b35b36a8a9ffe5b13585ec59d2dfae80bb92e09e92a67",
+      "final_lines": [
+        "      Start 10: flow_production",
+        "10/13 Test #10: flow_production ..................   Passed    0.00 sec",
+        "      Start 11: flow_production_symbols",
+        "11/13 Test #11: flow_production_symbols ..........   Passed    0.05 sec",
+        "      Start 12: flow_shutdown",
+        "12/13 Test #12: flow_shutdown ....................   Passed    0.01 sec",
+        "      Start 13: flow_isolation",
+        "13/13 Test #13: flow_isolation ...................   Passed    0.00 sec",
+        "",
+        "100% tests passed, 0 tests failed out of 13",
+        "",
+        "Total Test time (real) =  38.07 sec"
+      ],
+      "pass_summaries": [
+        "100% tests passed, 0 tests failed out of 13"
+      ]
+    },
+    "flow-b7-trim-opencl-tests.log": {
+      "sha256": "4ca9738f957f9abbf163237f09848010df53ecfa1b92c7948b1a0567b5db3699",
+      "final_lines": [
+        "15/17 Test #15: flow_production_symbols ..........   Passed    0.06 sec",
+        "      Start 16: flow_shutdown",
+        "16/17 Test #16: flow_shutdown ....................   Passed    0.01 sec",
+        "      Start 17: flow_isolation",
+        "17/17 Test #17: flow_isolation ...................   Passed    0.00 sec",
+        "",
+        "100% tests passed, 0 tests failed out of 17",
+        "",
+        "Total Test time (real) =  37.33 sec",
+        "",
+        "The following tests did not run:",
+        "\t  3 - flow_opencl_hardware (Skipped)"
+      ],
+      "pass_summaries": [
+        "100% tests passed, 0 tests failed out of 17"
+      ]
+    },
+    "flow-b7-trim-asan-tests.log": {
+      "sha256": "ff43399bf52bf005eb342c757fdc04c29165229c70c78990b7882948ba017fea",
+      "final_lines": [
+        "      Start 13: flow_production",
+        "13/16 Test #13: flow_production ..................   Passed    0.01 sec",
+        "      Start 14: flow_production_symbols",
+        "14/16 Test #14: flow_production_symbols ..........   Passed    0.07 sec",
+        "      Start 15: flow_shutdown",
+        "15/16 Test #15: flow_shutdown ....................   Passed    0.02 sec",
+        "      Start 16: flow_isolation",
+        "16/16 Test #16: flow_isolation ...................   Passed    0.01 sec",
+        "",
+        "100% tests passed, 0 tests failed out of 16",
+        "",
+        "Total Test time (real) =  38.61 sec"
+      ],
+      "pass_summaries": [
+        "100% tests passed, 0 tests failed out of 16"
+      ]
+    },
+    "flow-b7-trim-tsan-tests.log": {
+      "sha256": "286485aab0338f295b9339b19f00e2153a8927590e8d892c1531ba46b8ed5dac",
+      "final_lines": [
+        "      Start 10: flow_production",
+        "10/13 Test #10: flow_production ..................   Passed    0.01 sec",
+        "      Start 11: flow_production_symbols",
+        "11/13 Test #11: flow_production_symbols ..........   Passed    0.05 sec",
+        "      Start 12: flow_shutdown",
+        "12/13 Test #12: flow_shutdown ....................   Passed    0.02 sec",
+        "      Start 13: flow_isolation",
+        "13/13 Test #13: flow_isolation ...................   Passed    0.01 sec",
+        "",
+        "100% tests passed, 0 tests failed out of 13",
+        "",
+        "Total Test time (real) =  42.37 sec"
+      ],
+      "pass_summaries": [
+        "100% tests passed, 0 tests failed out of 13"
+      ]
+    },
+    "flow-b7-trim-cpu-all.log": {
+      "sha256": "39978a1fb4f41d5d552f57ea1fffb82dfa59bdfd26a87b6d562b0bc74636471a",
+      "final_lines": [
+        "[XTracerTest][E] (graph.cpp:265) au::flow submission rejected task=24407 code=-5002",
+        "[XTracerTest][E] (graph.cpp:265) au::flow submission rejected task=24410 code=-5002",
+        "[XTracerTest][E] (graph.cpp:265) au::flow submission rejected task=24419 code=-1008",
+        "[XTracerTest][E] (pending.cpp:82) au::gpu cleanup failed code=-3004 native=0",
+        "[XTracerTest][E] (pending.cpp:82) au::gpu cleanup failed code=-3004 native=0",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=24944 code=-3004 native=-5",
+        "[XTracerTest][E] (access.cpp:20) au::mm access failed code=-1004 native=0",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=24945 code=-1004 native=0",
+        "[XTracerTest][E] (access.cpp:20) au::mm access failed code=-1004 native=0",
+        "[XTracerTest][E] (access.cpp:20) au::mm access failed code=-1004 native=0",
+        "[==========] 181 tests from 18 test suites ran. (38952 ms total)",
+        "[  PASSED  ] 181 tests."
+      ],
+      "pass_summaries": [
+        "[  PASSED  ] 181 tests."
+      ]
+    },
+    "flow-b7-trim-opencl-all.log": {
+      "sha256": "d6a449bd818d78617bc6eb89c7acf5e0dbeebac55d3a4be2e3031fcaa252a994",
+      "final_lines": [
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25129 code=-3004 native=-9",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25130 code=-3004 native=-9",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25131 code=-3004 native=-9",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25132 code=-3004 native=-9",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25133 code=-3004 native=-9",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25134 code=-3004 native=-9",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25135 code=-3004 native=-9",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25136 code=-3004 native=-9",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25137 code=-3004 native=-9",
+        "[XTracerTest][E] (external_completion.cpp:93) au::flow external completion failed task=25138 code=-3004 native=-9",
+        "[==========] 193 tests from 19 test suites ran. (39939 ms total)",
+        "[  PASSED  ] 193 tests."
+      ],
+      "pass_summaries": [
+        "[  PASSED  ] 193 tests."
+      ]
+    },
+    "flow-b7-trim-final-flow-b0-cpu.log": {
+      "sha256": "654883c179ed1feb1b5b104b9b41bf6569d314968d93a1c46c8cebb626cf37c7",
+      "final_lines": [
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=1 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=3 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4013 ms total)",
+        "[  PASSED  ] 3 tests.",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=8 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=10 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4012 ms total)",
+        "[  PASSED  ] 3 tests.",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=15 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=17 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4010 ms total)",
+        "[  PASSED  ] 3 tests."
+      ],
+      "pass_summaries": [
+        "[  PASSED  ] 3 tests.",
+        "[  PASSED  ] 3 tests.",
+        "[  PASSED  ] 3 tests."
+      ]
+    },
+    "flow-b7-trim-final-flow-b0-opencl.log": {
+      "sha256": "84d138b76c4d1d467068c32d2d32f15577b4f2a571e0d4b0e1ab5da46265ef82",
+      "final_lines": [
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=1 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=3 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4012 ms total)",
+        "[  PASSED  ] 3 tests.",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=8 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=10 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4011 ms total)",
+        "[  PASSED  ] 3 tests.",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=15 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=17 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4012 ms total)",
+        "[  PASSED  ] 3 tests."
+      ],
+      "pass_summaries": [
+        "[  PASSED  ] 3 tests.",
+        "[  PASSED  ] 3 tests.",
+        "[  PASSED  ] 3 tests."
+      ]
+    },
+    "flow-b7-trim-final-flow-b2-asan.log": {
+      "sha256": "442dab18e5d66f1fc8e5225f9d79e3e25dec5a5398578bad9837eed6ac7f9755",
+      "final_lines": [
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=1 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=3 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4018 ms total)",
+        "[  PASSED  ] 3 tests.",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=8 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=10 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4015 ms total)",
+        "[  PASSED  ] 3 tests.",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=15 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=17 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4012 ms total)",
+        "[  PASSED  ] 3 tests."
+      ],
+      "pass_summaries": [
+        "[  PASSED  ] 3 tests.",
+        "[  PASSED  ] 3 tests.",
+        "[  PASSED  ] 3 tests."
+      ]
+    },
+    "flow-b7-trim-final-flow-b2-tsan.log": {
+      "sha256": "556c72d066568481d1ff126093bd1a8136e66292daea882648f89506af4080f8",
+      "final_lines": [
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=1 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=3 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4014 ms total)",
+        "[  PASSED  ] 3 tests.",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=8 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=10 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4016 ms total)",
+        "[  PASSED  ] 3 tests.",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:93) au::flow external completion failed task=15 code=-3004 native=-7",
+        "[unknown]\u001b[7;31m[E]\u001b[0m (external_completion.cpp:82) au::flow external query failed task=17 code=-3004 native=0",
+        "[==========] 3 tests from 2 test suites ran. (4015 ms total)",
+        "[  PASSED  ] 3 tests."
+      ],
+      "pass_summaries": [
+        "[  PASSED  ] 3 tests.",
+        "[  PASSED  ] 3 tests.",
+        "[  PASSED  ] 3 tests."
+      ]
+    }
+  },
+  "legacy_reproduction": {
+    "patch": {
+      "src/flow/testing.h": "--- B6/src/flow/testing.h\n+++ B6+test-seam/src/flow/testing.h\n@@ -32,7 +32,8 @@\n     QueryPinned,\n     BeforePendingQuery,\n     QueueProbeMiss,\n-    AfterAdmission\n+    AfterAdmission,\n+    BeforeBusy\n };\n struct RuntimeHook\n {\n",
+      "src/flow/executor.cpp": "--- B6/src/flow/executor.cpp\n+++ B6+test-seam/src/flow/executor.cpp\n@@ -195,6 +195,9 @@\n     gFrame = &frame;\n     ExecutionErrors memoryErrors(this);\n     ++gDepth;\n+#ifdef AURA_FLOW_TESTING\n+    runtimePoint(au::flow::testing::RuntimePoint::BeforeBusy, static_cast<std::size_t>(gWorker));\n+#endif\n     // External tiled callers provide extra capacity, not busy pool workers.\n     if (gWorker >= 0)\n         mBusy.fetch_add(1, std::memory_order_relaxed);  // Scaling hint; cooperative stacks may overlap.\n",
+      "test/test_flow_runtime.cpp": "--- B6/test/test_flow_runtime.cpp\n+++ B6+test-seam/test/test_flow_runtime.cpp\n@@ -442,3 +442,22 @@\n     EXPECT_EQ(total.load(std::memory_order_relaxed), 4u * 100u * 5u * 65u);\n     EXPECT_GE(au::flow::testing::runtimeStats().mGenerations[0], firstGeneration + 5);\n }\n+\n+TEST_F(XFlowRuntime, EnqueueDuringReadyToBusyHandoffStillGrows)\n+{\n+    fresh(2);\n+    auto& flow = au::flow::XFlow::get();\n+    std::atomic<bool> secondEntered{false};\n+    auto first = flow.makeTask([&]() -> int {\n+        return await([&] { return secondEntered.load(std::memory_order_acquire); }) ? 0 : 99;\n+    });\n+    RuntimeBlock paused(au::flow::testing::RuntimePoint::BeforeBusy, first.id());\n+    EXPECT_EQ(flow.enqueue(first).submissionCode(), 0);\n+    EXPECT_TRUE(await([&] { return paused.mEntered.load(std::memory_order_acquire); }));\n+    auto second = flow.enqueue([&]() -> int { secondEntered.store(true, std::memory_order_release); return 0; });\n+    paused.mRelease.store(true, std::memory_order_release);\n+    EXPECT_EQ(first.waitFor(5000), 0);\n+    EXPECT_EQ(second.waitFor(5000), 0);\n+    EXPECT_FALSE(paused.mTimedOut.load(std::memory_order_acquire));\n+}\n+\n"
+    },
+    "failure_log": {
+      "sha256": "80c55f15dcb126c1b5f6ad3f87743421bb649581333b9e25d690a1db986caff2",
+      "expected_failure_or_initial_discovery": true,
+      "stdout": "===========================================================\n      ------    ----    ---- -----------     ------    \n     ********   ****    **** ***********    ********   \n    ----------  ----    ---- ----    ---   ----------  \n   ****    **** ****    **** *********    ****    **** \n   ------------ ----    ---- ---------    ------------ \n   ************ ************ ****  ****   ************ \n   ----    ---- ------------ ----   ----  ----    ---- \n   ****    **** ************ ****    **** ****    **** \n                                                           \n                        Version 1.5.0                           \n===========================================================\n\n/workspace/.cloud-build/flow-b7-repro-source/test/test_flow_runtime.cpp:459: Failure\nExpected equality of these values:\n  first.waitFor(5000)\n    Which is: -1016\n  0\n[  FAILED  ] XFlowRuntime.EnqueueDuringReadyToBusyHandoffStillGrows (5002 ms)\n[==========] 1 test from 1 test suite ran. (5002 ms total)\n[  PASSED  ] 0 tests.\n"
+    },
+    "previous_handoff_repeats": {
+      "sha256": "8887877251cc4a55bdbabe3e48a3a12ebd93bb64b47e9c5f71235fce68ee2088",
+      "expected_failure_or_initial_discovery": false,
+      "stdout": "===========================================================\n      ------    ----    ---- -----------     ------    \n     ********   ****    **** ***********    ********   \n    ----------  ----    ---- ----    ---   ----------  \n   ****    **** ****    **** *********    ****    **** \n   ------------ ----    ---- ---------    ------------ \n   ************ ************ ****  ****   ************ \n   ----    ---- ------------ ----   ----  ----    ---- \n   ****    **** ************ ****    **** ****    **** \n                                                           \n                        Version 1.5.0                           \n===========================================================\n\n[==========] 2 tests from 1 test suite ran. (2009 ms total)\n[  PASSED  ] 2 tests.\n[==========] 2 tests from 1 test suite ran. (4010 ms total)\n[  PASSED  ] 2 tests.\n[==========] 2 tests from 1 test suite ran. (4008 ms total)\n[  PASSED  ] 2 tests.\n[==========] 2 tests from 1 test suite ran. (4010 ms total)\n[  PASSED  ] 2 tests.\n[==========] 2 tests from 1 test suite ran. (4008 ms total)\n[  PASSED  ] 2 tests.\n[==========] 2 tests from 1 test suite ran. (4009 ms total)\n[  PASSED  ] 2 tests.\n[==========] 2 tests from 1 test suite ran. (4008 ms total)\n[  PASSED  ] 2 tests.\n[==========] 2 tests from 1 test suite ran. (4009 ms total)\n[  PASSED  ] 2 tests.\n[==========] 2 tests from 1 test suite ran. (4007 ms total)\n[  PASSED  ] 2 tests.\n[==========] 2 tests from 1 test suite ran. (4009 ms total)\n[  PASSED  ] 2 tests.\n"
+    }
+  },
+  "performance_method": {
+    "rounds_per_set": 5,
+    "samples_per_case": 101,
+    "warmups": 16,
+    "separate_allocation_samples": 25,
+    "aggregation": "Median of five per-run quantiles; not a pooled quantile or SLA",
+    "no_concurrent_builds_or_tests_during_timing": true,
+    "harness_changes": "Remove setTracing(false), change header only; algorithms, inputs, verification and sample counts identical. Prior B7 still includes initial host bridge; candidate removes it. Effects are not separately attributed.",
+    "current_harness_sha256": "4c28a455f21241d1a6e34a497884c426afaaa36733a4ae41cfe73ede3b306c46",
+    "original_binary_matches_frozen_B1": true,
+    "initial_set_note": "Initial candidate archive used ENABLE_OPENCL=ON. Rebuilt OFF for matching production/archive footprint. All four linked CPU benchmark binary SHA256 values stayed exactly identical; retain both sets to show cloud-host variance.",
+    "linked_binary_SHA256_identical_between_sets": true
+  },
+  "primary_medians": {
+    "B6_f08c09b": {
+      "external_empty_range0": {
+        "p50_ns": 30.0,
+        "p95_ns": 30.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_range1": {
+        "p50_ns": 90.0,
+        "p95_ns": 100.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_1080x16": {
+        "p50_ns": 24287.0,
+        "p95_ns": 35974.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "managed_empty_1080x16": {
+        "p50_ns": 31367.0,
+        "p95_ns": 71057.0,
+        "cpp_allocs_per_call": 6.0,
+        "cpp_bytes_per_call": 128.0
+      },
+      "external_rows_1920x1080_tile16": {
+        "p50_ns": 199071.0,
+        "p95_ns": 369568.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_rows_1920x1080_tile64": {
+        "p50_ns": 212831.0,
+        "p95_ns": 380554.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "synthetic_cpu_fanout3_fanin": {
+        "p50_ns": 912097.0,
+        "p95_ns": 1208104.0,
+        "cpp_allocs_per_call": 33.0,
+        "cpp_bytes_per_call": 792.0
+      }
+    },
+    "B7_before_trim": {
+      "external_empty_range0": {
+        "p50_ns": 30.0,
+        "p95_ns": 30.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_range1": {
+        "p50_ns": 60.0,
+        "p95_ns": 71.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_1080x16": {
+        "p50_ns": 11167.0,
+        "p95_ns": 28513.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "managed_empty_1080x16": {
+        "p50_ns": 34572.0,
+        "p95_ns": 71247.0,
+        "cpp_allocs_per_call": 6.0,
+        "cpp_bytes_per_call": 128.0
+      },
+      "external_rows_1920x1080_tile16": {
+        "p50_ns": 199110.0,
+        "p95_ns": 312601.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_rows_1920x1080_tile64": {
+        "p50_ns": 232942.0,
+        "p95_ns": 345721.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "synthetic_cpu_fanout3_fanin": {
+        "p50_ns": 874069.0,
+        "p95_ns": 1144328.0,
+        "cpp_allocs_per_call": 33.0,
+        "cpp_bytes_per_call": 792.0
+      }
+    },
+    "B7_trim": {
+      "external_empty_range0": {
+        "p50_ns": 30.0,
+        "p95_ns": 30.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_range1": {
+        "p50_ns": 60.0,
+        "p95_ns": 91.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_1080x16": {
+        "p50_ns": 11026.0,
+        "p95_ns": 25108.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "managed_empty_1080x16": {
+        "p50_ns": 35563.0,
+        "p95_ns": 118484.0,
+        "cpp_allocs_per_call": 6.0,
+        "cpp_bytes_per_call": 128.0
+      },
+      "external_rows_1920x1080_tile16": {
+        "p50_ns": 213883.0,
+        "p95_ns": 308525.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_rows_1920x1080_tile64": {
+        "p50_ns": 222275.0,
+        "p95_ns": 327865.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "synthetic_cpu_fanout3_fanin": {
+        "p50_ns": 886588.0,
+        "p95_ns": 1225229.0,
+        "cpp_allocs_per_call": 33.0,
+        "cpp_bytes_per_call": 792.0
+      }
+    },
+    "original_aa3b3ae": {
+      "external_empty_range0": {
+        "p50_ns": 30.0,
+        "p95_ns": 30.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_range1": {
+        "p50_ns": 241.0,
+        "p95_ns": 300.0,
+        "cpp_allocs_per_call": 6.0,
+        "cpp_bytes_per_call": 128.0
+      },
+      "external_empty_1080x16": {
+        "p50_ns": 12990.0,
+        "p95_ns": 1075263.0,
+        "cpp_allocs_per_call": 34.8,
+        "cpp_bytes_per_call": 972.8
+      },
+      "managed_empty_1080x16": {
+        "p50_ns": 32029.0,
+        "p95_ns": 99010.0,
+        "cpp_allocs_per_call": 35.52,
+        "cpp_bytes_per_call": 1003.52
+      },
+      "external_rows_1920x1080_tile16": {
+        "p50_ns": 232622.0,
+        "p95_ns": 422297.0,
+        "cpp_allocs_per_call": 28.8,
+        "cpp_bytes_per_call": 716.8
+      },
+      "external_rows_1920x1080_tile64": {
+        "p50_ns": 224489.0,
+        "p95_ns": 406083.0,
+        "cpp_allocs_per_call": 28.56,
+        "cpp_bytes_per_call": 706.56
+      },
+      "synthetic_cpu_fanout3_fanin": {
+        "p50_ns": 892167.0,
+        "p95_ns": 1185409.0,
+        "cpp_allocs_per_call": 42.0,
+        "cpp_bytes_per_call": 1176.0
+      }
+    }
+  },
+  "primary_raw_runs": {
+    "date_utc": "2026-10-21T07:12:11.365967+00:00",
+    "runs": [
+      {
+        "round": 0,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=359022\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=381 p95_ns=401 max_ns=441 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=12098 p95_ns=1075263 max_ns=1144051 cpp_allocs_per_call=34.320 cpp_bytes_per_call=952.320\ncase=managed_empty_1080x16 samples=101 p50_ns=36895 p95_ns=86140 max_ns=1239600 cpp_allocs_per_call=31.920 cpp_bytes_per_call=849.920\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=212732 p95_ns=402738 max_ns=1290873 cpp_allocs_per_call=29.520 cpp_bytes_per_call=747.520\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=224489 p95_ns=406083 max_ns=559815 cpp_allocs_per_call=28.560 cpp_bytes_per_call=706.560\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=881991 p95_ns=1286652 max_ns=2346275 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33957\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 0,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=371340\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=40 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=90 p95_ns=100 max_ns=200 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=25388 p95_ns=35814 max_ns=153512 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=29925 p95_ns=99750 max_ns=187984 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=265531 p95_ns=540966 max_ns=1999407 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=251269 p95_ns=380554 max_ns=474406 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=928721 p95_ns=1479593 max_ns=2807646 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34056\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 0,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=287444\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=40 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=90 p95_ns=110 max_ns=241 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11187 p95_ns=41553 max_ns=145680 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=35204 p95_ns=81623 max_ns=190598 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=196827 p95_ns=312601 max_ns=439503 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=234915 p95_ns=297700 max_ns=353043 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=821049 p95_ns=1068532 max_ns=1223567 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34166\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 0,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=607522\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=61 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=18087 p95_ns=44988 max_ns=122655 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=42904 p95_ns=142776 max_ns=406799 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=213883 p95_ns=291510 max_ns=405171 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=222275 p95_ns=285721 max_ns=539695 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=747028 p95_ns=1208665 max_ns=1838155 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33938\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 1,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=243207\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=70 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=241 p95_ns=271 max_ns=19079 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=14402 p95_ns=1090697 max_ns=1142654 cpp_allocs_per_call=33.120 cpp_bytes_per_call=901.120\ncase=managed_empty_1080x16 samples=101 p50_ns=32029 p95_ns=149405 max_ns=1127401 cpp_allocs_per_call=36.480 cpp_bytes_per_call=1044.480\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=240022 p95_ns=542529 max_ns=1304459 cpp_allocs_per_call=28.800 cpp_bytes_per_call=716.800\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=226612 p95_ns=414055 max_ns=1303348 cpp_allocs_per_call=28.800 cpp_bytes_per_call=716.800\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=905937 p95_ns=1625174 max_ns=5406341 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34134\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 1,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=350799\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=50 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=100 max_ns=160 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11026 p95_ns=36365 max_ns=132480 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=40041 p95_ns=187003 max_ns=376538 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=214614 p95_ns=353724 max_ns=5222173 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=232220 p95_ns=413685 max_ns=1129776 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=902523 p95_ns=1270909 max_ns=1748329 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33938\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 1,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=270503\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=160 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=90 p95_ns=111 max_ns=211 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11136 p95_ns=24096 max_ns=38338 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=33841 p95_ns=60512 max_ns=96386 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=199110 p95_ns=260653 max_ns=390940 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=232942 p95_ns=464190 max_ns=732916 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=906469 p95_ns=1529153 max_ns=2674412 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34102\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 1,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=432143\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=121 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=70 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=18869 p95_ns=81343 max_ns=188324 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31508 p95_ns=88203 max_ns=214093 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=219401 p95_ns=445352 max_ns=551353 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=218540 p95_ns=411261 max_ns=1296307 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=912097 p95_ns=1208104 max_ns=1730603 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34114\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 2,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=239682\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=30 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=70 max_ns=80 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11167 p95_ns=15924 max_ns=30877 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=35443 p95_ns=71247 max_ns=175815 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=210407 p95_ns=399914 max_ns=2048612 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=200503 p95_ns=345721 max_ns=1079700 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=874069 p95_ns=1144328 max_ns=1924815 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34166\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 2,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=255215\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=101 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=90 p95_ns=91 max_ns=91 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=10906 p95_ns=17486 max_ns=46761 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=35563 p95_ns=56335 max_ns=85319 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=192411 p95_ns=288125 max_ns=433514 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=214443 p95_ns=348356 max_ns=919227 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=886588 p95_ns=1225229 max_ns=2859726 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33938\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 2,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=303518\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=241 p95_ns=260 max_ns=20040 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=13991 p95_ns=86831 max_ns=1088242 cpp_allocs_per_call=35.040 cpp_bytes_per_call=983.040\ncase=managed_empty_1080x16 samples=101 p50_ns=31497 p95_ns=78094 max_ns=1175173 cpp_allocs_per_call=35.040 cpp_bytes_per_call=983.040\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=232622 p95_ns=392532 max_ns=845836 cpp_allocs_per_call=28.560 cpp_bytes_per_call=706.560\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=251149 p95_ns=740433 max_ns=1345610 cpp_allocs_per_call=28.800 cpp_bytes_per_call=716.800\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=892167 p95_ns=1185409 max_ns=2521465 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34130\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 2,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=368667\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=40 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=90 p95_ns=101 max_ns=260 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24868 p95_ns=35974 max_ns=106610 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=32549 p95_ns=52649 max_ns=183166 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=199071 p95_ns=369568 max_ns=732446 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=212831 p95_ns=411280 max_ns=1680466 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=912778 p95_ns=1488426 max_ns=2191797 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34158\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 3,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=274474\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=71 max_ns=100 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11257 p95_ns=35985 max_ns=75834 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=34572 p95_ns=196847 max_ns=361676 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=250138 p95_ns=1065779 max_ns=2326832 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=248895 p95_ns=502008 max_ns=2067680 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=980149 p95_ns=2904122 max_ns=4244160 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34098\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 3,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=343879\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=30 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=61 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=18928 p95_ns=37216 max_ns=240943 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31367 p95_ns=71057 max_ns=119340 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=193632 p95_ns=357740 max_ns=505583 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=197428 p95_ns=305371 max_ns=461616 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=895612 p95_ns=1189024 max_ns=1772080 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34114\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 3,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=153712\ncase=external_empty_range0 samples=101 p50_ns=20 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=241 p95_ns=300 max_ns=313914 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=7571 p95_ns=1080109 max_ns=1130626 cpp_allocs_per_call=36.720 cpp_bytes_per_call=1054.720\ncase=managed_empty_1080x16 samples=101 p50_ns=32229 p95_ns=326863 max_ns=1161472 cpp_allocs_per_call=35.520 cpp_bytes_per_call=1003.520\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=235125 p95_ns=422297 max_ns=1335485 cpp_allocs_per_call=27.360 cpp_bytes_per_call=655.360\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=215606 p95_ns=376949 max_ns=1279141 cpp_allocs_per_call=28.560 cpp_bytes_per_call=706.560\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=896142 p95_ns=1134772 max_ns=1619794 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34066\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 3,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=280994\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=90 p95_ns=91 max_ns=100 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11027 p95_ns=25108 max_ns=121493 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=34772 p95_ns=118484 max_ns=257059 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=229566 p95_ns=451231 max_ns=929883 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=232952 p95_ns=327865 max_ns=466444 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=898546 p95_ns=1375767 max_ns=1917824 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33934\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 4,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=226772\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=250 p95_ns=321 max_ns=71377 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=12990 p95_ns=40661 max_ns=1083996 cpp_allocs_per_call=34.800 cpp_bytes_per_call=972.800\ncase=managed_empty_1080x16 samples=101 p50_ns=31617 p95_ns=99010 max_ns=1125023 cpp_allocs_per_call=36.000 cpp_bytes_per_call=1024.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=231109 p95_ns=722941 max_ns=1853117 cpp_allocs_per_call=29.040 cpp_bytes_per_call=727.040\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=200983 p95_ns=309938 max_ns=1441776 cpp_allocs_per_call=27.120 cpp_bytes_per_call=645.120\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=809792 p95_ns=1063354 max_ns=2300371 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34066\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 4,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=250918\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=220 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=90 p95_ns=110 max_ns=15714 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24287 p95_ns=26350 max_ns=95795 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=27933 p95_ns=46890 max_ns=168194 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=162425 p95_ns=327935 max_ns=1003224 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=165189 p95_ns=229957 max_ns=309117 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=721539 p95_ns=946789 max_ns=999649 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34114\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 4,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=268991\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=30 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=70 max_ns=71 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=8233 p95_ns=28513 max_ns=78379 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=30115 p95_ns=60431 max_ns=359042 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=191389 p95_ns=243718 max_ns=380224 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=222436 p95_ns=280894 max_ns=1059249 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=674277 p95_ns=1015212 max_ns=1436508 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34162\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 4,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=646712\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=40 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=130 max_ns=2214 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=10977 p95_ns=15683 max_ns=42835 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=32990 p95_ns=52590 max_ns=64518 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=189516 p95_ns=308525 max_ns=1489933 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=176416 p95_ns=284514 max_ns=390349 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=723061 p95_ns=1032769 max_ns=1166310 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33942\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "initial_medians": {
+    "B6_f08c09b": {
+      "external_empty_range0": {
+        "p50_ns": 30.0,
+        "p95_ns": 30.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_range1": {
+        "p50_ns": 60.0,
+        "p95_ns": 61.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_1080x16": {
+        "p50_ns": 18889.0,
+        "p95_ns": 35614.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "managed_empty_1080x16": {
+        "p50_ns": 31708.0,
+        "p95_ns": 74522.0,
+        "cpp_allocs_per_call": 6.0,
+        "cpp_bytes_per_call": 128.0
+      },
+      "external_rows_1920x1080_tile16": {
+        "p50_ns": 218289.0,
+        "p95_ns": 378351.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_rows_1920x1080_tile64": {
+        "p50_ns": 232400.0,
+        "p95_ns": 424551.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "synthetic_cpu_fanout3_fanin": {
+        "p50_ns": 922102.0,
+        "p95_ns": 1368154.0,
+        "cpp_allocs_per_call": 33.0,
+        "cpp_bytes_per_call": 792.0
+      }
+    },
+    "B7_before_trim": {
+      "external_empty_range0": {
+        "p50_ns": 30.0,
+        "p95_ns": 30.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_range1": {
+        "p50_ns": 60.0,
+        "p95_ns": 70.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_1080x16": {
+        "p50_ns": 17006.0,
+        "p95_ns": 31808.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "managed_empty_1080x16": {
+        "p50_ns": 34392.0,
+        "p95_ns": 69185.0,
+        "cpp_allocs_per_call": 6.0,
+        "cpp_bytes_per_call": 128.0
+      },
+      "external_rows_1920x1080_tile16": {
+        "p50_ns": 219110.0,
+        "p95_ns": 377189.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_rows_1920x1080_tile64": {
+        "p50_ns": 215755.0,
+        "p95_ns": 318961.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "synthetic_cpu_fanout3_fanin": {
+        "p50_ns": 894500.0,
+        "p95_ns": 1320783.0,
+        "cpp_allocs_per_call": 33.0,
+        "cpp_bytes_per_call": 792.0
+      }
+    },
+    "B7_trim": {
+      "external_empty_range0": {
+        "p50_ns": 30.0,
+        "p95_ns": 30.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_range1": {
+        "p50_ns": 60.0,
+        "p95_ns": 61.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_1080x16": {
+        "p50_ns": 14232.0,
+        "p95_ns": 33240.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "managed_empty_1080x16": {
+        "p50_ns": 32800.0,
+        "p95_ns": 89185.0,
+        "cpp_allocs_per_call": 6.0,
+        "cpp_bytes_per_call": 128.0
+      },
+      "external_rows_1920x1080_tile16": {
+        "p50_ns": 210808.0,
+        "p95_ns": 346873.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_rows_1920x1080_tile64": {
+        "p50_ns": 213842.0,
+        "p95_ns": 309647.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "synthetic_cpu_fanout3_fanin": {
+        "p50_ns": 903964.0,
+        "p95_ns": 1393593.0,
+        "cpp_allocs_per_call": 33.0,
+        "cpp_bytes_per_call": 792.0
+      }
+    },
+    "original_aa3b3ae": {
+      "external_empty_range0": {
+        "p50_ns": 30.0,
+        "p95_ns": 30.0,
+        "cpp_allocs_per_call": 0.0,
+        "cpp_bytes_per_call": 0.0
+      },
+      "external_empty_range1": {
+        "p50_ns": 241.0,
+        "p95_ns": 261.0,
+        "cpp_allocs_per_call": 6.0,
+        "cpp_bytes_per_call": 128.0
+      },
+      "external_empty_1080x16": {
+        "p50_ns": 9844.0,
+        "p95_ns": 78238.0,
+        "cpp_allocs_per_call": 37.2,
+        "cpp_bytes_per_call": 1075.2
+      },
+      "managed_empty_1080x16": {
+        "p50_ns": 32148.0,
+        "p95_ns": 201264.0,
+        "cpp_allocs_per_call": 34.56,
+        "cpp_bytes_per_call": 962.56
+      },
+      "external_rows_1920x1080_tile16": {
+        "p50_ns": 233512.0,
+        "p95_ns": 437110.0,
+        "cpp_allocs_per_call": 29.04,
+        "cpp_bytes_per_call": 727.04
+      },
+      "external_rows_1920x1080_tile64": {
+        "p50_ns": 231920.0,
+        "p95_ns": 357860.0,
+        "cpp_allocs_per_call": 29.52,
+        "cpp_bytes_per_call": 747.52
+      },
+      "synthetic_cpu_fanout3_fanin": {
+        "p50_ns": 932968.0,
+        "p95_ns": 1690371.0,
+        "cpp_allocs_per_call": 42.0,
+        "cpp_bytes_per_call": 1176.0
+      }
+    }
+  },
+  "initial_raw_runs": {
+    "date_utc": "2026-10-21T07:09:01.551586+00:00",
+    "runs": [
+      {
+        "round": 0,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=157618\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=250 p95_ns=802 max_ns=202266 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=2865 p95_ns=25098 max_ns=1087361 cpp_allocs_per_call=37.680 cpp_bytes_per_call=1095.680\ncase=managed_empty_1080x16 samples=101 p50_ns=40030 p95_ns=365201 max_ns=1143806 cpp_allocs_per_call=33.600 cpp_bytes_per_call=921.600\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=237147 p95_ns=398602 max_ns=1369836 cpp_allocs_per_call=29.040 cpp_bytes_per_call=727.040\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=260372 p95_ns=581978 max_ns=2754485 cpp_allocs_per_call=29.760 cpp_bytes_per_call=757.760\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=959618 p95_ns=1947483 max_ns=3240059 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34066\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 0,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=223287\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=80 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=24587 p95_ns=35614 max_ns=89955 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31708 p95_ns=131238 max_ns=312316 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=219130 p95_ns=470420 max_ns=1158037 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=233773 p95_ns=559845 max_ns=1431790 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=894279 p95_ns=1368154 max_ns=2406751 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34162\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 0,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=235355\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=70 max_ns=80 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=18038 p95_ns=31258 max_ns=185480 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=34381 p95_ns=155705 max_ns=1072989 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=221233 p95_ns=351511 max_ns=1205819 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=215755 p95_ns=277138 max_ns=416669 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=894500 p95_ns=1320783 max_ns=2086257 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34166\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 0,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=466484\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=100 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11017 p95_ns=16015 max_ns=188094 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31898 p95_ns=92810 max_ns=1622548 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=220563 p95_ns=363659 max_ns=1208784 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=226421 p95_ns=309647 max_ns=422978 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=911826 p95_ns=1255424 max_ns=1735578 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33934\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 1,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=419854\ncase=external_empty_range0 samples=101 p50_ns=20 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=241 p95_ns=261 max_ns=301 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=9465 p95_ns=78238 max_ns=1097766 cpp_allocs_per_call=35.520 cpp_bytes_per_call=1003.520\ncase=managed_empty_1080x16 samples=101 p50_ns=32148 p95_ns=201264 max_ns=1115313 cpp_allocs_per_call=34.560 cpp_bytes_per_call=962.560\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=233512 p95_ns=437110 max_ns=1255383 cpp_allocs_per_call=29.040 cpp_bytes_per_call=727.040\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=231920 p95_ns=357860 max_ns=690391 cpp_allocs_per_call=29.040 cpp_bytes_per_call=727.040\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=907740 p95_ns=1286491 max_ns=1645573 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34066\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 1,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=242456\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=180 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=90 p95_ns=91 max_ns=250 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11217 p95_ns=38448 max_ns=189546 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=33059 p95_ns=44367 max_ns=68584 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=210808 p95_ns=346873 max_ns=912327 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=205500 p95_ns=350308 max_ns=424751 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=1016594 p95_ns=2316084 max_ns=4174358 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33938\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 1,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=562218\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=30 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=70 max_ns=80 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=19700 p95_ns=35674 max_ns=92239 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=37146 p95_ns=66851 max_ns=165460 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=229497 p95_ns=486945 max_ns=884760 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=234544 p95_ns=318961 max_ns=418842 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=893418 p95_ns=1311328 max_ns=2342013 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34098\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 1,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=246832\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=80 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=18157 p95_ns=71338 max_ns=257599 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=32419 p95_ns=101302 max_ns=233933 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=230478 p95_ns=447285 max_ns=568868 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=239751 p95_ns=424551 max_ns=598774 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=922102 p95_ns=1198728 max_ns=1893066 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34110\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 2,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=538662\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=70 max_ns=70 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11177 p95_ns=37958 max_ns=117006 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=34392 p95_ns=61332 max_ns=253742 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=219110 p95_ns=467686 max_ns=642229 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=226812 p95_ns=333433 max_ns=448046 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=1141592 p95_ns=4473259 max_ns=7024818 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34102\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 2,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=624112\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=30 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=61 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=15604 p95_ns=70216 max_ns=160212 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=36124 p95_ns=119510 max_ns=350024 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=234213 p95_ns=443949 max_ns=2635476 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=242827 p95_ns=465452 max_ns=889502 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=903964 p95_ns=1385040 max_ns=5888498 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33938\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 2,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=504121\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=110 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=241 p95_ns=260 max_ns=310 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=12169 p95_ns=229255 max_ns=1102929 cpp_allocs_per_call=41.760 cpp_bytes_per_call=1269.760\ncase=managed_empty_1080x16 samples=101 p50_ns=40181 p95_ns=222361 max_ns=1309024 cpp_allocs_per_call=39.840 cpp_bytes_per_call=1187.840\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=399903 p95_ns=1164006 max_ns=2809098 cpp_allocs_per_call=31.680 cpp_bytes_per_call=839.680\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=454460 p95_ns=2069973 max_ns=2529276 cpp_allocs_per_call=28.080 cpp_bytes_per_call=686.080\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=980780 p95_ns=3199773 max_ns=4922302 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34066\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 2,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=225270\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=30 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=90 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=19389 p95_ns=24997 max_ns=73881 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=31147 p95_ns=57787 max_ns=161153 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=196206 p95_ns=252350 max_ns=332612 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=232400 p95_ns=380554 max_ns=498562 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=975727 p95_ns=1760025 max_ns=4083401 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34110\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 3,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=223156\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=271 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=70 max_ns=71 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=17006 p95_ns=31808 max_ns=66380 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=34583 p95_ns=97156 max_ns=282016 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=203968 p95_ns=377189 max_ns=2409867 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=210457 p95_ns=274894 max_ns=450279 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=869742 p95_ns=1072097 max_ns=2610965 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34098\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 3,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=389768\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=90 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=18147 p95_ns=52730 max_ns=168173 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=24797 p95_ns=36876 max_ns=205069 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=194093 p95_ns=278420 max_ns=464481 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=175665 p95_ns=246362 max_ns=446664 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=867839 p95_ns=1189755 max_ns=2327301 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34162\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 3,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=151208\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=2514 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=421 p95_ns=461 max_ns=541 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=14973 p95_ns=251249 max_ns=1146400 cpp_allocs_per_call=33.600 cpp_bytes_per_call=921.600\ncase=managed_empty_1080x16 samples=101 p50_ns=29906 p95_ns=197408 max_ns=1222675 cpp_allocs_per_call=33.360 cpp_bytes_per_call=911.360\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=218169 p95_ns=348616 max_ns=1253572 cpp_allocs_per_call=28.800 cpp_bytes_per_call=716.800\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=207213 p95_ns=323247 max_ns=787859 cpp_allocs_per_call=29.520 cpp_bytes_per_call=747.520\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=895081 p95_ns=1279245 max_ns=2774366 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34058\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 3,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=209976\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=40 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=60 max_ns=90 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=14232 p95_ns=33210 max_ns=93131 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=30506 p95_ns=68724 max_ns=132570 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=148324 p95_ns=278731 max_ns=1192479 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=172741 p95_ns=277128 max_ns=1234683 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=888200 p95_ns=1508612 max_ns=2549456 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33934\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 4,
+        "variant": "original_aa3b3ae",
+        "command": [
+          "/workspace/.cloud-build/flow-b1-before/flow_microbenchmark"
+        ],
+        "binary_sha256": "de638032deba80385bd3c0befe9d0302f4e0e7decdb451029b8c8afd6ae6fe35",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=454375\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=31 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=241 p95_ns=260 max_ns=300 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_empty_1080x16 samples=101 p50_ns=9844 p95_ns=74923 max_ns=1096008 cpp_allocs_per_call=37.200 cpp_bytes_per_call=1075.200\ncase=managed_empty_1080x16 samples=101 p50_ns=27040 p95_ns=91178 max_ns=1119099 cpp_allocs_per_call=34.800 cpp_bytes_per_call=972.800\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=232831 p95_ns=454015 max_ns=1350708 cpp_allocs_per_call=29.520 cpp_bytes_per_call=747.520\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=205591 p95_ns=309087 max_ns=1315475 cpp_allocs_per_call=29.520 cpp_bytes_per_call=747.520\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=932968 p95_ns=1690371 max_ns=2902770 cpp_allocs_per_call=42.000 cpp_bytes_per_call=1176.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34126\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 4,
+        "variant": "B6_f08c09b",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-before-build/flow_microbenchmark"
+        ],
+        "binary_sha256": "9fd010389d522e602abfc64ff0a8e8d5acec4a2e53cf8f9dc0c4362beba51a2d",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=232260\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=30 max_ns=30 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=61 max_ns=90 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=18889 p95_ns=29304 max_ns=102104 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=32889 p95_ns=74522 max_ns=148419 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=218289 p95_ns=378351 max_ns=2108852 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=207653 p95_ns=438912 max_ns=1931053 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=1019818 p95_ns=3936334 max_ns=10604615 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34114\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 4,
+        "variant": "B7_before_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "7cca7d7f1536be241c1df3e945c9440fa2119723826fc89628798b00e6c2cdc1",
+        "exit": 0,
+        "stdout": "scope=host_cpu trace=off perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=307404\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=16946 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=90 p95_ns=101 max_ns=230 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=11207 p95_ns=22635 max_ns=110667 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=33510 p95_ns=69185 max_ns=117297 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=191640 p95_ns=335025 max_ns=1161317 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=189115 p95_ns=319152 max_ns=437671 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=909683 p95_ns=2182422 max_ns=6275459 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=34098\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      },
+      {
+        "round": 4,
+        "variant": "B7_trim",
+        "command": [
+          "/workspace/.cloud-build/flow-b7-trim-release/flow_microbenchmark"
+        ],
+        "binary_sha256": "0bc937f6bfbe619cc84943e1bc93c72de3624cba93c1f4da4a756b67c1762156",
+        "exit": 0,
+        "stdout": "scope=host_cpu diagnostics=removed perf_output=off timer=steady_clock samples=101 allocation_samples=25\ncold_external_empty_1080x16_ns=475587\ncase=external_empty_range0 samples=101 p50_ns=30 p95_ns=31 max_ns=110 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_range1 samples=101 p50_ns=60 p95_ns=91 max_ns=171 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_empty_1080x16 samples=101 p50_ns=17136 p95_ns=33240 max_ns=128874 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=managed_empty_1080x16 samples=101 p50_ns=32800 p95_ns=89185 max_ns=158089 cpp_allocs_per_call=6.000 cpp_bytes_per_call=128.000\ncase=external_rows_1920x1080_tile16 samples=101 p50_ns=195105 p95_ns=298069 max_ns=386323 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=external_rows_1920x1080_tile64 samples=101 p50_ns=213842 p95_ns=293362 max_ns=439393 cpp_allocs_per_call=0.000 cpp_bytes_per_call=0.000\ncase=synthetic_cpu_fanout3_fanin samples=101 p50_ns=896017 p95_ns=1393593 max_ns=2800325 cpp_allocs_per_call=33.000 cpp_bytes_per_call=792.000\nidle_window_ms=150 aura_worker_records=4 process_voluntary_context_switches=1 process_involuntary_context_switches=0 process_pss_kb=33934\ngpu_chain=unrun FlashPE=unavailable GitLab_backend=unavailable context_switches_are_not_wakeup_counts\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "reproduction_commands": {
+    "production_config": "cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DENABLE_OPENCL=OFF -DENABLE_FLOW_BENCHMARKS=ON",
+    "functionality": "cmake --build <build> -j4; ctest --test-dir <build> --output-on-failure; <build>/aura_test --gtest_brief=1",
+    "ASan": "ENABLE_ASAN=ON ENABLE_OPENCL=ON; ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 ctest --test-dir <asan-build> --output-on-failure",
+    "TSan": "ENABLE_TSAN=ON ENABLE_OPENCL=OFF; TSAN_OPTIONS=halt_on_error=1 ctest --test-dir <tsan-build> --output-on-failure",
+    "measure_script": "from pathlib import Path\nimport subprocess,json,hashlib,datetime\nroot=Path('/workspace/.cloud-build');out=root/'flow-b7-trim-validation';out.mkdir(exist_ok=True)\nvariants=[('original_aa3b3ae',root/'flow-b1-before/flow_microbenchmark'),('B6_f08c09b',root/'flow-b7-before-build/flow_microbenchmark'),('B7_before_trim',root/'flow-b7-release/flow_microbenchmark'),('B7_trim',root/'flow-b7-trim-release/flow_microbenchmark')]\nrows=[]\nfor r in range(5):\n order=variants[r%4:]+variants[:r%4]\n if r%2:order=list(reversed(order))\n for name,binary in order:\n  p=subprocess.run([str(binary)],capture_output=True,text=True,timeout=60)\n  row={'round':r,'variant':name,'command':[str(binary)],'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'exit':p.returncode,'stdout':p.stdout,'stderr':p.stderr};rows.append(row)\n  (out/f'{name}-{r}.txt').write_text(p.stdout+p.stderr)\n  if p.returncode:raise RuntimeError(row)\n print('measurement round',r+1,'/5 complete',flush=True)\n(out/'runs.json').write_text(json.dumps({'date_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'runs':rows},indent=2)+'\\n')\n"
+  },
+  "remaining": [
+    "R01/X13 controlled performance and business-budget acceptance",
+    "FlashPE/GitLab source/fixed refs and same-input integration",
+    "NDK/Android arm64 link",
+    "QCOM/MTK GPU, cache/import, lifetime and long stress",
+    "device wakeups/power/thread/PSS/cold start",
+    "all external SDK calls return before dlclose",
+    "other platform validation"
+  ],
+  "issue_ids": [
+    "R01",
+    "R02",
+    "R03",
+    "R04",
+    "R05",
+    "R06",
+    "R07",
+    "R08",
+    "R09",
+    "R10",
+    "R11",
+    "R12",
+    "R13",
+    "R14",
+    "R15",
+    "R16",
+    "R17",
+    "R18",
+    "R19",
+    "R20",
+    "R21",
+    "R22",
+    "R23",
+    "R24",
+    "R25",
+    "R26",
+    "R27",
+    "R28",
+    "X01",
+    "X02",
+    "X03",
+    "X04",
+    "X05",
+    "X06",
+    "X07",
+    "X08",
+    "X09",
+    "X10",
+    "X11",
+    "X12",
+    "X13",
+    "X14",
+    "X15"
+  ]
+}

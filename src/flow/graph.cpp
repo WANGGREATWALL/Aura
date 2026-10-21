@@ -117,12 +117,6 @@ int Core::submit(Node* top, bool reportFailure) noexcept
     WorkerAdmission           admission(this);
     std::vector<Prepared>     batch;
     std::vector<Registration> registrations;
-    CapturePreparation        diagnostic;
-    Node*                     dynamicParent = gFrame ? gFrame->mNode : nullptr;
-    // Graph history belongs to an accepted scope; enabling capture does not
-    // retroactively attach diagnostic state to an already running root.
-    const bool captureGraph =
-        dynamicParent ? dynamicParent->mGraphCaptured : mCaptureGraph.load(std::memory_order_relaxed);
     try {
         batch.push_back({top, gFrame ? gFrame->mNode : nullptr, nullptr, {}});
         for (std::size_t i = 0; i < batch.size(); ++i) {
@@ -192,8 +186,6 @@ int Core::submit(Node* top, bool reportFailure) noexcept
         }
         if (visited != batch.size() && !ret)
             ret = au::flow::kErrorCycleDetected;
-        if (!ret && captureGraph)
-            diagnostic = prepareCapture(batch, dynamicParent);
         if (!ret) {
             for (const Prepared& p : batch) {
                 for (Node* before : p.mPreds) {
@@ -236,20 +228,9 @@ int Core::submit(Node* top, bool reportFailure) noexcept
                 ret = au::err::kErrorOverflow;
             if (!ret) {
                 const std::uint64_t rootOrder = batch[0].mParent ? 0 : ++mRootOrder;
-                if (captureGraph && !diagnostic.mBatch) {
-                    if (dynamicParent && dynamicParent->mDiagnostic)
-                        dynamicParent->mDiagnostic->mHistory->dropped();
-                    else
-                        (dynamicParent ? dynamicParent : top)->mGraphDropped.fetch_add(1, std::memory_order_relaxed);
-                }
-                std::size_t diagnosticIndex = 0;
                 for (const Prepared& p : batch) {
-                    Node* node           = p.mNode;
-                    node->mOrder         = ++mOrder;
-                    node->mGraphCaptured = captureGraph;
-                    if (diagnostic.mBatch)
-                        node->mDiagnostic = std::move(diagnostic.mNodes[diagnosticIndex]);
-                    ++diagnosticIndex;
+                    Node* node       = p.mNode;
+                    node->mOrder     = ++mOrder;
                     node->mRootOrder = node == top ? rootOrder : 0;
                     node->mParent    = NodeRef(p.mParent);
                     linkChild(node);
@@ -286,10 +267,6 @@ int Core::submit(Node* top, bool reportFailure) noexcept
         return ret;
     }
 
-    if (diagnostic.mBatch)
-        diagnostic.mHistory->publish(std::move(diagnostic.mBatch));
-    for (const Prepared& p : batch)
-        trace(p.mNode, "Task", 'b');
     for (Registration& r : registrations) {
         Edge* edge = r.mEdge.release();
         Edge* head = r.mBefore->mSuccessors.load(std::memory_order_acquire);  // Observe final close.

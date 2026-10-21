@@ -62,7 +62,7 @@ class PayloadPool final : public SystemPayloadAllocator {};
 #endif
 ''')
 # Build the same latest measurement tool against the fixed scheduler variant.
-for name in ['flow_mechanism_benchmark.cpp', 'test_flow_mechanisms.cpp', 'flow_gpu_gap_benchmark.cpp', 'flow_diagnostics_benchmark.cpp', 'flow_payload_benchmark.cpp']:
+for name in ['flow_mechanism_benchmark.cpp', 'test_flow_mechanisms.cpp', 'flow_gpu_gap_benchmark.cpp', 'flow_payload_benchmark.cpp']:
     p = repo / 'test' / name
     (out / 'test' / name).write_bytes(p.read_bytes())
 for name in ['flow_reference_queue.h', 'flow_reference_allocators.h']:
@@ -75,7 +75,7 @@ if(ENABLE_FLOW_BENCHMARKS)
     target_include_directories(flow_mechanism_benchmark PRIVATE src)
     target_link_libraries(flow_mechanism_benchmark PRIVATE aura)
     target_compile_features(flow_mechanism_benchmark PRIVATE cxx_std_17)
-    foreach(benchmark IN ITEMS flow_gpu_gap_benchmark flow_diagnostics_benchmark flow_payload_benchmark)
+    foreach(benchmark IN ITEMS flow_gpu_gap_benchmark flow_payload_benchmark)
         add_executable(${benchmark} test/${benchmark}.cpp)
         target_include_directories(${benchmark} PRIVATE src)
         target_link_libraries(${benchmark} PRIVATE aura)
