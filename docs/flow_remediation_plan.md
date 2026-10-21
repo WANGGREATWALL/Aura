@@ -60,24 +60,24 @@
 | R08 | Core 职责过多，diagnostics 已部分分离 | 按图/执行器/外部完成/tiled 职责拆分，共享私有状态边界清晰；不设 400 行硬指标，不引入无必要的动态抽象 | 状态所有者和锁边界可审查；行为测试一致；与格式改动分开 | B4 / HOST_VERIFIED（见 B4 报告） |
 | R09 | 池收益与高水位驻留未量化；submit 尚有分配 | 普通分配/池化可比实验；记录池页/闭包档位与峰值，决定保留、缩减或移除 | 对齐、OOM 回滚、恰好一次析构、并发复用不变；吞吐/尾延迟/PSS 决策记录 | B6 / TODO |
 | R10 | 多套错误候选增加阅读成本，但优先级有业务意义 | 封装内部合并规则，去重复；保留公开 domain/native/cause 和 ABI 布局，不退化为仅日志 | 主体/作用域/后代/Skipped 优先级，业务同码与异常/原生来源测试 | B4 / HOST_VERIFIED（见 B4 报告）；删公开字段不采纳 |
-| R11 | 结构化 enqueue 默认行为不够醒目 | 在公开头/示例说明自动归属、非阻塞 enqueue 与最终 join；保留默认，不新增隐式 detached | 文档与嵌套/失败/快照测试吻合 | B5 / TODO；改默认为独立根不采纳 |
+| R11 | 结构化 enqueue 默认行为不够醒目 | 在公开头/示例说明自动归属、非阻塞 enqueue 与最终 join；保留默认，不新增隐式 detached | 文档与嵌套/失败/快照测试吻合 | B5 / HOST_VERIFIED（见 B5 报告与迁移文档）；改默认为独立根不采纳 |
 | R12 | 核心直接接入 mm 上下文及初始化 | 评估小型私有上下文桥，隔离集成职责；保留 registry/析构顺序，不新增通用插件注册框架 | CPU 任务路径、mm 错误回传、清理重入、退出及双 so 隔离测试 | B4 / HOST_VERIFIED（见 B4 报告） |
 | R13 | trace 首次约 14 MB、高水位记录和诊断子边保留 | 保留 DOT；时间线可裁剪，生产默认不启用；动态历史用轻量快照，不用裸 ID 丢失元数据；是否移除时间线按实际需求作明确结论 | 关闭时无 trace 存储、捕获结束可释放；并发导出/UTF-8/动态 DAG；驻留测量 | B6 / TODO |
 | R14 | 默认测试配置会把故障钩子编入 aura；发布开关易误用 | 正常 aura 无故障宏，单独 aura_testing 变体；子项目测试默认关闭并尊重父工程 | 默认/Release/子项目 production 编译命令和符号无测试钩子；测试变体故障用例真实执行 | B0 / CLOSED（主机证据见 B0 报告） |
 | R15 | 深度、批量、重试和时间常量分散 | 按含义具名，说明边界和调优依据；不同含义不合并成通用 8 | 边界测试覆盖；查询/退休与调优文档同源 | B2/B3/B4 / HOST_VERIFIED（取值不变，见 constants.h 与 B4 报告） |
-| R16 | 仅 Android/Linux 负载不等于取消 Aura 跨平台目标 | 保留 sys 平台隔离，明确支持与未验证范围，不删除 Apple/Windows 分支 | Linux/Android 必验；其他平台明确未测，不能伪称通过 | B5、B7 / DECISION_RECORDED：不缩小平台目标 |
-| R17 | XImage 按值捕获仍借用，异步迁移有 UAF 风险 | 公开示例明确 owning move 与 borrowed move；资源身份/租约显式适配，不用结束时 registry 检查伪造保护 | 复制/移动/提前丢句柄/在途资源测试；无隐式深拷贝或改变借用语义 | B5 / TODO |
-| R18 | 过期原始 C handle 可指向复用槽位，正常 Task 拥有引用不受此问题影响 | 文档声明 raw handle 生命周期；验证合法引用阻止复用。不承诺失效指针可安全探测；若将来强化需稳定表+generation+pin | 合法复制/移动/释放/复用、跨 owner 检查；不调用悬空句柄来宣称安全 | B5 / TODO；本轮不改句柄 ABI |
+| R16 | 仅 Android/Linux 负载不等于取消 Aura 跨平台目标 | 保留 sys 平台隔离，明确支持与未验证范围，不删除 Apple/Windows 分支 | Linux/Android 必验；其他平台明确未测，不能伪称通过 | B5 / DECISION_RECORDED：不缩小平台目标，平台验证边界见迁移文档；Android 与其他平台 B7 / USER_VALIDATION |
+| R17 | XImage 按值捕获仍借用，异步迁移有 UAF 风险 | 公开示例明确 owning move 与 borrowed move；资源身份/租约显式适配，不用结束时 registry 检查伪造保护 | 复制/移动/提前丢句柄/在途资源测试；无隐式深拷贝或改变借用语义 | B5 / HOST_VERIFIED（复制/借用移动/拥有型移动/提前丢句柄及访问租约回归；见 B5 报告） |
+| R18 | 过期原始 C handle 可指向复用槽位，正常 Task 拥有引用不受此问题影响 | 文档声明 raw handle 生命周期；验证合法引用阻止复用。不承诺失效指针可安全探测；若将来强化需稳定表+generation+pin | 合法复制/移动/释放/复用、跨 owner 检查；不调用悬空句柄来宣称安全 | B5 / HOST_VERIFIED（合法引用/池复用/C11/C++11/双 so；见 B5 报告）；本轮不改句柄 ABI |
 | R19 | 缺统一锁顺序/回调边界说明 | 记录锁层级、禁止同时持有关系、函数前置条件；用户代码/驱动/析构在锁外 | 锁审查清单、重入/故障测试、TSan 适用环境结果 | B4 / HOST_VERIFIED（见 B4 报告） |
 | R20 | ARM64、QCOM/MTK 真机证据缺失 | 弱内存与进度模型加真机压力；可用时 TSan，无法运行说明替代证据，不能将 TSan 视为正确性证明 | 骁龙/天玑适用设备、长时负载、队列暂停/回收/唤醒记录和真实 GPU/cache 结果 | B1、B7 / USER_VALIDATION |
-| R21 | 建图示例冗长；忽略已接受目标的错误不安全 | 优先 enqueueAfter 常见用法；评估最小 `>>` 独立 Chain 结果，必须保留首错且不污染已接受节点；最终作纳入或不纳入的明确决策 | Draft/已接受端点/空或拒绝句柄/临时对象/链式首错/原图不被修改 | B5 / TODO |
-| R22 | valid、接受、等待和结果容易混淆 | 保留必要状态维度，给出查询语义表和短示例；说明 C 操作状态与 C++ 任务码，不直接砍成四接口 | Invalid/Draft/Pending/Rejected/Failed/Skipped/Succeeded/超时的矩阵 | B5 / TODO |
-| R23 | 普通任务 int、tiled void/int 是明确的现有契约 | 保留普通 int 约束，解释 tiled 历史宏；不以“不一致”自动扩展 void async | C++11 消费与普通非 int 拒绝、tiled void/int 测试 | B5 / DECISION_RECORDED：本轮不增加 void async |
-| R24 | flow 专属错误码经需求允许，目前未发现通用码冲突 | 保留数值与兼容名字，登记 -5001~-5004 段及查询方法，完善一致性测试 | 名字/数值/未知码与业务同值 domain；不擅改 au::err::isError 全局语义 | B5 / TODO |
-| R25 | parallelizeTiledTasks 过长 | 增加明确 range/tile/offset/count 语义的 parallelFor 薄别名；保留原名与旧宏，不默认扩张一整套宏族 | C++11、旧宏、新入口行为一致；不改变 offset/count 语义 | B5 / TODO |
+| R21 | 建图示例冗长；忽略已接受目标的错误不安全 | 优先 enqueueAfter 常见用法；评估最小 `>>` 独立 Chain 结果，必须保留首错且不污染已接受节点；最终作纳入或不纳入的明确决策 | Draft/已接受端点/空或拒绝句柄/临时对象/链式首错/原图不被修改 | B5 / DECISION_RECORDED + HOST_VERIFIED：本轮不纳入 Chain，保留 enqueueAfter/precede；首错与已接受目标隔离已验证，Chain 专属项不适用 |
+| R22 | valid、接受、等待和结果容易混淆 | 保留必要状态维度，给出查询语义表和短示例；说明 C 操作状态与 C++ 任务码，不直接砍成四接口 | Invalid/Draft/Pending/Rejected/Failed/Skipped/Succeeded/超时的矩阵 | B5 / HOST_VERIFIED（查询矩阵与原始 C 操作码分离；见 B5 报告） |
+| R23 | 普通任务 int、tiled void/int 是明确的现有契约 | 保留普通 int 约束，解释 tiled 历史宏；不以“不一致”自动扩展 void async | C++11 消费与普通非 int 拒绝、tiled void/int 测试 | B5 / DECISION_RECORDED + HOST_VERIFIED：不增加 void async，C++11 正/负编译验证及 tiled void/int 通过 |
+| R24 | flow 专属错误码经需求允许，目前未发现通用码冲突 | 保留数值与兼容名字，登记 -5001~-5004 段及查询方法，完善一致性测试 | 名字/数值/未知码与业务同值 domain；不擅改 au::err::isError 全局语义 | B5 / HOST_VERIFIED（数值/名字/未知码/业务同值 domain；见 B5 报告） |
+| R25 | parallelizeTiledTasks 过长 | 增加明确 range/tile/offset/count 语义的 parallelFor 薄别名；保留原名与旧宏，不默认扩张一整套宏族 | C++11、旧宏、新入口行为一致；不改变 offset/count 语义 | B5 / HOST_VERIFIED（新别名、旧方法/宏、非拷贝回调与 C++11 生产消费者） |
 | R26 | 普通 Task GPU 边等待完整完成有 host gap；大小核类别非首版强制 | 文档明确取舍；测单任务/普通 DAG/native 链。按数据决定显式设备依赖，不改普通边。显式 CPU 集合保留；核类别探测按能力/收益作结论 | 同 context/跨 context、staging/直接导入、失败/清理/资源别名与 host/device 分域测量；缺设备不算完成 | B1、B6、B7 / USER_VALIDATION：设备决策 |
 | R27 | Android 手写 pthread、缺 log 的链接问题已有对方复现 | Threads::Threads + CMAKE_DL_LIBS；Android 链接 android/log；移除测试目标重复 pthread，不用桩作为修法 | 本机构建通过；NDK r25c/API28 arm64 默认及 OpenCL 目标真实链接，无 pthread 桩，记录实际结果 | B0 / HOST_VERIFIED；NDK 验证 USER_VALIDATION |
-| R28 | 密集多语句与自命名空间限定影响阅读 | 按 .clang-format 整理相关文件；不引入 using；行为与格式分开审查 | diff --check、格式检查及相应构建；不全仓格式化 | B4 实现 HOST_VERIFIED；B5 公开界面/示例 TODO |
+| R28 | 密集多语句与自命名空间限定影响阅读 | 按 .clang-format 整理相关文件；不引入 using；行为与格式分开审查 | diff --check、格式检查及相应构建；不全仓格式化 | B4/B5 / HOST_VERIFIED（实现、公开界面及相关示例；机械格式补丁单独留证） |
 
 ## 4 补充问题清单
 
@@ -164,18 +164,20 @@
 
 退出：行为一致、同步关系可审查；图遍历成本和原基线比较，性能不因“整理”失控。
 
-状态：B4 代码与主机回归完成：[B4 报告](flow_validation/B4-2026-10-21.md)、[锁关系](flow_locking.md)、[五轮数据](flow_validation/B4-2026-10-21-data.json)。CPU 175/175、OpenCL 模型 188/188；ASan/LSan、TSan 通过。图搜索锁内时间下降，但部分生产 CPU 指标变差，R01/X13 保持 IN_PROGRESS；设备性能仍为 USER_VALIDATION。本批未 commit/push。
+状态：B4 代码与主机回归完成：[B4 报告](flow_validation/B4-2026-10-21.md)、[锁关系](flow_locking.md)、[五轮数据](flow_validation/B4-2026-10-21-data.json)。CPU 175/175、OpenCL 模型 188/188；ASan/LSan、TSan 通过。图搜索锁内时间下降，但部分生产 CPU 指标变差，R01/X13 保持 IN_PROGRESS；设备性能仍为 USER_VALIDATION。B4 已提交并推送 `2342731`。
 
 ### B5：公开接口与迁移文档
 
-- [ ] parallelFor 薄别名、旧名/宏兼容；range/tile/offset/count 明确。
-- [ ] 查询状态表、结构化默认、XImage 借用/owning move、原始 handle 生命周期和 flow 错误码说明。
-- [ ] `>>` 最小 Chain 方案评估并明确纳入或不纳入；若实现，首错独立保存、不污染已接受节点。
-- [ ] 不扩展 void async、不删除错误来源字段、不改默认结构化语义、不删除平台分支的结论写入。
-- [ ] C11/C++11 消费者、ABI、旧宏、提交失败与借用安全示例验证。
-- [ ] 对 FlashPE 调用点实查，不能只按对方报告的“5 宏/3 addPipeline”估算整合工作。
+- [x] parallelFor 薄别名、旧名/宏兼容；range/tile/offset/count 明确。
+- [x] 查询状态表、结构化默认、XImage 借用/owning move、原始 handle 生命周期和 flow 错误码说明。
+- [x] `>>` 最小 Chain 方案评估并明确纳入或不纳入；若实现，首错独立保存、不污染已接受节点。
+- [x] 不扩展 void async、不删除错误来源字段、不改默认结构化语义、不删除平台分支的结论写入。
+- [x] C11/C++11 消费者、ABI、旧宏、提交失败与借用安全示例验证。
+- [ ] **USER_VALIDATION**：FlashPE 调用点实查；当前未提供源码，不能确认“5 宏/3 addPipeline”数量。迁移文档提供检索与逐项审查要求，按用户决定交付后在目标环境验证，不阻塞主机部分。
 
 退出：API、设计、README、示例与真实行为一致；改变与保留均有明确迁移说明。
+
+状态：B5 主机实现与文档完成，证据见 [B5 报告](flow_validation/B5-2026-10-21.md)、[迁移文档](flow_migration.md)。公开薄别名之外不改变调度语义；不纳入 Chain/void async。FlashPE 源码实查和目标环境验证保持 USER_VALIDATION，不将本批或整轮标为全部验收。本批未 commit/push；下一批 B6。
 
 ### B6：有数据的机制取舍
 
@@ -241,4 +243,12 @@ R01/X13 尚未收口：B3 CPU 回测同时包含改善和退化，不以主机�
 
 CPU 175/175、OpenCL 模型 188/188；CPU/OpenCL CTest 分别 11 通过、14 通过+1硬件 skipped；ASan/LSan 14/14、TSan 11/11。最终仅补充私有计时后，相关 CPU 6/6、ASan/OpenCL 4/4、TSan 3/3 再检查通过。正常 Release 符号、严格 C11/C++11、flow 测试关闭时的 benchmark 构建及格式检查通过。
 
-图基准的全局活动扫描降为 0，协作栈多次检查合为一次；Node 从 584 增至 624 字节，内存取舍纳入 R09/B6。生产 CPU 五轮包含退化：managed 空循环和合成 fan-out 的 p50 约增加 7.5% / 7.8%，不能据图微基准关闭 R01/X13。B3/B4 的事件/退休模型均 5/5 正常完成；真实设备/FlashPE 指标仍由用户验证。当前本批未 commit/push；下一批 B5，B6/B7 保持计划与未完成状态。
+图基准的全局活动扫描降为 0，协作栈多次检查合为一次；Node 从 584 增至 624 字节，内存取舍纳入 R09/B6。生产 CPU 五轮包含退化：managed 空循环和合成 fan-out 的 p50 约增加 7.5% / 7.8%，不能据图微基准关闭 R01/X13。B3/B4 的事件/退休模型均 5/5 正常完成；真实设备/FlashPE 指标仍由用户验证。B4 当时未 commit/push，后已推送 `2342731`；后续 B5/B6/B7 按各批状态跟踪。
+
+## 11 B5 实际执行记录（2026-10-21，北京时间）
+
+以已推送 B4 `2342731` 为基线，新增 parallelFor 薄别名、迁移文档与 C++11 生产例子；其余公开语义及 Core 调度算法保持。R11/R17/R18/R22/R24/R25/R28 主机验证，R16/R21/R23 的保留/不纳入决定明确，R26 的 host gap 与平台能力边界补充说明但不关闭设备项。
+
+CPU 180/180、OpenCL 模型 193/193；CTest 分别 13/13 和 16 通过+1 硬件跳过；ASan/LSan 16/16、TSan 13/13；最终接口子集 8/8，C11/C++11/C++17 严格编译、B4 消费者及 ABI v1 对照通过。详见 [B5 报告](flow_validation/B5-2026-10-21.md)与[数据](flow_validation/B5-2026-10-21-data.json)。
+
+FlashPE 源码调用点实查保持 USER_VALIDATION，迁移文档未确认对方报告的数量；Android/真机按用户决定稍后验证。B6/B7、R01/X13 与目标设备最终验收保持未完成。本批未 commit/push。

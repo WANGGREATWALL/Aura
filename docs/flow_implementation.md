@@ -1,6 +1,6 @@
 # au::flow 实现进度与验证
 
-后续整改与逐项验收见 [flow_remediation_plan.md](flow_remediation_plan.md)。正常 `aura` 已与故障注入变体 `aura_testing` 分离；下文早期测试条数是历史记录，不代替整改后的新结果。
+后续整改与逐项验收见 [flow_remediation_plan.md](flow_remediation_plan.md)，当前公共契约与可编译例子见 [flow_migration.md](flow_migration.md)。正常 `aura` 已与故障注入变体 `aura_testing` 分离；下文早期测试条数是历史记录，不代替整改后的新结果。
 
 ## 0 范围
 
@@ -15,7 +15,7 @@
 | `inc/flow/xflow_api.h` | C 兼容窄腰, ABI 版本, opaque handle, 结果与容量查询 |
 | `inc/flow/xflow.h` | C++11 Task/Tasks/XFlow 外观, callable 绑定与旧宏 |
 | `inc/flow/xflow_types.h` | 轻量状态/结果/策略类型, 完成桥不引入公开任务模板 |
-| `src/flow/xflow.cpp` | C++17 状态机, 原子接受, 依赖, 结构化完成, worker 与等待 |
+| `src/flow/xflow.cpp` | C ABI 转发；实现已拆分到 graph/executor/tiled/task_completion 等私有单元 |
 | `src/flow/diagnostics.*` | 无调度器指针的图快照, DOT/trace 格式化与文件导出, 可选 trace 存储 |
 | `src/flow/ready_queue.h` | 256 槽 MPMC 快路径和侵入式 MPSC 溢出 |
 | `src/flow/slab.h` | 稳定地址页, Task/edge/external 初始页分别为 128/256/64 |
@@ -34,7 +34,7 @@
 
 ## 2 已实现的主机协议
 
-- 获取 XFlow facade 不建线程. 接受工作时先保证一个 worker 可用, 后续按就绪需求扩展和复用, 最多 8 个. 无空闲自动销毁.
+- 获取 XFlow facade 不建线程. 接受工作时先保证一个 worker 可用, 后续按就绪需求扩展和复用, 最多 8 个. 默认空闲 2 秒退休到 0，GPU 在途仍保留查询推进者，见 B3 报告.
 - 普通任务只接受实际调用结果为 int 的 callable. 参数默认复制/移动, `std::ref/std::cref` 显式借用. 任意非零返回值失败, 不改变 XImage 的借用契约.
 - Task 的共享身份使用侵入式引用计数; 接受记录, 依赖边, 运行栈, 父作用域和外部记录持有各自引用. 引用归零后的连锁回收用迭代链, 不按图深度递归析构.
 - Tasks 具有入口 gate 和汇总身份, 支持嵌套. 接受前取得记录与边, 验证 Draft 外部前驱和组合环, 接受后冻结目标依赖. 提交 latch 阻止注册期间提前执行.
@@ -301,3 +301,9 @@ return tailCode ? tailCode : aCode ? aCode : bCode;
 TaskErrors 封装错误候选与优先级，ExecutionErrors 统一 mm 的初始化/错误路由和 TLS 恢复，公开结果与默认语义不变。公开 flow 头文件无改动，严格 C11/C++11 消费检查通过。CPU 175/175、OpenCL 模型 188/188、ASan/LSan、TSan 主机回归通过，真实硬件尚待用户验证。
 
 图锁内检查时间显著下降，但 Node 增加 40 字节，部分生产 CPU 指标仍退化；完整保留正反数据，R01/X13 继续由 B6 收口，不宣称整体性能或设备验收完成。
+
+## 15 B5 公共接口与迁移
+
+新增 C++11 `parallelFor(range, tile, f)` 薄别名；旧方法、旧宏和历史 include 保留，C ABI v1 与结果布局不变。完整语义、状态矩阵、XImage 拥有/借用、raw handle 和平台边界见 [迁移文档](flow_migration.md)。不新增 void async，不变更结构化默认或错误来源；本轮明确不纳入 `>>`/Chain，常见依赖用 enqueueAfter，Draft 图显式检查建边错误。此文档补充权威设计中的接口说明，不将最初设计的快照当作当前验证结果。
+
+B5 主机验证记录见 [B5 报告](flow_validation/B5-2026-10-21.md)。FlashPE 源码实查与设备验证仍由用户在目标环境验收；没有确认调用点数量。

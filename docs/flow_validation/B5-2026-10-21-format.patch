@@ -1,0 +1,861 @@
+--- a/inc/flow/xflow.h
++++ b/inc/flow/xflow.h
+@@ -28,5 +28,5 @@
+-    out.mStructSize = sizeof(out);
+-    out.mState = static_cast<au::flow::TaskState>(in.mState);
+-    out.mDomain = static_cast<au::flow::ErrorDomain>(in.mDomain);
+-    out.mCode = in.mCode;
+-    out.mNativeCode = in.mNativeCode;
++    out.mStructSize  = sizeof(out);
++    out.mState       = static_cast<au::flow::TaskState>(in.mState);
++    out.mDomain      = static_cast<au::flow::ErrorDomain>(in.mDomain);
++    out.mCode        = in.mCode;
++    out.mNativeCode  = in.mNativeCode;
+@@ -36 +36,4 @@
+-template <std::size_t... I> struct Indices {};
++template <std::size_t... I>
++struct Indices
++{
++};
+@@ -38 +41,3 @@
+-struct MakeIndices : au::flow::detail::MakeIndices<N - 1, N - 1, I...> {};
++struct MakeIndices : au::flow::detail::MakeIndices<N - 1, N - 1, I...>
++{
++};
+@@ -40 +45,4 @@
+-struct MakeIndices<0, I...> { typedef au::flow::detail::Indices<I...> type; };
++struct MakeIndices<0, I...>
++{
++    typedef au::flow::detail::Indices<I...> type;
++};
+@@ -43,4 +51,5 @@
+-auto invoke(F&& f, A&&... a)
+-    -> typename std::enable_if<!std::is_member_pointer<typename std::decay<F>::type>::value,
+-        decltype(std::forward<F>(f)(std::forward<A>(a)...))>::type
+-{ return std::forward<F>(f)(std::forward<A>(a)...); }
++auto invoke(F&& f, A&&... a) -> typename std::enable_if<!std::is_member_pointer<typename std::decay<F>::type>::value,
++                                                        decltype(std::forward<F>(f)(std::forward<A>(a)...))>::type
++{
++    return std::forward<F>(f)(std::forward<A>(a)...);
++}
+@@ -49,4 +58,5 @@
+-auto invoke(F&& f, A&&... a)
+-    -> typename std::enable_if<std::is_member_pointer<typename std::decay<F>::type>::value,
+-        decltype(std::mem_fn(f)(std::forward<A>(a)...))>::type
+-{ return std::mem_fn(f)(std::forward<A>(a)...); }
++auto invoke(F&& f, A&&... a) -> typename std::enable_if<std::is_member_pointer<typename std::decay<F>::type>::value,
++                                                        decltype(std::mem_fn(f)(std::forward<A>(a)...))>::type
++{
++    return std::mem_fn(f)(std::forward<A>(a)...);
++}
+@@ -56,6 +66,9 @@
+-template <class T> struct PayloadDeleter {
+-    void operator()(void* payload) const noexcept
+-    { au_flow_payload_release(payload, sizeof(T), alignof(T)); }
+-};
+-template <class F, class... A> struct Bound {
+-    F mFunction;
++template <class T>
++struct PayloadDeleter
++{
++    void operator()(void* payload) const noexcept { au_flow_payload_release(payload, sizeof(T), alignof(T)); }
++};
++template <class F, class... A>
++struct Bound
++{
++    F                mFunction;
+@@ -64,2 +77,3 @@
+-    explicit Bound(G&& f, B&&... a)
+-        : mFunction(std::forward<G>(f)), mArguments(std::forward<B>(a)...) {}
++    explicit Bound(G&& f, B&&... a) : mFunction(std::forward<G>(f)), mArguments(std::forward<B>(a)...)
++    {
++    }
+@@ -70,5 +84,5 @@
+-        static_assert(std::is_same<decltype(au::flow::detail::invoke(
+-            std::move(mFunction), std::move(std::get<I>(mArguments))...)), int>::value,
+-            "A flow task must return int; borrow lvalue-only callables with std::ref");
+-        return au::flow::detail::invoke(std::move(mFunction),
+-                                        std::move(std::get<I>(mArguments))...);
++        static_assert(std::is_same<decltype(au::flow::detail::invoke(std::move(mFunction),
++                                                                     std::move(std::get<I>(mArguments))...)),
++                                   int>::value,
++                      "A flow task must return int; borrow lvalue-only callables with std::ref");
++        return au::flow::detail::invoke(std::move(mFunction), std::move(std::get<I>(mArguments))...);
+@@ -81 +95,4 @@
+-        } catch (...) { au_flow_record_exception(); return au::flow::kErrorUnhandledException; }
++        } catch (...) {
++            au_flow_record_exception();
++            return au::flow::kErrorUnhandledException;
++        }
+@@ -90,2 +107,5 @@
+-template <class R> struct TileResult {
+-    template <class F> static int call(F& f, std::size_t i, std::size_t n)
++template <class R>
++struct TileResult
++{
++    template <class F>
++    static int call(F& f, std::size_t i, std::size_t n)
+@@ -97,5 +117,13 @@
+-template <> struct TileResult<void> {
+-    template <class F> static int call(F& f, std::size_t i, std::size_t n)
+-    { f(i, n); return 0; }
+-};
+-template <class F> struct Tile {
++template <>
++struct TileResult<void>
++{
++    template <class F>
++    static int call(F& f, std::size_t i, std::size_t n)
++    {
++        f(i, n);
++        return 0;
++    }
++};
++template <class F>
++struct Tile
++{
+@@ -107,4 +135,7 @@
+-        } catch (...) { au_flow_record_exception(); return au::flow::kErrorUnhandledException; }
+-    }
+-};
+-} // namespace detail
++        } catch (...) {
++            au_flow_record_exception();
++            return au::flow::kErrorUnhandledException;
++        }
++    }
++};
++}  // namespace detail
+@@ -113 +144,2 @@
+-class Task {
++class Task
++{
+@@ -117,5 +149,9 @@
+-    Task(const au::flow::Task& other) noexcept
+-        : mHandle(other.mHandle), mRejection(other.mRejection) { au_flow_retain(mHandle); }
+-    Task(au::flow::Task&& other) noexcept
+-        : mHandle(other.mHandle), mRejection(other.mRejection)
+-    { other.mHandle = nullptr; other.mRejection = 0; }
++    Task(const au::flow::Task& other) noexcept : mHandle(other.mHandle), mRejection(other.mRejection)
++    {
++        au_flow_retain(mHandle);
++    }
++    Task(au::flow::Task&& other) noexcept : mHandle(other.mHandle), mRejection(other.mRejection)
++    {
++        other.mHandle    = nullptr;
++        other.mRejection = 0;
++    }
+@@ -124 +160,2 @@
+-        std::swap(mHandle, other.mHandle); std::swap(mRejection, other.mRejection);
++        std::swap(mHandle, other.mHandle);
++        std::swap(mRejection, other.mRejection);
+@@ -127,2 +164,2 @@
+-    bool valid() const noexcept { return mHandle != nullptr || mRejection != 0; }
+-    std::uint64_t id() const noexcept { return au_flow_id(mHandle); }
++    bool                valid() const noexcept { return mHandle != nullptr || mRejection != 0; }
++    std::uint64_t       id() const noexcept { return au_flow_id(mHandle); }
+@@ -131,5 +168,3 @@
+-        return mRejection ? au::flow::TaskState::Rejected
+-            : static_cast<au::flow::TaskState>(au_flow_state(mHandle));
+-    }
+-    int submissionCode() const noexcept
+-    { return mRejection ? mRejection : au_flow_submission(mHandle); }
++        return mRejection ? au::flow::TaskState::Rejected : static_cast<au::flow::TaskState>(au_flow_state(mHandle));
++    }
++    int submissionCode() const noexcept { return mRejection ? mRejection : au_flow_submission(mHandle); }
+@@ -139,3 +174,6 @@
+-            out = {sizeof(out), au::flow::TaskState::Rejected, mRejection == au::err::kErrorNoMemory
+-                       ? au::flow::ErrorDomain::Memory : au::flow::ErrorDomain::Flow,
+-                   mRejection, 0, 0};
++            out = {sizeof(out),
++                   au::flow::TaskState::Rejected,
++                   mRejection == au::err::kErrorNoMemory ? au::flow::ErrorDomain::Memory : au::flow::ErrorDomain::Flow,
++                   mRejection,
++                   0,
++                   0};
+@@ -144,3 +182,5 @@
+-        au_flow_result value = {}; value.mStructSize = sizeof(value);
+-        const int ret = au_flow_result_get(mHandle, &value);
+-        if (!ret) au::flow::detail::copyResult(value, out);
++        au_flow_result value = {};
++        value.mStructSize    = sizeof(value);
++        const int ret        = au_flow_result_get(mHandle, &value);
++        if (!ret)
++            au::flow::detail::copyResult(value, out);
+@@ -154 +194 @@
+-        const int ret = result(value);
++        const int            ret   = result(value);
+@@ -159,2 +199 @@
+-    int wait(au::flow::TaskResult* out = nullptr) const noexcept
+-    { return waitFor(UINT64_MAX, out); }
++    int wait(au::flow::TaskResult* out = nullptr) const noexcept { return waitFor(UINT64_MAX, out); }
+@@ -164 +203,2 @@
+-            if (out) (void)result(*out);
++            if (out)
++                (void)result(*out);
+@@ -167,4 +207,7 @@
+-        au_flow_result value = {}; value.mStructSize = sizeof(value);
+-        const int ret = au_flow_wait(mHandle, timeoutMs, &value);
+-        if (ret) return ret; // Leave details unchanged when the wait did not complete.
+-        if (out) au::flow::detail::copyResult(value, *out);
++        au_flow_result value = {};
++        value.mStructSize    = sizeof(value);
++        const int ret        = au_flow_wait(mHandle, timeoutMs, &value);
++        if (ret)
++            return ret;  // Leave details unchanged when the wait did not complete.
++        if (out)
++            au::flow::detail::copyResult(value, *out);
+@@ -176,2 +219,4 @@
+-        if (mRejection) return au_flow_builder_error(next.mHandle, mRejection);
+-        if (next.mRejection) return next.mRejection;
++        if (mRejection)
++            return au_flow_builder_error(next.mHandle, mRejection);
++        if (next.mRejection)
++            return next.mRejection;
+@@ -180,0 +226 @@
++
+@@ -186,4 +232,5 @@
+-    int mRejection;
+-};
+-
+-class Tasks {
++    int            mRejection;
++};
++
++class Tasks
++{
+@@ -191,2 +238 @@
+-    Tasks() noexcept : mTask(), mOwnsBuilder(true)
+-    { mTask.mRejection = au_flow_group(&mTask.mHandle); }
++    Tasks() noexcept : mTask(), mOwnsBuilder(true) { mTask.mRejection = au_flow_group(&mTask.mHandle); }
+@@ -194,3 +240,11 @@
+-    { for (const auto& task : tasks) if (add(task)) break; }
+-    ~Tasks() noexcept { if (mOwnsBuilder) au_flow_abandon(mTask.mHandle); }
+-    Tasks(const au::flow::Tasks&) = delete;
++    {
++        for (const auto& task : tasks)
++            if (add(task))
++                break;
++    }
++    ~Tasks() noexcept
++    {
++        if (mOwnsBuilder)
++            au_flow_abandon(mTask.mHandle);
++    }
++    Tasks(const au::flow::Tasks&)                      = delete;
+@@ -198,3 +252,4 @@
+-    Tasks(au::flow::Tasks&& other) noexcept
+-        : mTask(std::move(other.mTask)), mOwnsBuilder(other.mOwnsBuilder)
+-    { other.mOwnsBuilder = false; }
++    Tasks(au::flow::Tasks&& other) noexcept : mTask(std::move(other.mTask)), mOwnsBuilder(other.mOwnsBuilder)
++    {
++        other.mOwnsBuilder = false;
++    }
+@@ -204,2 +259,4 @@
+-            if (mOwnsBuilder) au_flow_abandon(mTask.mHandle);
+-            mTask = std::move(other.mTask); mOwnsBuilder = other.mOwnsBuilder;
++            if (mOwnsBuilder)
++                au_flow_abandon(mTask.mHandle);
++            mTask              = std::move(other.mTask);
++            mOwnsBuilder       = other.mOwnsBuilder;
+@@ -212 +269,2 @@
+-        if (mTask.mRejection) return mTask.mRejection;
++        if (mTask.mRejection)
++            return mTask.mRejection;
+@@ -214 +272 @@
+-            : au_flow_add(mTask.mHandle, task.mHandle);
++                               : au_flow_add(mTask.mHandle, task.mHandle);
+@@ -219 +277,2 @@
+-        if (!ret) child.mOwnsBuilder = false;
++        if (!ret)
++            child.mOwnsBuilder = false;
+@@ -223,6 +282,8 @@
+-    int setName(const char* name) noexcept { return mTask.setName(name); }
+-    bool ready() const noexcept { return mTask.ready(); }
+-    int code() const noexcept { return mTask.code(); }
+-    int wait(au::flow::TaskResult* out = nullptr) const noexcept { return mTask.wait(out); }
+-    int waitFor(std::uint64_t timeoutMs, au::flow::TaskResult* out = nullptr) const noexcept
+-    { return mTask.waitFor(timeoutMs, out); }
++    int            setName(const char* name) noexcept { return mTask.setName(name); }
++    bool           ready() const noexcept { return mTask.ready(); }
++    int            code() const noexcept { return mTask.code(); }
++    int            wait(au::flow::TaskResult* out = nullptr) const noexcept { return mTask.wait(out); }
++    int            waitFor(std::uint64_t timeoutMs, au::flow::TaskResult* out = nullptr) const noexcept
++    {
++        return mTask.waitFor(timeoutMs, out);
++    }
+@@ -230,0 +292 @@
++
+@@ -235 +297 @@
+-    bool mOwnsBuilder;
++    bool           mOwnsBuilder;
+@@ -239 +301,2 @@
+-class XFlow {
++class XFlow
++{
+@@ -242 +305 @@
+-    XFlow(const au::flow::XFlow&) = delete;
++    XFlow(const au::flow::XFlow&)                      = delete;
+@@ -247 +310,2 @@
+-        !std::is_same<typename std::decay<F>::type, au::flow::Tasks>::value, au::flow::Task>::type
++                                !std::is_same<typename std::decay<F>::type, au::flow::Tasks>::value,
++                            au::flow::Task>::type
+@@ -251,3 +315,2 @@
+-            typedef au::flow::detail::Bound<typename std::decay<F>::type,
+-                typename std::decay<Args>::type...> Payload;
+-            void* storage = nullptr;
++            typedef au::flow::detail::Bound<typename std::decay<F>::type, typename std::decay<Args>::type...> Payload;
++            void*     storage   = nullptr;
+@@ -255 +318,2 @@
+-            if (allocated) return au::flow::Task(nullptr, allocated);
++            if (allocated)
++                return au::flow::Task(nullptr, allocated);
+@@ -258,2 +322,2 @@
+-            au_flow_handle h = nullptr;
+-            const int ret = au_flow_make(&Payload::run, &Payload::destroy, payload.release(), &h);
++            au_flow_handle h   = nullptr;
++            const int      ret = au_flow_make(&Payload::run, &Payload::destroy, payload.release(), &h);
+@@ -261,2 +325,5 @@
+-        } catch (const std::bad_alloc&) { return au::flow::Task(nullptr, au::err::kErrorNoMemory); }
+-        catch (...) { return au::flow::Task(nullptr, au::flow::kErrorUnhandledException); }
++        } catch (const std::bad_alloc&) {
++            return au::flow::Task(nullptr, au::err::kErrorNoMemory);
++        } catch (...) {
++            return au::flow::Task(nullptr, au::flow::kErrorUnhandledException);
++        }
+@@ -266 +333,2 @@
+-        !std::is_same<typename std::decay<F>::type, au::flow::Tasks>::value, au::flow::Task>::type
++                                !std::is_same<typename std::decay<F>::type, au::flow::Tasks>::value,
++                            au::flow::Task>::type
+@@ -268 +336,3 @@
+-    { return enqueue(makeTask(std::forward<F>(f), std::forward<Args>(args)...)); }
++    {
++        return enqueue(makeTask(std::forward<F>(f), std::forward<Args>(args)...));
++    }
+@@ -272 +342,4 @@
+-        if (task.mRejection) { au_flow_record_error(task.mRejection); return task; }
++        if (task.mRejection) {
++            au_flow_record_error(task.mRejection);
++            return task;
++        }
+@@ -280 +353,3 @@
+-    { return enqueueAfter({before}, std::forward<F>(f), std::forward<Args>(args)...); }
++    {
++        return enqueueAfter({before}, std::forward<F>(f), std::forward<Args>(args)...);
++    }
+@@ -284,2 +359 @@
+-    au::flow::Task enqueueAfter(std::initializer_list<au::flow::Task> before,
+-                                F&& f, Args&&... args) noexcept
++    au::flow::Task enqueueAfter(std::initializer_list<au::flow::Task> before, F&& f, Args&&... args) noexcept
+@@ -288,4 +362,8 @@
+-        if (!task.mRejection) for (const auto& predecessor : before) {
+-            const int ret = predecessor.precede(task);
+-            if (ret) { (void)au_flow_builder_error(task.mHandle, ret); break; }
+-        }
++        if (!task.mRejection)
++            for (const auto& predecessor : before) {
++                const int ret = predecessor.precede(task);
++                if (ret) {
++                    (void)au_flow_builder_error(task.mHandle, ret);
++                    break;
++                }
++            }
+@@ -296,11 +374,13 @@
+-    { return enqueueAfter(before.mTask, std::forward<F>(f), std::forward<Args>(args)...); }
+-    int wait(const au::flow::Task& task, au::flow::TaskResult* out = nullptr) noexcept
+-    { return task.wait(out); }
+-    int wait(const au::flow::Tasks& tasks, au::flow::TaskResult* out = nullptr) noexcept
+-    { return tasks.wait(out); }
+-    int waitFor(const au::flow::Task& task, std::uint64_t timeoutMs,
+-                au::flow::TaskResult* out = nullptr) noexcept
+-    { return task.waitFor(timeoutMs, out); }
+-    int waitFor(const au::flow::Tasks& tasks, std::uint64_t timeoutMs,
+-                au::flow::TaskResult* out = nullptr) noexcept
+-    { return tasks.waitFor(timeoutMs, out); }
++    {
++        return enqueueAfter(before.mTask, std::forward<F>(f), std::forward<Args>(args)...);
++    }
++    int wait(const au::flow::Task& task, au::flow::TaskResult* out = nullptr) noexcept { return task.wait(out); }
++    int wait(const au::flow::Tasks& tasks, au::flow::TaskResult* out = nullptr) noexcept { return tasks.wait(out); }
++    int waitFor(const au::flow::Task& task, std::uint64_t timeoutMs, au::flow::TaskResult* out = nullptr) noexcept
++    {
++        return task.waitFor(timeoutMs, out);
++    }
++    int waitFor(const au::flow::Tasks& tasks, std::uint64_t timeoutMs, au::flow::TaskResult* out = nullptr) noexcept
++    {
++        return tasks.waitFor(timeoutMs, out);
++    }
+@@ -320 +400 @@
+-        auto callback = std::ref(f); // Also wraps ordinary functions without casting a function pointer to void*.
++        auto callback = std::ref(f);  // Also wraps ordinary functions without casting a function pointer to void*.
+@@ -324 +404,3 @@
+-    { return au_flow_affinity(static_cast<std::uint32_t>(policy.mMode), policy.mCpuIds, policy.mCount); }
++    {
++        return au_flow_affinity(static_cast<std::uint32_t>(policy.mMode), policy.mCpuIds, policy.mCount);
++    }
+@@ -331 +413,3 @@
+-    { return au_flow_worker_affinity(workerId, cpus, capacity, &count); }
++    {
++        return au_flow_worker_affinity(workerId, cpus, capacity, &count);
++    }
+@@ -338,4 +422,2 @@
+-    int dumpDot(const au::flow::Task& task, const char* path) const noexcept
+-    { return au_flow_dot(task.mHandle, path); }
+-    int dumpDot(const au::flow::Tasks& tasks, const char* path) const noexcept
+-    { return dumpDot(tasks.mTask, path); }
++    int dumpDot(const au::flow::Task& task, const char* path) const noexcept { return au_flow_dot(task.mHandle, path); }
++    int dumpDot(const au::flow::Tasks& tasks, const char* path) const noexcept { return dumpDot(tasks.mTask, path); }
+@@ -343,0 +426 @@
++
+@@ -348,2 +431,2 @@
+-} // namespace flow
+-} // namespace au
++}  // namespace flow
++}  // namespace au
+@@ -355 +438,2 @@
+-#define XTHREAD_PARALLELIZE_END });
++#define XTHREAD_PARALLELIZE_END \
++    });
+--- a/inc/flow/xflow_types.h
++++ b/inc/flow/xflow_types.h
+@@ -5,0 +6 @@
++
+@@ -11,3 +12,3 @@
+-constexpr int kErrorDependencyFailed = -5001;
+-constexpr int kErrorCycleDetected = -5002;
+-constexpr int kErrorWouldDeadlock = -5003;
++constexpr int kErrorDependencyFailed   = -5001;
++constexpr int kErrorCycleDetected      = -5002;
++constexpr int kErrorWouldDeadlock      = -5003;
+@@ -16,3 +17,12 @@
+-enum class TaskState : std::uint32_t {
+-    Invalid, Draft, Pending, Ready, Running, Waiting,
+-    Succeeded, Failed, Skipped, Rejected
++enum class TaskState : std::uint32_t
++{
++    Invalid,
++    Draft,
++    Pending,
++    Ready,
++    Running,
++    Waiting,
++    Succeeded,
++    Failed,
++    Skipped,
++    Rejected
+@@ -20,2 +30,14 @@
+-enum class ErrorDomain : std::uint32_t { None, Flow, Callable, Memory, OpenCL, System };
+-enum class AffinityMode : std::uint32_t { SystemDefault, ExplicitCpuSet };
++enum class ErrorDomain : std::uint32_t
++{
++    None,
++    Flow,
++    Callable,
++    Memory,
++    OpenCL,
++    System
++};
++enum class AffinityMode : std::uint32_t
++{
++    SystemDefault,
++    ExplicitCpuSet
++};
+@@ -23,3 +45,4 @@
+-struct TaskResult {
+-    std::uint32_t mStructSize;
+-    au::flow::TaskState mState;
++struct TaskResult
++{
++    std::uint32_t         mStructSize;
++    au::flow::TaskState   mState;
+@@ -27,3 +50,3 @@
+-    int mCode;
+-    int mNativeCode;
+-    std::uint64_t mCauseTaskId;
++    int                   mCode;
++    int                   mNativeCode;
++    std::uint64_t         mCauseTaskId;
+@@ -31 +54,2 @@
+-struct AffinityPolicy {
++struct AffinityPolicy
++{
+@@ -33,2 +57,2 @@
+-    const std::uint32_t* mCpuIds;
+-    std::size_t mCount;
++    const std::uint32_t*   mCpuIds;
++    std::size_t            mCount;
+@@ -36 +60,2 @@
+-struct WorkerInfo {
++struct WorkerInfo
++{
+@@ -42 +67 @@
+-    int mAffinityCode;
++    int           mAffinityCode;
+@@ -47,2 +72,2 @@
+-} // namespace flow
+-} // namespace au
++}  // namespace flow AU_LOCAL
++}  // namespace au
+--- a/inc/flow/xflow_api.h
++++ b/inc/flow/xflow_api.h
+@@ -23,4 +23,12 @@
+-enum au_flow_task_state {
+-    AU_FLOW_INVALID = 0, AU_FLOW_DRAFT, AU_FLOW_PENDING, AU_FLOW_READY,
+-    AU_FLOW_RUNNING, AU_FLOW_WAITING, AU_FLOW_SUCCEEDED, AU_FLOW_FAILED,
+-    AU_FLOW_SKIPPED, AU_FLOW_REJECTED
++enum au_flow_task_state
++{
++    AU_FLOW_INVALID = 0,
++    AU_FLOW_DRAFT,
++    AU_FLOW_PENDING,
++    AU_FLOW_READY,
++    AU_FLOW_RUNNING,
++    AU_FLOW_WAITING,
++    AU_FLOW_SUCCEEDED,
++    AU_FLOW_FAILED,
++    AU_FLOW_SKIPPED,
++    AU_FLOW_REJECTED
+@@ -28,3 +36,8 @@
+-enum au_flow_error_domain {
+-    AU_FLOW_DOMAIN_NONE = 0, AU_FLOW_DOMAIN_FLOW, AU_FLOW_DOMAIN_CALLABLE,
+-    AU_FLOW_DOMAIN_MEMORY, AU_FLOW_DOMAIN_OPENCL, AU_FLOW_DOMAIN_SYSTEM
++enum au_flow_error_domain
++{
++    AU_FLOW_DOMAIN_NONE = 0,
++    AU_FLOW_DOMAIN_FLOW,
++    AU_FLOW_DOMAIN_CALLABLE,
++    AU_FLOW_DOMAIN_MEMORY,
++    AU_FLOW_DOMAIN_OPENCL,
++    AU_FLOW_DOMAIN_SYSTEM
+@@ -33 +46,2 @@
+-typedef struct au_flow_result {
++typedef struct au_flow_result
++{
+@@ -37,2 +51,2 @@
+-    int mCode;
+-    int mNativeCode;
++    int      mCode;
++    int      mNativeCode;
+@@ -42 +56,2 @@
+-typedef struct au_flow_worker {
++typedef struct au_flow_worker
++{
+@@ -48 +63 @@
+-    int mAffinityCode;
++    int      mAffinityCode;
+@@ -55 +70 @@
+-int au_flow_payload_allocate(size_t size, size_t alignment, void** out) AU_FLOW_NOEXCEPT;
++int  au_flow_payload_allocate(size_t size, size_t alignment, void** out) AU_FLOW_NOEXCEPT;
+@@ -57,3 +72,2 @@
+-int au_flow_make(au_flow_invoke invoke, au_flow_destroy destroy, void* payload,
+-                 au_flow_handle* out) AU_FLOW_NOEXCEPT;
+-int au_flow_group(au_flow_handle* out) AU_FLOW_NOEXCEPT;
++int  au_flow_make(au_flow_invoke invoke, au_flow_destroy destroy, void* payload, au_flow_handle* out) AU_FLOW_NOEXCEPT;
++int  au_flow_group(au_flow_handle* out) AU_FLOW_NOEXCEPT;
+@@ -62,2 +76,2 @@
+-void au_flow_retain(au_flow_handle handle) AU_FLOW_NOEXCEPT;
+-void au_flow_release(au_flow_handle handle) AU_FLOW_NOEXCEPT;
++void     au_flow_retain(au_flow_handle handle) AU_FLOW_NOEXCEPT;
++void     au_flow_release(au_flow_handle handle) AU_FLOW_NOEXCEPT;
+@@ -66,10 +80,10 @@
+-int au_flow_submission(au_flow_handle handle) AU_FLOW_NOEXCEPT;
+-int au_flow_result_get(au_flow_handle handle, au_flow_result* out) AU_FLOW_NOEXCEPT;
+-int au_flow_name(au_flow_handle handle, const char* name) AU_FLOW_NOEXCEPT;
+-int au_flow_builder_error(au_flow_handle handle, int code) AU_FLOW_NOEXCEPT;
+-int au_flow_precede(au_flow_handle before, au_flow_handle after) AU_FLOW_NOEXCEPT;
+-int au_flow_add(au_flow_handle group, au_flow_handle member) AU_FLOW_NOEXCEPT;
+-void au_flow_abandon(au_flow_handle group) AU_FLOW_NOEXCEPT;
+-int au_flow_submit(au_flow_handle handle) AU_FLOW_NOEXCEPT;
+-void au_flow_record_error(int code) AU_FLOW_NOEXCEPT;
+-void au_flow_record_exception(void) AU_FLOW_NOEXCEPT;
++int      au_flow_submission(au_flow_handle handle) AU_FLOW_NOEXCEPT;
++int      au_flow_result_get(au_flow_handle handle, au_flow_result* out) AU_FLOW_NOEXCEPT;
++int      au_flow_name(au_flow_handle handle, const char* name) AU_FLOW_NOEXCEPT;
++int      au_flow_builder_error(au_flow_handle handle, int code) AU_FLOW_NOEXCEPT;
++int      au_flow_precede(au_flow_handle before, au_flow_handle after) AU_FLOW_NOEXCEPT;
++int      au_flow_add(au_flow_handle group, au_flow_handle member) AU_FLOW_NOEXCEPT;
++void     au_flow_abandon(au_flow_handle group) AU_FLOW_NOEXCEPT;
++int      au_flow_submit(au_flow_handle handle) AU_FLOW_NOEXCEPT;
++void     au_flow_record_error(int code) AU_FLOW_NOEXCEPT;
++void     au_flow_record_exception(void) AU_FLOW_NOEXCEPT;
+@@ -78,2 +92 @@
+-int au_flow_wait(au_flow_handle handle, uint64_t timeoutMs,
+-                 au_flow_result* out) AU_FLOW_NOEXCEPT;
++int au_flow_wait(au_flow_handle handle, uint64_t timeoutMs, au_flow_result* out) AU_FLOW_NOEXCEPT;
+@@ -86,2 +99 @@
+-int au_flow_tiled(size_t range, size_t tile, au_flow_tile invoke,
+-                  void* payload) AU_FLOW_NOEXCEPT;
++int au_flow_tiled(size_t range, size_t tile, au_flow_tile invoke, void* payload) AU_FLOW_NOEXCEPT;
+@@ -93,2 +105 @@
+-int au_flow_worker_affinity(uint32_t worker, uint32_t* cpus, size_t capacity,
+-                            size_t* count) AU_FLOW_NOEXCEPT;
++int au_flow_worker_affinity(uint32_t worker, uint32_t* cpus, size_t capacity, size_t* count) AU_FLOW_NOEXCEPT;
+--- a/test/flow_cxx11.cpp
++++ b/test/flow_cxx11.cpp
+@@ -1,3 +0,0 @@
+-#include "flow/xflow.h"
+-#include "flow/testing.h"
+-#include "flow/completion.h"
+@@ -5,0 +3 @@
++
+@@ -6,0 +5,3 @@
++#include "flow/completion.h"
++#include "flow/testing.h"
++#include "flow/xflow.h"
+@@ -10,3 +11,12 @@
+-int ordinary(int& result) { result = 11; return 0; }
+-struct Module {
+-    int member(int& result) const { result = 12; return 0; }
++int ordinary(int& result)
++{
++    result = 11;
++    return 0;
++}
++struct Module
++{
++    int member(int& result) const
++    {
++        result = 12;
++        return 0;
++    }
+@@ -14 +24,2 @@
+-struct Tiles {
++struct Tiles
++{
+@@ -16,2 +27,5 @@
+-    int operator()(std::size_t, std::size_t count) &
+-    { mTotal.fetch_add(count, std::memory_order_relaxed); return 0; }
++    int                      operator()(std::size_t, std::size_t count) &
++    {
++        mTotal.fetch_add(count, std::memory_order_relaxed);
++        return 0;
++    }
+@@ -20 +34 @@
+-}
++}  // namespace
+@@ -24 +38,2 @@
+-    if (::au_gpu_opencl_version() != AURA_GPU_OPENCL_ABI_VERSION) return 10;
++    if (::au_gpu_opencl_version() != AURA_GPU_OPENCL_ABI_VERSION)
++        return 10;
+@@ -27,2 +42,2 @@
+-    unsigned char storage[128] = {};
+-    au::mm::ExternalMemory registration;
++    unsigned char           storage[128] = {};
++    au::mm::ExternalMemory  registration;
+@@ -30,2 +45,6 @@
+-    memory.mStructSize = sizeof(memory); memory.mData = storage; memory.mSize = sizeof(storage); memory.mFd = -1;
+-    if (registration.registerMemory(memory)) return 9;
++    memory.mStructSize             = sizeof(memory);
++    memory.mData                   = storage;
++    memory.mSize                   = sizeof(storage);
++    memory.mFd                     = -1;
++    if (registration.registerMemory(memory))
++        return 9;
+@@ -33 +52,2 @@
+-    if (access.begin({au::mm::writeAccess(storage, sizeof(storage))}) || access.finish()) return 9;
++    if (access.begin({au::mm::writeAccess(storage, sizeof(storage))}) || access.finish())
++        return 9;
+@@ -37,2 +57,3 @@
+-        if (flow.parallelizeTiledTasks(19, 1, [&](std::size_t, std::size_t n) { covered += static_cast<int>(n); }) || covered != 19)
+-            return 11; // Caller still completes when the first helper cannot start.
++        if (flow.parallelizeTiledTasks(19, 1, [&](std::size_t, std::size_t n) { covered += static_cast<int>(n); }) ||
++            covered != 19)
++            return 11;  // Caller still completes when the first helper cannot start.
+@@ -42 +63,2 @@
+-        if (rejected.submissionCode() != au::err::kErrorPlatformAPI) return 4;
++        if (rejected.submissionCode() != au::err::kErrorPlatformAPI)
++            return 4;
+@@ -44 +66,2 @@
+-        if (rejected.result(error) || error.mDomain != au::flow::ErrorDomain::System) return 5;
++        if (rejected.result(error) || error.mDomain != au::flow::ErrorDomain::System)
++            return 5;
+@@ -46,3 +69,3 @@
+-    int finalized = 0;
+-    au::flow::detail::ExternalOps ops = {};
+-    ops.mRelease = [](void* value) noexcept { *static_cast<int*>(value) = 1; };
++    int                           finalized = 0;
++    au::flow::detail::ExternalOps ops       = {};
++    ops.mRelease                            = [](void* value) noexcept { *static_cast<int*>(value) = 1; };
+@@ -50,8 +73,12 @@
+-        au::flow::detail::ExternalToken* token = nullptr;
+-        const int ret = au::flow::detail::prepareExternal(ops, &finalized, &token);
+-        if (ret || !token) return ret ? ret : 1;
+-        au::flow::detail::notifyExternal(token, {});
+-        au::flow::detail::leaveExternalRegistrar(token);
+-        return 0;
+-    }).wait() || finalized != 1) return 13; // First managed task must have asynchronous completion progress.
+-    int result = 0;
++                au::flow::detail::ExternalToken* token = nullptr;
++                const int                        ret   = au::flow::detail::prepareExternal(ops, &finalized, &token);
++                if (ret || !token)
++                    return ret ? ret : 1;
++                au::flow::detail::notifyExternal(token, {});
++                au::flow::detail::leaveExternalRegistrar(token);
++                return 0;
++            })
++            .wait() ||
++        finalized != 1)
++        return 13;  // First managed task must have asynchronous completion progress.
++    int                  result = 0;
+@@ -59,3 +86,4 @@
+-    au::flow::Task a = flow.enqueue(ordinary, std::ref(result));
+-    if (flow.wait(a, &status) || status.mCode || result != 11) return 1;
+-    const Module module{};
++    au::flow::Task       a = flow.enqueue(ordinary, std::ref(result));
++    if (flow.wait(a, &status) || status.mCode || result != 11)
++        return 1;
++    const Module   module{};
+@@ -63 +91,2 @@
+-    if (flow.wait(b, &status) || status.mCode || result != 12) return 2;
++    if (flow.wait(b, &status) || status.mCode || result != 12)
++        return 2;
+@@ -65,2 +94,4 @@
+-    au::flow::Task c = flow.enqueue([](std::unique_ptr<int> value) -> int { return *value == 13 ? 0 : 3; }, std::move(owned));
+-    if (c.wait(&status) || !c.ready() || c.code() || c.waitFor(0) || status.mCode) return 3;
++    au::flow::Task       c =
++        flow.enqueue([](std::unique_ptr<int> value) -> int { return *value == 13 ? 0 : 3; }, std::move(owned));
++    if (c.wait(&status) || !c.ready() || c.code() || c.waitFor(0) || status.mCode)
++        return 3;
+@@ -68,3 +99,5 @@
+-    if (flow.enqueue(group).submissionCode() ||
+-        group.wait() != 17 || !group.ready() || group.code() != 17 || group.waitFor(0) != 17) return 12;
+-    if (flow.wait(group, &status) != 17 || flow.waitFor(group, 0) != 17 || status.mCode != 17) return 14;
++    if (flow.enqueue(group).submissionCode() || group.wait() != 17 || !group.ready() || group.code() != 17 ||
++        group.waitFor(0) != 17)
++        return 12;
++    if (flow.wait(group, &status) != 17 || flow.waitFor(group, 0) != 17 || status.mCode != 17)
++        return 14;
+@@ -72,8 +105,13 @@
+-    if (flow.enqueueAfter(c, &Module::member, std::cref(module), std::ref(result)).wait() || result != 12) return 15;
+-    au::flow::Task pair = flow.enqueue(au::flow::Tasks{
+-        flow.makeTask([]() -> int { return 0; }), flow.makeTask([]() -> int { return 0; })});
+-    if (flow.enqueueAfter({a, b, c, pair}, &Module::member, std::cref(module), std::ref(result)).wait()) return 16;
+-    if (flow.enqueueAfter({}, []() -> int { return 0; }).wait() || result != 12) return 17;
+-    Tiles tiles; // Atomic state makes this noncopyable in C++11.
+-    if (flow.parallelizeTiledTasks(31, 3, tiles) || tiles.mTotal.load(std::memory_order_relaxed) != 31) return 18;
+-    if (flow.parallelizeTiledTasks(31, 3, ordinaryTile)) return 19;
++    if (flow.enqueueAfter(c, &Module::member, std::cref(module), std::ref(result)).wait() || result != 12)
++        return 15;
++    au::flow::Task pair = flow.enqueue(
++        au::flow::Tasks{flow.makeTask([]() -> int { return 0; }), flow.makeTask([]() -> int { return 0; })});
++    if (flow.enqueueAfter({a, b, c, pair}, &Module::member, std::cref(module), std::ref(result)).wait())
++        return 16;
++    if (flow.enqueueAfter({}, []() -> int { return 0; }).wait() || result != 12)
++        return 17;
++    Tiles tiles;  // Atomic state makes this noncopyable in C++11.
++    if (flow.parallelizeTiledTasks(31, 3, tiles) || tiles.mTotal.load(std::memory_order_relaxed) != 31)
++        return 18;
++    if (flow.parallelizeTiledTasks(31, 3, ordinaryTile))
++        return 19;
+@@ -81,4 +119,8 @@
+-    if (named.setName("named group") || flow.enqueue(named).wait()) return 20;
+-    if (flow.shutdown()) return 6;
+-    if (c.result(status) || status.mCode) return 7;
+-    if (flow.enqueue(ordinary, std::ref(result)).submissionCode() != au::err::kErrorStateInvalid) return 8;
++    if (named.setName("named group") || flow.enqueue(named).wait())
++        return 20;
++    if (flow.shutdown())
++        return 6;
++    if (c.result(status) || status.mCode)
++        return 7;
++    if (flow.enqueue(ordinary, std::ref(result)).submissionCode() != au::err::kErrorStateInvalid)
++        return 8;
+--- a/test/flow_c_api.c
++++ b/test/flow_c_api.c
+@@ -1,0 +2 @@
++#include "gpu/xopencl_api.h"
+@@ -3 +3,0 @@
+-#include "gpu/xopencl_api.h"
+@@ -5,2 +5,10 @@
+-static int work(void* payload) { *(int*)payload = 1; return 0; }
+-static int failure(void* payload) { (void)payload; return 17; }
++static int work(void* payload)
++{
++    *(int*)payload = 1;
++    return 0;
++}
++static int failure(void* payload)
++{
++    (void)payload;
++    return 17;
++}
+@@ -8 +16 @@
+-int main(void)
++int         main(void)
+@@ -10,15 +18,26 @@
+-    int called = 0;
+-    unsigned char bytes[128] = {0};
+-    au_mm_external_memory memory = {0};
+-    au_mm_access_set access = {0};
+-    void* registration = 0;
+-    void* scope = 0;
+-    memory.mStructSize = sizeof(memory); memory.mData = bytes; memory.mSize = sizeof(bytes); memory.mFd = -1;
+-    access.mStructSize = sizeof(access); access.mCount = 1; access.mRanges[0].mData = bytes;
+-    access.mRanges[0].mSize = sizeof(bytes); access.mRanges[0].mMode = AU_MM_WRITE;
+-    if (au_mm_register(&memory, &registration)) return 5;
+-    size_t bufferOffset = 0;
+-    access.mRanges[0].mData = bytes + 7; access.mRanges[0].mSize = 16;
+-    if (au_gpu_buffer_offset(&access, &bufferOffset) || bufferOffset != 7) return 8;
+-    access.mRanges[0].mData = bytes; access.mRanges[0].mSize = sizeof(bytes);
+-    if (au_mm_cpu_begin(&access, 1, &scope) || au_mm_cpu_finish(scope, 0) || au_mm_unregister(registration)) return 6;
++    int                   called       = 0;
++    unsigned char         bytes[128]   = {0};
++    au_mm_external_memory memory       = {0};
++    au_mm_access_set      access       = {0};
++    void*                 registration = 0;
++    void*                 scope        = 0;
++    memory.mStructSize                 = sizeof(memory);
++    memory.mData                       = bytes;
++    memory.mSize                       = sizeof(bytes);
++    memory.mFd                         = -1;
++    access.mStructSize                 = sizeof(access);
++    access.mCount                      = 1;
++    access.mRanges[0].mData            = bytes;
++    access.mRanges[0].mSize            = sizeof(bytes);
++    access.mRanges[0].mMode            = AU_MM_WRITE;
++    if (au_mm_register(&memory, &registration))
++        return 5;
++    size_t bufferOffset     = 0;
++    access.mRanges[0].mData = bytes + 7;
++    access.mRanges[0].mSize = 16;
++    if (au_gpu_buffer_offset(&access, &bufferOffset) || bufferOffset != 7)
++        return 8;
++    access.mRanges[0].mData = bytes;
++    access.mRanges[0].mSize = sizeof(bytes);
++    if (au_mm_cpu_begin(&access, 1, &scope) || au_mm_cpu_finish(scope, 0) || au_mm_unregister(registration))
++        return 6;
+@@ -27,10 +46,17 @@
+-    result.mStructSize = sizeof(result);
+-    if (au_flow_version() != AURA_FLOW_ABI_VERSION) return 4;
+-    if (au_mm_access_version() != AURA_MM_ACCESS_ABI_VERSION) return 7;
+-    if (au_gpu_opencl_version() != AURA_GPU_OPENCL_ABI_VERSION) return 9;
+-    int destroyed = 0;
+-    au_flow_handle rejected = &destroyed;
+-    if (!au_flow_make(0, release, &destroyed, &rejected) || rejected || destroyed != 1) return 12;
+-    if (au_flow_make(work, 0, &called, &handle)) return 1;
+-    if (au_flow_submit(handle)) return 2;
+-    if (au_flow_wait(handle, UINT64_MAX, &result) || result.mCode || called != 1) return 3;
++    result.mStructSize    = sizeof(result);
++    if (au_flow_version() != AURA_FLOW_ABI_VERSION)
++        return 4;
++    if (au_mm_access_version() != AURA_MM_ACCESS_ABI_VERSION)
++        return 7;
++    if (au_gpu_opencl_version() != AURA_GPU_OPENCL_ABI_VERSION)
++        return 9;
++    int            destroyed = 0;
++    au_flow_handle rejected  = &destroyed;
++    if (!au_flow_make(0, release, &destroyed, &rejected) || rejected || destroyed != 1)
++        return 12;
++    if (au_flow_make(work, 0, &called, &handle))
++        return 1;
++    if (au_flow_submit(handle))
++        return 2;
++    if (au_flow_wait(handle, UINT64_MAX, &result) || result.mCode || called != 1)
++        return 3;
+@@ -38,2 +64,4 @@
+-    if (au_flow_make(failure, 0, 0, &handle) || au_flow_submit(handle)) return 10;
+-    if (au_flow_wait(handle, UINT64_MAX, &result) || result.mCode != 17) return 11;
++    if (au_flow_make(failure, 0, 0, &handle) || au_flow_submit(handle))
++        return 10;
++    if (au_flow_wait(handle, UINT64_MAX, &result) || result.mCode != 17)
++        return 11;

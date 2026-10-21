@@ -57,7 +57,7 @@ Aura is a curated collection of high-performance C++17 components designed to st
 | `au::flow` | `xflow` | Dynamic task dependencies, structured completion, cooperative waits, and tiled parallelism with private workers. | ![draft](https://img.shields.io/badge/draft-DBA400?style=flat) |
 | `au::json` | `xjson` | Rapid JSON parsing and serialization built on cJSON with C++ RAII wrappers. | ![plan](https://img.shields.io/badge/plan-9E9E9E?style=flat) |
 
-`au::cv::Image` is a plain descriptor: storage returned by `createImage()` requires `destroyImage()`. An `XImage` created from dimensions owns its storage; copying it or constructing one from an `Image` lvalue borrows that storage and requires the original owner to remain alive. Moving an `XImage` transfers ownership. `Image` rvalues cannot be adopted by `XImage`.
+`au::cv::Image` is a plain descriptor: storage returned by `createImage()` requires `destroyImage()`. An `XImage` created from dimensions owns its storage; copying it or constructing one from an `Image` lvalue borrows that storage and requires the original owner to remain alive. Moving an owning `XImage` transfers ownership; moving a borrowed view remains a borrow. `Image` rvalues cannot be adopted by `XImage`.
 
 ### Supported Platforms
 * **Desktop**: macOS (Apple Silicon/Intel), Linux (x86_64/AArch64), Windows (MSVC)
@@ -94,6 +94,9 @@ through `Threads::Threads`, and Android logging links `log`.
 
 The current flow review and staged acceptance checklist is tracked in
 [flow_remediation_plan.md](docs/flow_remediation_plan.md).
+Public API usage, `parallelFor`, state queries, structured children and image/handle
+lifetimes are explained in [flow_migration.md](docs/flow_migration.md); its
+[C++11 production examples](test/flow_migration.cpp) run as `flow_migration` in CTest.
 
 ### Design Philosophy
 * **Minimal Dependencies**: Strictly avoids heavy external frameworks.
