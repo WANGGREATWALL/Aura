@@ -86,6 +86,14 @@
 #  define AU_API
 #endif
 
+// Keep consumer-emitted inline/template symbols local to their shared object.
+// Aura's private visibility flags do not apply to code compiled by consumers.
+#if !AU_OS_WINDOWS && (defined(__GNUC__) || defined(__clang__))
+#  define AU_LOCAL __attribute__((visibility("hidden")))
+#else
+#  define AU_LOCAL
+#endif
+
 namespace au {
 namespace sys {
 
