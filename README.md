@@ -109,3 +109,5 @@ The current flow review and staged acceptance checklist is tracked in
 au::flow 的同步 tiled 迭代及微基准见 [B1/B2 报告](docs/flow_validation/B1-B2-2026-10-20.md)。开启 `ENABLE_FLOW_BENCHMARKS=ON` 可构建 `flow_microbenchmark`；它链接生产库，不启用故障钩子。tile 回调现在禁止异步 Task/GPU 发布，外部同步循环由 shutdown 排空、从 waitAll 的异步根快照中排除，详见报告中的迁移说明。
 
 B3 的等待、单查询者与默认 2 秒线程退休见 [B3 报告](docs/flow_validation/B3-2026-10-20.md)。可选 `flow_idle_benchmark` 使用生产库和模拟外部事件，对照查询次数、进程 context switch、线程数、PSS 与退休后首次任务成本；它不执行真实 GPU 工作。
+
+B4 的图遍历、Core 职责拆分、错误与上下文整理见 [B4 报告](docs/flow_validation/B4-2026-10-21.md)及[锁关系](docs/flow_locking.md)。全部必要环检查和公开接口保持；可选 `flow_graph_benchmark` 仅在 flow 故障测试和 benchmark 均启用时生成，链接 aura_testing 用于算法/锁内区间诊断，生产 CPU/idle 测量仍链接正常 aura。

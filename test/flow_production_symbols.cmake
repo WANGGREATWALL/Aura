@@ -10,7 +10,7 @@ if(NOT result EQUAL 0)
 endif()
 foreach(hook IN ITEMS
     "au4flow7testing" "au4flow6detail4fail" "au4flow6detail8gFailure"
-    "au4flow6detail17gOutstandingLimit" "au4flow6detail13gSnapshotHook" "au4flow6detail12gRuntimeHook" "au4flow6detail12runtimePoint"
+    "au4flow6detail17gOutstandingLimit" "au4flow6detail19recordGraphWaitLock" "au4flow6detail17recordGraphSearch" "au4flow6detail13gSnapshotHook" "au4flow6detail12gRuntimeHook" "au4flow6detail12runtimePoint"
     "au3gpu6detail12setNativeApi" "au3gpu6detail15backendIdentity"
     "au3sys6memory13setAccessHook")
     string(FIND "${symbols}" "${hook}" found)

@@ -51,6 +51,17 @@ set(AURA_SOURCES
     src/sys/memory_runtime.cpp
     src/sys/memory_allocation.cpp
     src/flow/xflow.cpp
+    src/flow/node.cpp
+    src/flow/execution_context.cpp
+    src/flow/graph.cpp
+    src/flow/graph_search.cpp
+    src/flow/task_completion.cpp
+    src/flow/task_errors.cpp
+    src/flow/executor.cpp
+    src/flow/external_completion.cpp
+    src/flow/core_diagnostics.cpp
+    src/flow/tiled.cpp
+    src/flow/testing.cpp
     src/flow/diagnostics.cpp
     src/gpu/pending.cpp
     src/gpu/arguments.cpp
@@ -318,6 +329,14 @@ if(ENABLE_FLOW_BENCHMARKS)
     target_include_directories(flow_idle_benchmark PRIVATE src)
     target_link_libraries(flow_idle_benchmark PRIVATE aura)
     target_compile_features(flow_idle_benchmark PRIVATE cxx_std_17)
+    if(TARGET aura_testing AND ENABLE_TEST_XFLOW)
+        # Algorithm/lock-duration diagnostic; production timings remain in the
+        # separate benchmarks linked to aura.
+        add_executable(flow_graph_benchmark test/flow_graph_benchmark.cpp)
+        target_include_directories(flow_graph_benchmark PRIVATE src)
+        target_link_libraries(flow_graph_benchmark PRIVATE aura_testing)
+        target_compile_features(flow_graph_benchmark PRIVATE cxx_std_17)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -332,7 +351,7 @@ if(ENABLE_ASAN AND ENABLE_TSAN)
 endif()
 
 if(ENABLE_ASAN)
-    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_benchmark flow_microbenchmark flow_idle_benchmark)
+    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_benchmark flow_microbenchmark flow_idle_benchmark flow_graph_benchmark)
         if(TARGET ${target})
             target_compile_options(${target} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
             target_link_options(${target} PRIVATE -fsanitize=address)
@@ -342,7 +361,7 @@ if(ENABLE_ASAN)
 endif()
 
 if(ENABLE_TSAN)
-    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_benchmark flow_microbenchmark flow_idle_benchmark)
+    foreach(target IN ITEMS aura aura_testing aura_test flow_cxx11_test flow_c_api_test flow_production_test flow_plugin_a flow_plugin_b flow_isolation_test opencl_loader_test opencl_hardware_test opencl_teardown_test flow_shutdown_test flow_benchmark flow_microbenchmark flow_idle_benchmark flow_graph_benchmark)
         if(TARGET ${target})
             target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer -g)
             target_link_options(${target} PRIVATE -fsanitize=thread)

@@ -292,3 +292,12 @@ return tailCode ? tailCode : aCode ? aCode : bCode;
 实现及验收见 [B3 报告](flow_validation/B3-2026-10-20.md)。工作许可与控制世代共用睡眠协议，控制不消耗工作计数；协作 wait、helper join 与托管 fence 等待通过完成通知推进。周期 GPU 查询只由一个空闲 worker 负责，支持交接及退避。worker 默认空闲 2 秒退休到 0，槽位复用先在锁外 join 并增加代际，亲核查询 pin 活跃线程。纯 caller Job 不保留无用 worker，shutdown 仍覆盖它。
 
 本节取代早期“高水位线程保留/1 ms 查询/10 ms 预算复查”的实现描述。普通 GPU Task 边、结构化完成、公开 ABI 与错误来源仍维持原契约。getWorkers 只返回活跃 slot，不能把数组下标或旧 TID 当永久身份。B3 主机证据及性能限制详见报告，Android 和真实 GPU 尚待用户验证。
+
+
+## 14. 2026-10-21 B4：图遍历与核心职责
+
+实现与验收见 [B4 报告](flow_validation/B4-2026-10-21.md)，同步协议见 [锁关系与状态所有权](flow_locking.md)。Core 实现按图、完成传播、执行器、外部完成、tiled、上下文和诊断拆分，仍集中协调共享状态。GraphSearch 在同一 graph mutex 下借用 Node scratch，维护活动 children 邻接、合并等待目标，不再为每个节点扫描 mActive 或为搜索分配容器。Draft 引用环、提交拓扑、结构化祖先和间接 wait 校验全部保留。
+
+TaskErrors 封装错误候选与优先级，ExecutionErrors 统一 mm 的初始化/错误路由和 TLS 恢复，公开结果与默认语义不变。公开 flow 头文件无改动，严格 C11/C++11 消费检查通过。CPU 175/175、OpenCL 模型 188/188、ASan/LSan、TSan 主机回归通过，真实硬件尚待用户验证。
+
+图锁内检查时间显著下降，但 Node 增加 40 字节，部分生产 CPU 指标仍退化；完整保留正反数据，R01/X13 继续由 B6 收口，不宣称整体性能或设备验收完成。

@@ -2,6 +2,7 @@
 #include "flow/xflow.h"
 #include "flow/ready_queue.h"
 #include "flow/testing.h"
+#include "flow/task_errors.h"
 #include "flow/completion.h"
 #include "file/xfile.h"
 #include "mm/registry.h"
@@ -10,6 +11,7 @@
 #include "gtest/gtest.h"
 
 #include <array>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -1248,4 +1250,98 @@ TEST(XFlow, CrossWaitAndDeepGraphUseBoundedStacks)
     for (const auto& node : chain) ASSERT_EQ(graph.add(node), 0);
     EXPECT_EQ(code(flow.enqueue(graph)), 0);
 }
+
+TEST(XFlow, CompletionSearchVisitsOneGraphAcrossCooperativeFrames)
+{
+    auto& flow = au::flow::XFlow::get();
+    const auto previous = au::flow::testing::budget();
+    ASSERT_EQ(au::flow::testing::setBudget(1), 0);
+    struct Drain {
+        std::atomic<bool> mDone{false};
+        std::size_t mBudget;
+        ~Drain() {
+            mDone.store(true, std::memory_order_release);
+            (void)au::flow::XFlow::get().waitAll();
+            (void)au::flow::testing::setBudget(mBudget);
+        }
+    } drain{{false}, previous};
+    std::atomic<unsigned int> entered{0};
+    const au::flow::detail::ExternalOps ops{
+        [](void* payload, bool* done, au::flow::detail::ExternalStatus*) noexcept -> int {
+            *done = static_cast<Drain*>(payload)->mDone.load(std::memory_order_acquire);
+            return 0;
+        }, nullptr, [](void*) noexcept {}};
+    std::array<au::flow::Task, 64> pending;
+    for (auto& task : pending) task = flow.enqueue([&]() -> int {
+        au::flow::detail::ExternalToken* token = nullptr;
+        const int result = au::flow::detail::prepareExternal(ops, &drain, &token);
+        if (result) return result;
+        au::flow::detail::pollExternal(token);
+        au::flow::detail::leaveExternalRegistrar(token);
+        entered.fetch_add(1, std::memory_order_release);
+        return 0;
+    });
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (entered.load(std::memory_order_acquire) != pending.size() && std::chrono::steady_clock::now() < until)
+        std::this_thread::yield();
+    ASSERT_EQ(entered.load(std::memory_order_acquire), pending.size());
+    au::flow::testing::GraphStats observed;
+    std::function<int(unsigned int)> nested;
+    nested = [&](unsigned int depth) -> int {
+        if (depth) return flow.enqueue([&, depth]() -> int { return nested(depth - 1); }).wait();
+        (void)au::flow::testing::graphStats(true);
+        const int result = flow.waitFor(pending[0], 0);
+        observed = au::flow::testing::graphStats();
+        return result == au::err::kErrorTimeout ? 0 : 1;
+    };
+    EXPECT_EQ(flow.enqueue([&]() -> int { return nested(6); }).wait(), 0);
+    EXPECT_EQ(observed.mSearches, 1u);
+    EXPECT_EQ(observed.mNodes, 1u);
+    EXPECT_EQ(observed.mActiveScans, 0u); // Independent active roots do not participate.
+}
+
+TEST(XFlow, DraftTraversalScratchIsRestoredAfterEarlyCycleExitAndSlotReuse)
+{
+    auto& flow = au::flow::XFlow::get();
+    for (unsigned int round = 0; round < 128; ++round) {
+        std::array<au::flow::Task, 8> chain;
+        for (auto& node : chain) node = flow.makeTask([]() -> int { return 0; });
+        for (std::size_t i = 1; i < chain.size(); ++i) ASSERT_EQ(chain[i - 1].precede(chain[i]), 0);
+        EXPECT_EQ(chain.back().precede(chain.front()), au::flow::kErrorCycleDetected);
+        auto tail = flow.makeTask([]() -> int { return 0; });
+        EXPECT_EQ(chain.back().precede(tail), 0);
+        EXPECT_EQ(tail.precede(chain[6]), au::flow::kErrorCycleDetected);
+        EXPECT_EQ(code(flow.enqueue([]() -> int { return 0; })), 0);
+        // Nothing submits the rejected Draft chain. ASan/LSan also verifies
+        // that a failed early search did not install an owning reference cycle.
+    }
+}
+
+TEST(XFlow, InheritedResultPriorityIsIndependentOfArrivalOrder)
+{
+    const auto make = [](std::uint64_t cause, int code, au::flow::ErrorDomain domain, bool skipped) {
+        auto result = au::flow::detail::taskResult(cause, code, domain);
+        result.mNativeCode = -static_cast<int>(cause);
+        if (skipped) result.mState = static_cast<std::uint32_t>(au::flow::TaskState::Skipped);
+        return result;
+    };
+    const std::array<au_flow_result, 4> sources{{
+        make(10, 77, au::flow::ErrorDomain::Flow, true),
+        make(11, 88, au::flow::ErrorDomain::OpenCL, false),
+        make(12, 99, au::flow::ErrorDomain::Memory, false),
+        make(13, 66, au::flow::ErrorDomain::Flow, true)}};
+    std::array<std::size_t, 4> order{{0, 1, 2, 3}};
+    do {
+        au::flow::detail::TaskErrors errors;
+        for (const auto i : order) errors.inherit(sources[i], i);
+        errors.body(0);
+        const auto result = errors.complete(100);
+        EXPECT_EQ(result.mCode, 88);
+        EXPECT_EQ(result.mNativeCode, -11);
+        EXPECT_EQ(result.mCauseTaskId, 11u);
+        EXPECT_EQ(result.mDomain, static_cast<std::uint32_t>(au::flow::ErrorDomain::OpenCL));
+        EXPECT_EQ(result.mState, static_cast<std::uint32_t>(au::flow::TaskState::Failed));
+    } while (std::next_permutation(order.begin(), order.end()));
+}
+
 #endif
