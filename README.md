@@ -84,9 +84,8 @@ make -j$(sysctl -n hw.ncpu)
 ```
 
 `aura` is the production library and is built without fault-injection hooks,
-even when tests are enabled. Tests that need hooks link the separate
-`aura_testing` library for GPU/MM tests; flow tests use no fault hooks,
-and the C99/C++11 consumers link the production archive. Use `-DBUILD_TESTING=OFF` for a production-only top-level
+even when tests are enabled. All unit tests link the production archive.
+Use `-DBUILD_TESTING=OFF` for a production-only top-level
 build. When Aura is embedded with `add_subdirectory`, its own tests default to
 OFF; opt in with `-DAURA_BUILD_TESTS=ON` when the parent permits testing. The
 parent's `BUILD_TESTING` option is preserved. Android thread support is selected
@@ -97,6 +96,8 @@ dynamic DAGs, error short-circuiting and synchronous tiled loops. See
 [au_flow_design.md](src/flow/au_flow_design.md) for its contracts and migration.
 The C ABI is version 3; consumers must rebuild against matching headers/library.
 GPU completion and memory ownership are explicit responsibilities of the callable.
+The GPU/MM/CV implementations retain the pre-flow-refactor baseline (`e6ab9b8`);
+flow does not add GPU backends, memory leases or managed access scopes.
 
 ### Design Philosophy
 * **Minimal Dependencies**: Strictly avoids heavy external frameworks.

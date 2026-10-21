@@ -1,17 +1,26 @@
 # au::flow：纯控制流调度器
 
-本轮基于 master `182b4789c0616fd6bdc62aeac6f9c2e6130ebebb` 重写。目标是每帧几十个 ms 级任务、动态 DAG 与同步 CPU tiled，不引入内存池、外部 token、隐藏结构化子任务或通用插件框架。
+调度核心基于 master `182b4789c0616fd6bdc62aeac6f9c2e6130ebebb` 重写，范围进一步收敛到 `e6ab9b85f537d2151ff04a4f85bc341637a4ad4c` 之后的纯 flow 变更。目标是每帧几十个 ms 级任务、动态 DAG 与同步 CPU tiled，不引入内存池、外部 token、隐藏结构化子任务或通用插件框架。
 
 ## 文件与依赖
 
 - `inc/flow/xflow_api.h`：纯 C99/C++11 的不透明句柄、函数指针和整数 ABI，版本 **3**。
 - `inc/flow/xflow.h`：C++11 header-only `Flow/Task/Tasks`、int/void 归一化、参数所有权与链式构建。
-- `inc/flow/xthread_flow.h`：只转发包含新头，保留 include 路径。
 - `src/flow/xflow_core.h`：私有数据与声明；`xflow.cpp`：全部 C++17 调度实现与 C 入口。
 
 两个内部文件合计 **497 行**，包括声明、注释、空行和平台分支，不将调度逻辑搬到其他模块。没有 slab、闭包池、无锁队列、故障桩或额外执行器文件。flow 唯一的 Aura 运行时依赖是 `au::perf`；`sys/xvisibility.h` 只提供 C 兼容可见性宏。亲核原生调用按本次要求内聚在实现文件。
 
-flow 与 mm/gpu/cv 的实现**双向无依赖**。GPU 自己维护事件、pending registry、fence、资源租约和清理；MM 自己返回访问错误。没有 flow 错误 sink、GPU token、后台查询线程或 flow 驱动的 GPU 排空。
+flow 与 mm/gpu/cv 的实现**双向无依赖**。GPU/MM/CV、既有 SYS 实现及 test_xmemory.cpp 恢复为 `e6ab9b8` 的原文件，不替这些模块引入新语义。原 gpu_helper 仍按该基线保留，不加入 Aura 的默认构建。资源访问、设备完成、内存释放由业务自行协调。
+
+此前 `4438d46` 为 flow 引入内存租约，`64f43ab` 又扩展了 OpenCL、配对 CPU 访问和外部内存注册。`ccf8107` 虽已解除 flow 的代码依赖，但保留了这些独立功能；它们不是纯调度所必需。本次撤回这些扩展及配套测试，而不是只删头文件留下半套实现：
+
+- 删除 inc/gpu、src/gpu、mm/xaccess、cv/ximage_access、MM access/memory_control 及其 SYS 平台支持，共 33 个新增文件。
+- 恢复 26 个既有文件，包括 MM registry/backend、CV image、gpu_helper 与其加载器生成脚本，避免转发头指向已删除 API。
+- 保留 sys/xvisibility.h：纯 C ABI 无法包含带 STL 的 xsystem.h；它只提供符号可见性宏，不引入 SYS 运行时。
+- 公开头仅保留 xflow_api.h 与 xflow.h，不提供旧 include 路径。测试仅保留 test_xflow.cpp，不单列语言消费端目标。CMake 保留 Threads::Threads、Android log、测试开关、目标语言标准及 sanitizer 修复。
+- 移除 ENABLE_OPENCL、GPU/MM 测试桩及 aura_testing 副本，单测直接链接生产 aura。
+
+这是范围回退，不宣称旧 GPU/MM 已具备撤回的新功能；需要新访问/完成 API 的调用方须迁回原接口。这些功能如需重新引入，应作为独立 GPU/MM 迭代评审与验收。
 
 ## 执行、所有权与错误
 
@@ -33,7 +42,7 @@ auto task = flow.enqueue([&]() -> int {
 });
 ```
 
-CPU 访问同样应显式返回 `CpuAccessScope::finish()` 的错误，不再把遗漏的 MM 错误自动写入 Task。调用方必须在 SDK 卸载/资源 deinit 前等待相关任务、设备工作和所有外部调用返回。
+CPU/内存访问错误同样由业务显式返回，不自动写入 Task。调用方必须在 SDK 卸载/资源 deinit 前等待相关任务、设备工作和所有外部调用返回。
 
 ## DAG 与簇
 
@@ -108,7 +117,7 @@ Tasks::dumpDot 返回包含名称、微秒耗时、状态、错误及依赖边�
 
 这是明确的 ABI/API 重写：删除 au_flow_*、XFlow 外观、TaskResult/ErrorDomain、worker 预算/退休/查询、隐式后代与 GPU 完成契约；改用 XFlow_* ABI 和 Flow。不能与 ABI 2 头/二进制混用。默认 2 秒线程退休不再保留，本版仅承诺初始 0、惰性增长及退出 join；无后台定时轮询。
 
-测试收敛为 test_xflow.cpp 的十组功能/并发测试，以及 C99、C++11 生产库消费端。GPU/MM 原有资源、并发、失败与退出用例改成独立测试，不通过关闭对应模块获取通过。默认 CTest 运行整个 Aura 单测，而不只是 flow 过滤子集。
+flow 测试收敛为 test_xflow.cpp 的十组功能/并发测试；保留基线全部 Aura 单测。随扩展引入的 GPU/MM 测试与功能一并撤回，未通过关闭仍存在的模块获取通过。CTest 仅注册 aura_unit，运行整个 Aura 单测，而不只是 flow 过滤子集。
 
 验证命令：
 
@@ -116,20 +125,20 @@ Tasks::dumpDot 返回包含名称、微秒耗时、状态、错误及依赖边�
 cmake -B build
 cmake --build build -j4
 ctest --test-dir build --output-on-failure
-# 可选：-DENABLE_OPENCL=ON；-DENABLE_ASAN=ON 或 -DENABLE_TSAN=ON
+# 可选：-DENABLE_ASAN=ON 或 -DENABLE_TSAN=ON
 ```
 
 最终主机验收（2026-10-21）：
 
 | 配置 / 检查 | 结果 |
 | --- | --- |
-| 用户要求的根 build：configure / build | 通过，编译日志无 warning/error；并行数按环境设为 4 |
-| 默认 CPU：全部 Aura 单测 / CTest | 127/127；3/3 |
-| OpenCL 模型：全部 Aura 单测 / CTest | 139/139；5/5，含独立 GPU 退出与 loader |
-| OpenCL + ASan/LSan | 5/5，detect_leaks=1:halt_on_error=1 |
-| CPU + TSan | 3/3，halt_on_error=1 |
+| 本轮 Debug：configure / build | 通过，编译日志无 warning/error；并行数按环境设为 4 |
+| 全部 Aura 单测 / CTest | 110/110；1/1，含恢复的基线内存测试 |
+| ASan/LSan | 1/1，detect_leaks=1:halt_on_error=1 |
+| TSan | 1/1，halt_on_error=1 |
 | 严格语言边界 | C99 / C++11 / 内部 C++17，-Wall -Wextra -Werror -pedantic 通过 |
 | 核心体积 | xflow.cpp 413 行 + xflow_core.h 84 行 = 497 行 |
 | 文件与依赖 | src/flow 仅设计文档及两个内部文件；无旧 flow 宏/头/运行时依赖 |
+| 范围隔离 | GPU/MM/CV、既有 SYS 实现及内存测试与 e6ab9b8 无差异；仅新增 SYS 可见性头 |
 
-Android/真实 GPU/其他平台与业务端性能未在本机测量；主机模型与 sanitizer 通过不代替设备验收。本轮不恢复过程基准和大批原始验证档案。
+Android/其他平台与业务端性能未在本机测量；主机 sanitizer 通过不代替设备验收。OpenCL 扩展已撤回，原扩展的 5/5 测试结果不作为当前树的验收结果。本轮不恢复过程基准和大批原始验证档案。

@@ -6,7 +6,7 @@
 namespace au {
 namespace mm {
 
-/// Native backend delegates physical allocation to au::sys. PSS is portable;
+/// Native backend: posix_memalign / mmap / dma-heap UAPI. Always available;
 /// individual MemType requests may still fail (e.g. uncached heap missing).
 IBackend& nativeBackend() noexcept;
 

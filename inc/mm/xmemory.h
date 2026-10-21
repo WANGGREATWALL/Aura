@@ -6,7 +6,7 @@
  * @brief Unified memory allocation API for Aura.
  *
  *   - Pool   : reserved for a future libvivo.mempool.so integration; unavailable now.
- *   - Native : portable aligned PSS storage; Linux/Android dma-heap UAPI.
+ *   - Native : Linux/Android posix_memalign / mmap / dma-heap UAPI.
  *
  * Backend resolution priority (highest to lowest):
  *   1. au::mm::setBackend(BackendId)            : explicit runtime override.
@@ -30,7 +30,7 @@ enum class MemType : int
 {
     Pss         = 0,  ///< Pageable system storage; CPU-only, fd == -1.
     DmaCached   = 1,  ///< dma-buf with CPU cache; needs explicit sync.
-    DmaUncached = 2,  ///< dma-buf with exporter-specific caching; CPU sessions still require START/END.
+    DmaUncached = 2,  ///< dma-buf bypassing CPU cache; sync is a no-op.
 };
 
 /// Selector for the backend that performs the allocation.
@@ -59,21 +59,13 @@ struct MemBlock
 /// @return au::err::kSuccess or a negative error code.
 AU_API int alloc(size_t size, MemType type, MemBlock& out) noexcept;
 
-/// Retire a block returned by alloc(). New queries fail immediately. Physical
-/// release waits for internal CPU/device leases; callers still obey borrowed
-/// pointer lifetimes. Returns a known immediate cleanup error, or success when
-/// retirement is accepted (deferred cleanup errors are logged by the backend).
-/// Passing nullptr returns kErrorNullPointer.
+/// Release a block previously returned by alloc(). Safe to call with nullptr (returns kErrorNullPointer).
 AU_API int free(void* ptr) noexcept;
 
 /// Flush CPU cache lines for @p ptr so the device sees the latest CPU writes.
-/// Legacy direction-only operation. The caller serializes the entire CPU access
-/// interval; use CpuAccessScope (mm/xaccess.h) for automatic paired access.
-/// Mixing with an active managed scope returns kErrorBusy.
 AU_API int syncCpuToDevice(void* ptr) noexcept;
 
 /// Invalidate CPU cache lines for @p ptr so the next CPU read fetches device-written data.
-/// Legacy counterpart to syncCpuToDevice; see its access-interval contract.
 AU_API int syncDeviceToCpu(void* ptr) noexcept;
 
 /// Look up a managed pointer's metadata.
