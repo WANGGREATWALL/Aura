@@ -1,5 +1,5 @@
-#ifndef AURA_INC_FLOW_XFLOW_H_
-#define AURA_INC_FLOW_XFLOW_H_
+#ifndef AURA_XFLOW_H_
+#define AURA_XFLOW_H_
 
 #include <cstddef>
 #include <functional>

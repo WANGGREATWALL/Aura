@@ -1,5 +1,5 @@
-#ifndef AURA_INC_FLOW_XFLOW_API_H_
-#define AURA_INC_FLOW_XFLOW_API_H_
+#ifndef AURA_XFLOW_API_H_
+#define AURA_XFLOW_API_H_
 
 #include <stddef.h>
 #include <stdint.h>
