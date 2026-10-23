@@ -85,11 +85,11 @@ struct Core
     TileJob*                   mTiles = nullptr;
     std::array<std::thread, 8> mThreads;
     std::size_t                mCount = 0, mIdle = 0, mTileCallers = 0;
-    std::vector<unsigned>      mDefaultCpus;
-    int                        mPolicy  = XFLOW_AFFINITY_DEFAULT;
+    std::vector<std::uint32_t> mDefaultCpus;
     bool                       mClosing = false, mStop = false, mReleasing = false;
-    int                        mFirstError = 0;
     std::uint64_t              mMask = 0, mDefaultMask = 0;
+    bool                       mDefaultAffinity = true;
+    int                        mAffinityStatus  = 0;
     std::atomic<std::uint64_t> mAffinityGen{1};
     Core();
 

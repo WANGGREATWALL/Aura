@@ -9,6 +9,7 @@
 #include <climits>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -126,6 +127,54 @@ TEST(XSystem, ProcessAndThreadIds)
     EXPECT_GT(workerThread, 0u);
     EXPECT_NE(workerThread, mainThread);
     EXPECT_EQ(getCurrentProcessId(), process);
+}
+
+TEST(XSystem, ThreadAffinityAndCpuSelection)
+{
+    std::size_t count = 9;
+    EXPECT_EQ(au::sys::getThreadAffinity(nullptr, 1, count), au::err::kErrorInvalidParam);
+    EXPECT_EQ(count, 0u);
+    EXPECT_EQ(au::sys::setThreadAffinity(nullptr, 0), au::err::kErrorInvalidParam);
+    uint64_t mask = 42;
+    EXPECT_EQ(au::sys::selectCpuMask(static_cast<au::sys::CpuClass>(-1), mask), au::err::kErrorInvalidParam);
+    EXPECT_EQ(mask, 0u);
+    const int status = au::sys::getThreadAffinity(nullptr, 0, count);
+    if (status == au::err::kErrorNotSupported) {
+        EXPECT_EQ(au::sys::selectCpuMask(au::sys::CpuClass::kPerformance, mask), status);
+        const uint32_t cpu = 0;
+        EXPECT_EQ(au::sys::setThreadAffinity(&cpu, 1), status);
+        return;
+    }
+    ASSERT_EQ(status, 0);
+    ASSERT_GT(count, 0u);
+    std::vector<uint32_t> initial(count);
+    ASSERT_EQ(au::sys::getThreadAffinity(initial.data(), initial.size(), count), 0);
+    if (count > 1) {
+        uint32_t shortBuffer = UINT32_MAX;
+        EXPECT_EQ(au::sys::getThreadAffinity(&shortBuffer, 1, count), au::err::kErrorOutOfRange);
+        EXPECT_EQ(count, initial.size());
+        EXPECT_EQ(shortBuffer, UINT32_MAX);
+    }
+    std::thread worker([&] {
+        const uint32_t invalid = UINT32_MAX;
+        EXPECT_EQ(au::sys::setThreadAffinity(&invalid, 1), au::err::kErrorInvalidParam);
+        // Restrict only this disposable thread; verify selection never caches its allowed set.
+        for (uint32_t cpu : initial) {
+            if (cpu >= 64)
+                continue;
+            ASSERT_EQ(au::sys::setThreadAffinity(&cpu, 1), 0);
+            for (auto type : {au::sys::CpuClass::kPerformance, au::sys::CpuClass::kPowerSaving}) {
+                uint64_t selected = 0;
+                ASSERT_EQ(au::sys::selectCpuMask(type, selected), 0);
+                EXPECT_EQ(selected, UINT64_C(1) << cpu);
+            }
+            ASSERT_EQ(au::sys::setThreadAffinity(initial.data(), initial.size()), 0);
+        }
+    });
+    worker.join();
+    std::vector<uint32_t> after(initial.size());
+    ASSERT_EQ(au::sys::getThreadAffinity(after.data(), after.size(), count), 0);
+    EXPECT_EQ(initial, after);
 }
 
 }  // namespace

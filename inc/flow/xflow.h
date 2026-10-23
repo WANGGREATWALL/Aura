@@ -12,16 +12,28 @@
 
 #include "flow/xflow_api.h"
 
+/**
+ * @file xflow.h
+ * @brief Lightweight asynchronous tasks, dependencies, batch waits and synchronous CPU tiles.
+ * @note C++11 facade over a C ABI. Workers are created lazily (at most 8); each tiled loop
+ *       uses its caller and up to 3 helpers. releaseWorkers() drains and reclaims the pool.
+ *
+ * Tasks return int (0 means success) or void. A failed predecessor skips dependents and
+ * propagates an upstream error, without guaranteeing which error wins at a multi-input join.
+ * Completion covers the callable and payload cleanup, not asynchronous device work.
+ * Arguments are decayed copies or moves; std::ref and borrowing views do not extend the
+ * referenced storage's lifetime. Moving a borrowed view still leaves a borrowed view.
+ * Destroying a handle neither waits nor cancels; nested submissions are independent.
+ * Handles belong to one runtime instance and must not cross independently linked libraries.
+ *
+ * @warning flow does not track OpenCL events. Establish explicit synchronization before a
+ * CPU consumer reads device results, either at the last GPU task's end or the consumer's
+ * start. Consecutive kernels may enqueue without host waits; use queue order or explicit
+ * event dependencies as appropriate. Prefer waiting for the needed event over clFinish().
+ */
+
 namespace au {
 namespace flow AU_LOCAL {
-enum class AffinityPolicy : int
-{
-    kDefault     = XFLOW_AFFINITY_DEFAULT,
-    kPerformance = XFLOW_AFFINITY_PERFORMANCE,
-    kPowerSaving = XFLOW_AFFINITY_POWERSAVING,
-    kCustomMask  = XFLOW_AFFINITY_CUSTOM_MASK
-};
-
 namespace detail {
 template <std::size_t... I>
 struct Indices
@@ -151,6 +163,7 @@ public:
      * @param next Successor; must not be submitted yet.
      * @return 0 on success, or a build error.
      * @note Check the result before submitting; failed predecessors short-circuit next.
+     *       Device completion is not tracked; see the module warning.
      */
     int precede(const Task& next) const { return au_flow_add_dependency(mHandle, next.mHandle); }
 
@@ -159,15 +172,23 @@ public:
     /**
      * @brief Wait for completion without submitting the task.
      * @return Task result, a saved creation/submission error, or a wait error.
-     * @note May execute other ready work; an unsubmitted task returns kErrorNotReady or its build error.
+     * @note May execute other ready tasks, without tracking device completion.
+     *       Draft tasks return kErrorStateInvalid or their saved build error.
      */
     int wait() const { return mError ? mError : au_flow_wait_task(mHandle); }
 
     /**
      * @brief Read the result without waiting.
-     * @return Task result when done, kErrorNotReady while unfinished, or a saved error.
+     * @return Final result, a saved error, or kErrorNotReady while unfinished; empty handles return kErrorInvalidParam.
      */
-    int result() const { return mError ? mError : au_flow_get_task_result(mHandle); }
+    int code() const { return mError ? mError : au_flow_get_task_result(mHandle); }
+
+    /**
+     * @brief Check completion without waiting.
+     * @return True after completion or a saved creation/submission failure; false for Draft or empty handles.
+     * @note Use code() for the result; completion does not imply success or device completion.
+     */
+    bool done() const { return mError || au_flow_task_done(mHandle); }
 
     /**
      * @brief Read final execution time in microseconds without waiting.
@@ -194,6 +215,14 @@ class Tasks
 public:
     explicit Tasks(const char* name = "Tasks") : mHandle(au_flow_create_group(name)) {}
 
+    /// Create a group from members, retaining the first build error for enqueue() and wait().
+    Tasks(std::initializer_list<Task> tasks) : Tasks()
+    {
+        for (const auto& task : tasks)
+            if (add(task))
+                break;
+    }
+
     Tasks(const Tasks& other) noexcept : mHandle(other.mHandle) { au_flow_retain_group(mHandle); }
 
     Tasks(Tasks&& other) noexcept : mHandle(other.mHandle) { other.mHandle = nullptr; }
@@ -216,27 +245,12 @@ public:
      */
     int add(const Task& t) { return au_flow_group_add_task(mHandle, t.nativeHandle()); }
 
-    /// Add several members, stopping at the first error.
-    template <class... T>
-    int add(const Task& first, const Task& second, const T&... rest)
-    {
-        int code = add(first);
-        return code ? code : add(second, rest...);
-    }
-
     int precede(const Task& t) const { return au_flow_add_group_task_dependency(mHandle, t.nativeHandle()); }
 
     int precede(const Tasks& g) const { return au_flow_add_group_dependency(mHandle, g.mHandle); }
 
     /// Wait for every member; returns the propagated result without submitting the group.
     int wait() const { return au_flow_wait_group(mHandle); }
-
-    /**
-     * @brief Export dependencies and task results as Graphviz DOT.
-     * @return Thread-local text, or null on failure.
-     * @note Copy to keep it; the next dump on this thread may invalidate the pointer. Do not free it.
-     */
-    const char* dumpDot() const { return au_flow_dump_group_dot(mHandle); }
 
     /// Borrow the raw group handle; no owning reference is added.
     XFlowGroupHandle nativeHandle() const noexcept { return mHandle; }
@@ -317,7 +331,7 @@ public:
      * @brief Create a task for later submission or dependency building.
      * @param f Callable returning int or void; void means success.
      * @param a Arguments copied or moved into task storage; use std::ref to borrow.
-     * @return A task; creation errors are returned by wait(), result() or enqueue().
+     * @return A task; creation errors are returned by wait(), code() or enqueue().
      * @note Copies of pointers or borrowed views do not extend the backing storage lifetime.
      */
     template <class F, class... A>
@@ -328,7 +342,7 @@ public:
 
     /**
      * @brief Create a named task with the same ownership rules as create().
-     * @param name Optional copied name, used for tracing and DOT output.
+     * @param name Optional copied name, used for tracing.
      * @param f Callable returning int or void.
      * @param a Arguments copied or moved into task storage.
      * @return An unsubmitted task, carrying any creation error.
@@ -369,7 +383,7 @@ public:
      * @param f Callable returning int or void.
      * @param a Arguments copied or moved into task storage.
      * @return A task carrying its execution result or creation/submission error.
-     * @note Submission is asynchronous; nested submissions are independent and are not implicitly joined.
+     * @note Nested submissions are independent. Device completion is not tracked; see the module warning.
      */
     template <class F, class... A>
     typename std::enable_if<!std::is_same<typename std::decay<F>::type, Task>::value &&
@@ -385,7 +399,7 @@ public:
 
     /**
      * @brief Create and submit a named task.
-     * @param name Optional copied name for tracing and DOT output.
+     * @param name Optional copied name for tracing.
      * @param f Callable returning int or void.
      * @param a Arguments copied or moved into task storage.
      * @return A task carrying its execution result or creation/submission error.
@@ -408,7 +422,7 @@ public:
      * @param pred Predecessor task.
      * @param f Successor callable returning int or void.
      * @param a Arguments for the successor.
-     * @return Successor task; setup/submission errors are available through wait() or result().
+     * @return Successor task; setup/submission errors are available through wait() or code().
      * @note The callable is skipped if the predecessor fails. Waiting does not submit an unsubmitted predecessor.
      */
     template <class F, class... A>
@@ -456,18 +470,8 @@ public:
         return task;
     }
 
-    int wait(const Task& task) { return task.wait(); }
-
-    int wait(const Tasks& group) { return group.wait(); }
-
     /** @copydoc au_flow_wait_all */
     int waitAll() { return au_flow_wait_all(); }
-
-    int join(const Task& task) { return wait(task); }
-
-    int join(const Tasks& group) { return wait(group); }
-
-    int joinAll() { return waitAll(); }
 
     /**
      * @brief Finish a tiled CPU loop before returning, using the caller and up to 3 helpers.
@@ -491,24 +495,20 @@ public:
     }
 
     /**
-     * @brief Set pool-worker affinity; does not bind the calling thread.
-     * @param policy Default, performance, powersaving or custom mask.
-     * @param mask Used for kCustomMask only; bit N selects CPU N (CPU6+7 = 0xC0).
+     * @brief Request worker affinity; the calling thread is not bound.
+     * @param mask CPU bits, e.g. (UINT64_C(1) << 6) | (UINT64_C(1) << 7); 0 restores defaults.
      * @return 0 if accepted, or an argument/platform error.
-     * @note Selected CPUs must be allowed; workers apply changes asynchronously.
+     * @note Use sys::selectCpuMask() to select CPUs. Applied asynchronously; failures are logged.
      */
-    int setAffinity(AffinityPolicy policy, uint64_t mask = 0)
-    {
-        return au_flow_set_affinity(static_cast<int>(policy), mask);
-    }
+    int setAffinity(uint64_t mask = 0) { return au_flow_set_affinity_mask(mask); }
 
     /** @copydoc au_flow_get_affinity_mask */
     uint64_t getAffinityMask() const { return au_flow_get_affinity_mask(); }
 
     size_t workerCount() const { return au_flow_get_worker_count(); }
 
-    /** @copydoc au_flow_release_idle_workers */
-    void releaseIdleWorkers() { au_flow_release_idle_workers(); }
+    /** @copydoc au_flow_release_workers */
+    int releaseWorkers() { return au_flow_release_workers(); }
 
 private:
     Flow() = default;

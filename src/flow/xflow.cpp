@@ -1,15 +1,13 @@
 #include <algorithm>
-#include <fstream>
 #include <set>
-#include <sstream>
 #include <utility>
 
 #include "flow/xflow_core.h"
+#include "log/xlogger.h"
 #include "perf/xtimer.h"
 #include "perf/xtracer.h"
-#if defined(__linux__) || defined(__ANDROID__)
-#include <sched.h>
-#endif
+#include "sys/xsystem.h"
+
 namespace au {
 namespace flow AU_LOCAL {
 namespace detail {
@@ -50,17 +48,22 @@ Core& core()
 
 Core::Core()
 {
-    (void)au::perf::Config::get();  // Perf state outlives worker teardown.
-#if defined(__linux__) || defined(__ANDROID__)
-    cpu_set_t set;
-    if (!sched_getaffinity(0, sizeof(set), &set))
-        for (unsigned i = 0; i < CPU_SETSIZE; ++i)
-            if (CPU_ISSET(i, &set)) {
-                mDefaultCpus.push_back(i);
-                if (i < 64)
-                    mDefaultMask |= UINT64_C(1) << i;
-            }
-#endif
+    (void)au::perf::Config::get();  // Perf and log state outlive worker teardown.
+    (void)au::log::Config::get();
+    std::size_t count = 0;
+    mAffinityStatus   = au::sys::getThreadAffinity(nullptr, 0, count);
+    if (!mAffinityStatus) {
+        mDefaultCpus.resize(count);
+        mAffinityStatus = au::sys::getThreadAffinity(mDefaultCpus.data(), mDefaultCpus.size(), count);
+        if (mAffinityStatus)
+            mDefaultCpus.clear();
+        else {
+            mDefaultCpus.resize(count);
+            for (auto cpu : mDefaultCpus)
+                if (cpu < 64)
+                    mDefaultMask |= UINT64_C(1) << cpu;
+        }
+    }
     mMask = mDefaultMask;
 }
 
@@ -212,30 +215,23 @@ bool Core::step(std::unique_lock<std::mutex>& lock)
         return false;
     for (;;) {
         const auto generation = mAffinityGen.load(std::memory_order_acquire);
-        if (!gWorkerIndex || gAffinity == generation)
+        if (!gWorkerIndex || gAffinity == generation || mDefaultCpus.empty())
             break;
         const auto mask     = mMask;
-        const bool defaults = mPolicy == XFLOW_AFFINITY_DEFAULT;
+        const bool defaults = mDefaultAffinity;
         lock.unlock();
-#if defined(__linux__) || defined(__ANDROID__)
-        cpu_set_t set;
-        CPU_ZERO(&set);
-        if (defaults) {
-            for (auto cpu : mDefaultCpus)
-                CPU_SET(cpu, &set);
-        } else
+        std::array<std::uint32_t, 64> selected;
+        std::size_t                   count = 0;
+        if (!defaults)
             for (unsigned i = 0; i < 64; ++i)
                 if (mask & (UINT64_C(1) << i))
-                    CPU_SET(i, &set);
-        if (sched_setaffinity(0, sizeof(set), &set))
-            gAffinity = 0;
-        else
-            gAffinity = generation;
-#else
-        (void)mask;
-        (void)defaults;
+                    selected[count++] = i;
+        const int error = au::sys::setThreadAffinity(defaults ? mDefaultCpus.data() : selected.data(),
+                                                     defaults ? mDefaultCpus.size() : count);
+        if (error)
+            XLOG_W("flow worker %zu: affinity application failed (%d)", gWorkerIndex, error);
+        // One attempt per configuration, outside scheduler locks. Reconfigure to retry.
         gAffinity = generation;
-#endif
         lock.lock();
         if (mAffinityGen.load(std::memory_order_acquire) == generation)
             break;
@@ -303,8 +299,6 @@ bool Core::step(std::unique_lock<std::mutex>& lock)
         successors.swap(n->mSuccessors);
     }
 
-    if (code && !mFirstError)
-        mFirstError = code;
     for (auto& weak : successors)
         if (auto succ = weak.lock()) {
             {
@@ -350,7 +344,7 @@ int Core::wait(const NodePtr& n)
     if (n->mState == State::Done)
         return n->mCode;
     if (n->mState == State::Created)
-        return n->mBuild ? n->mBuild : au::err::kErrorNotReady;
+        return n->mBuild ? n->mBuild : au::err::kErrorStateInvalid;
     if (gTileDepth || gDepth >= 128 || (gCurrent && reaches(n.get(), gCurrent, true)))
         return au::err::kErrorFlowWouldDeadlock;
     Node*  unused  = nullptr;
@@ -446,22 +440,6 @@ void release(H h)
         delete h;
 }
 
-std::string quote(const std::string& s)
-{
-    std::string out;
-    for (char ch : s) {
-        if (ch == '"' || ch == '\\')
-            out += '\\';
-        if (ch == '\n')
-            out += "\\n";
-        else if (ch == '\r')
-            out += "\\r";
-        else
-            out += ch;
-    }
-
-    return out;
-}
 }  // namespace
 
 extern "C" {
@@ -564,8 +542,22 @@ int au_flow_get_task_result(XFlowTaskHandle h) noexcept
         return au::err::kErrorInvalidParam;
     return au::flow::detail::boundary([&]() -> int {
         std::lock_guard<std::mutex> lock(h->mNode->mMutex);
-        return h->mNode->mState == au::flow::detail::State::Done ? h->mNode->mCode : au::err::kErrorNotReady;
+        if (h->mNode->mState == au::flow::detail::State::Done)
+            return h->mNode->mCode;
+        return h->mNode->mBuild ? h->mNode->mBuild : au::err::kErrorNotReady;
     });
+}
+
+int au_flow_task_done(XFlowTaskHandle h) noexcept
+{
+    if (!h)
+        return 0;
+    try {
+        std::lock_guard<std::mutex> lock(h->mNode->mMutex);
+        return h->mNode->mState == au::flow::detail::State::Done;
+    } catch (...) {
+        return 0;
+    }
 }
 
 int64_t au_flow_get_task_cost_us(XFlowTaskHandle h) noexcept
@@ -651,62 +643,20 @@ int au_flow_enqueue_group(XFlowGroupHandle g) noexcept
 
 int au_flow_wait_group(XFlowGroupHandle g) noexcept
 {
-    return au::flow::detail::boundary([&]() -> int { return au::flow::detail::core().wait(tail(g)); });
-}
-
-const char* au_flow_dump_group_dot(XFlowGroupHandle g) noexcept
-{
     if (!g)
-        return nullptr;
-    try {
-        auto&                       c = au::flow::detail::core();
-        std::lock_guard<std::mutex> lock(c.mMutex);
-        std::set<NodePtr>           nodes(g->mNodes.begin(), g->mNodes.end());
-        std::vector<NodePtr>        stack(g->mNodes);
-        while (!stack.empty()) {
-            auto n = stack.back();
-            stack.pop_back();
-            for (auto& p : n->mPreds)
-                if (nodes.insert(p).second)
-                    stack.push_back(p);
+        return au::err::kErrorInvalidParam;
+    return au::flow::detail::boundary([&]() -> int {
+        auto& c = au::flow::detail::core();
+        {
+            std::lock_guard<std::mutex> lock(c.mMutex);
+            if (g->mBuild)
+                return g->mBuild;
+            for (auto& n : g->mNodes)
+                if (n->mBuild)
+                    return n->mBuild;
         }
-        std::ostringstream text;
-        text << "digraph Flow {\n";
-        const char* states[] = {"created", "pending", "ready", "running", "done"};
-        for (auto& n : nodes) {
-            text << 'n' << reinterpret_cast<uintptr_t>(n.get()) << " [label=\"" << quote(n->mName)
-                 << "\\nstate=" << states[static_cast<int>(n->mState)] << "\\ncost_us=" << n->mCost
-                 << "\\ncode=" << n->mCode << "\"];\n";
-            for (auto& p : n->mPreds)
-                text << 'n' << reinterpret_cast<uintptr_t>(p.get()) << " -> n" << reinterpret_cast<uintptr_t>(n.get())
-                     << ";\n";
-        }
-        thread_local std::string result;
-        result = text.str() + "}\n";
-        return result.c_str();
-    } catch (...) {
-        return nullptr;
-    }
-}
-
-void au_flow_parallelize_tile(size_t range, size_t tile, XFlowTileFn fn, void* data) noexcept
-{
-    if (!fn)
-        return;
-
-    struct Callback
-    {
-        XFlowTileFn mFunction;
-        void*       mData;
-    } callback{fn, data};
-
-    au_flow_parallelize_tile_ex(
-        range, tile,
-        [](size_t begin, size_t end, size_t, void* context) {
-            auto& c = *static_cast<Callback*>(context);
-            c.mFunction(begin, end, c.mData);
-        },
-        &callback);
+        return c.wait(tail(g));
+    });
 }
 
 void au_flow_parallelize_tile_ex(size_t range, size_t tile, XFlowTileExFn fn, void* data) noexcept
@@ -781,26 +731,31 @@ int au_flow_wait_all() noexcept
         while (!c.mAccepted.empty() || c.mTileCallers)
             if (!c.step(lock))
                 c.mChanged.wait(lock);
-        return std::exchange(c.mFirstError, 0);
+        return 0;
     });
 }
 
-void au_flow_release_idle_workers() noexcept
+int au_flow_release_workers() noexcept
 {
     // A synchronous task/tile cannot drain itself or join its own pool thread.
     if (au::flow::detail::gCurrent || au::flow::detail::gTileDepth || au::flow::detail::gWorkerIndex)
-        return;
-    (void)au::flow::detail::boundary([]() -> int {
+        return au::err::kErrorFlowWouldDeadlock;
+    return au::flow::detail::boundary([]() -> int {
         auto&                        c = au::flow::detail::core();
         std::array<std::thread, 8>   retired;
         std::unique_lock<std::mutex> lock(c.mMutex);
         c.mChanged.wait(lock, [&] { return !c.mReleasing; });
         if (c.mClosing)
-            return au::err::kErrorInvalidParam;
+            return au::err::kErrorStateInvalid;
         c.mReleasing = true;
         lock.unlock();
-        (void)au_flow_wait_all();
+        const int error = au_flow_wait_all();
         lock.lock();
+        if (error) {
+            c.mReleasing = false;
+            c.mChanged.notify_all();
+            return error;
+        }
         c.mStop = true;
         c.mChanged.notify_all();
         for (size_t i = 0; i < c.mThreads.size(); ++i)
@@ -819,39 +774,18 @@ void au_flow_release_idle_workers() noexcept
     });
 }
 
-int au_flow_set_affinity(int policy, uint64_t mask) noexcept
+int au_flow_set_affinity_mask(uint64_t mask) noexcept
 {
     return au::flow::detail::boundary([&]() -> int {
         auto& c = au::flow::detail::core();
-        if (policy < XFLOW_AFFINITY_DEFAULT || policy > XFLOW_AFFINITY_CUSTOM_MASK)
+        if (c.mAffinityStatus)
+            return c.mAffinityStatus;
+        if (mask & ~c.mDefaultMask)
             return au::err::kErrorInvalidParam;
-        if (!c.mDefaultMask && policy != XFLOW_AFFINITY_DEFAULT)
-            return au::err::kErrorPlatformAPI;
-        if (policy == XFLOW_AFFINITY_DEFAULT)
-            mask = c.mDefaultMask;
-        else if (policy != XFLOW_AFFINITY_CUSTOM_MASK) {
-            unsigned best = policy == XFLOW_AFFINITY_PERFORMANCE ? 0 : UINT32_MAX;
-            mask          = 0;
-            for (unsigned cpu = 0; cpu < 64; ++cpu)
-                if (c.mDefaultMask & (UINT64_C(1) << cpu)) {
-                    unsigned      capacity = 1024;
-                    std::ifstream input("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpu_capacity");
-                    input >> capacity;
-                    if ((policy == XFLOW_AFFINITY_PERFORMANCE && capacity > best) ||
-                        (policy == XFLOW_AFFINITY_POWERSAVING && capacity < best)) {
-                        best = capacity;
-                        mask = 0;
-                    }
-                    if (capacity == best)
-                        mask |= UINT64_C(1) << cpu;
-                }
-        }
-        if ((policy != XFLOW_AFFINITY_DEFAULT && !mask) || (mask & ~c.mDefaultMask))
-            return au::err::kErrorPlatformAPI;
         std::lock_guard<std::mutex> lock(c.mMutex);
-        c.mMask   = mask;
-        c.mPolicy = policy;
-        c.mAffinityGen.fetch_add(1, std::memory_order_release);  // Workers acquire configuration after taking work.
+        c.mMask            = mask ? mask : c.mDefaultMask;
+        c.mDefaultAffinity = !mask;
+        c.mAffinityGen.fetch_add(1, std::memory_order_release);  // Workers acquire the accepted configuration.
         c.mChanged.notify_all();
         return 0;
     });

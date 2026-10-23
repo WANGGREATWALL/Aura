@@ -5,11 +5,11 @@
 #include <stdint.h>
 
 #include "log/xerror.h"
-#include "sys/xsystem.h"
+#include "sys/xvisibility.h"
 
 /**
  * @file xflow_api.h
- * @brief C-linkage task scheduling API for C++11 callers.
+ * @brief Task scheduling ABI for C99 and C++11 callers.
  * @note Completion covers the task body, not GPU work it merely submits.
  */
 #ifdef __cplusplus
@@ -32,18 +32,8 @@ typedef struct XFlowGroupNode* XFlowGroupHandle;
 typedef int (*XFlowTaskFn)(void* user_data);
 /// Payload cleanup callback; must not throw.
 typedef void (*XFlowDeleterFn)(void* user_data);
-/// Synchronous tile callback for [begin, end); must not throw.
-typedef void (*XFlowTileFn)(size_t begin, size_t end, void* user_data);
 /// Tile callback with a per-loop execution lane: caller=0, pool workers=1..8.
 typedef void (*XFlowTileExFn)(size_t begin, size_t end, size_t worker_idx, void* user_data);
-
-enum XFlowAffinityPolicy
-{
-    XFLOW_AFFINITY_DEFAULT     = 0,  ///< Restore the initial allowed CPU set.
-    XFLOW_AFFINITY_PERFORMANCE = 1,  ///< Prefer allowed CPUs with the highest cpu_capacity.
-    XFLOW_AFFINITY_POWERSAVING = 2,  ///< Prefer allowed CPUs with the lowest cpu_capacity.
-    XFLOW_AFFINITY_CUSTOM_MASK = 3   ///< Use the supplied CPU bit mask.
-};
 
 /**
  * @brief Create a task without submitting it.
@@ -91,7 +81,8 @@ AU_API void au_flow_release_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
  * @param pred Predecessor, including a running or completed task.
  * @param succ Successor; must not be submitted yet.
  * @return 0 on success, or an argument, state or cycle error.
- * @note Duplicate edges are ignored. Build errors on an unsubmitted successor are saved for enqueue.
+ * @note Device completion is not tracked; synchronize at device-to-CPU boundaries.
+ *       Duplicate edges are ignored. Build errors on an unsubmitted successor are saved for enqueue.
  */
 AU_API int au_flow_add_dependency(XFlowTaskHandle pred, XFlowTaskHandle succ) XFLOW_NOEXCEPT;
 
@@ -106,17 +97,26 @@ AU_API int au_flow_enqueue_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 /**
  * @brief Wait for a task and return its final result.
  * @param task Task to wait for.
- * @return Task result, kErrorNotReady for an unsubmitted task, or a build/wait error.
- * @note May execute other ready tasks. Disallowed waits return kErrorFlowWouldDeadlock; no implicit enqueue.
+ * @return Task result, kErrorStateInvalid for an unsubmitted task, or a build/wait error.
+ * @note Does not synchronize device work. May execute other ready tasks; never submits the target.
+ *       Disallowed waits return kErrorFlowWouldDeadlock.
  */
 AU_API int au_flow_wait_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 
 /**
  * @brief Read the task result without waiting for completion.
  * @param task Task to query.
- * @return Final result when done, kErrorNotReady otherwise, or an argument error.
+ * @return Final result when done, a saved build error, kErrorNotReady otherwise, or an argument error.
  */
 AU_API int au_flow_get_task_result(XFlowTaskHandle task) XFLOW_NOEXCEPT;
+
+/**
+ * @brief Test completion without waiting.
+ * @param task Task to query.
+ * @return 1 only after completion; 0 for unfinished or null tasks, or on query failure.
+ * @note A completed task may itself return kErrorNotReady; use this query to distinguish it.
+ */
+AU_API int au_flow_task_done(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 
 /**
  * @brief Read the final execution time in microseconds.
@@ -143,7 +143,7 @@ AU_API void au_flow_release_group(XFlowGroupHandle group) XFLOW_NOEXCEPT;
  * @param task Member task; duplicate additions are ignored.
  * @return 0 on success, or an argument, state or dependency error.
  * @note A task not yet submitted can join one group; submitted tasks can be joined by several.
- *       The group retains the first add error and reports it on enqueue.
+ *       The group retains the first add error and reports it on enqueue or wait.
  */
 AU_API int au_flow_group_add_task(XFlowGroupHandle group, XFlowTaskHandle task) XFLOW_NOEXCEPT;
 
@@ -161,7 +161,7 @@ AU_API int au_flow_add_group_dependency(XFlowGroupHandle pred, XFlowGroupHandle 
  * @param pred Predecessor task.
  * @param succ Successor group whose members are not yet submitted.
  * @return 0 on success, or an argument, state or cycle error.
- * @note Failures in pred short-circuit the successor group.
+ * @note Failures in pred short-circuit the successor group. Device completion is not tracked.
  */
 AU_API int au_flow_add_task_group_dependency(XFlowTaskHandle pred, XFlowGroupHandle succ) XFLOW_NOEXCEPT;
 
@@ -191,55 +191,38 @@ AU_API int au_flow_enqueue_group(XFlowGroupHandle group) XFLOW_NOEXCEPT;
 AU_API int au_flow_wait_group(XFlowGroupHandle group) XFLOW_NOEXCEPT;
 
 /**
- * @brief Export group dependencies, names, states, costs and results as Graphviz DOT.
- * @param group Group to export; its predecessor graph is included.
- * @return Thread-local text, or null on failure.
- * @note Copy the text to keep it; it is valid until the next dump on this thread and must not be freed.
- */
-AU_API const char* au_flow_dump_group_dot(XFlowGroupHandle group) XFLOW_NOEXCEPT;
-
-/**
- * @brief Split [0, range) into tiles and finish them before returning.
- * @param range Number of elements; zero does nothing.
- * @param tile Elements per tile; zero means 1.
- * @param fn Concurrent callback for [begin, end); null does nothing.
- * @param user_data Borrowed callback data, valid until this call returns.
- * @note Caller plus at most 3 helpers; nested loops run serially. Callbacks must not throw or wait on unfinished tasks.
- */
-AU_API void au_flow_parallelize_tile(size_t range, size_t tile, XFlowTileFn fn, void* user_data) XFLOW_NOEXCEPT;
-
-/**
- * @brief Run synchronous tiles with a per-loop execution lane for scratch storage.
+ * @brief Split [0, range) into synchronous tiles with a per-loop lane for scratch storage.
  * @param range Number of elements; zero does nothing.
  * @param tile Elements per tile; zero means 1.
  * @param fn Callback with worker_idx: caller=0, pool slot=1..8; null does nothing.
  * @param user_data Borrowed callback data, valid until this call returns.
  * @note Indices need not be contiguous; concurrent loops need separate scratch arrays.
- *       Nested loops use lane 0; external waiters do not help tiles. Other rules match parallelize_tile.
+ *       Nested loops run serially with lane 0; external waiters do not help tiles.
+ *       Caller plus at most 3 helpers; callbacks must not throw or wait on unfinished tasks.
  */
 AU_API void au_flow_parallelize_tile_ex(size_t range, size_t tile, XFlowTileExFn fn, void* user_data) XFLOW_NOEXCEPT;
 
 /**
  * @brief Wait until accepted tasks and synchronous tile calls have all finished.
- * @return First completion error since the previous barrier, consumed on return; 0 if none.
+ * @return 0 when drained, or a wait error; task failures remain available from their handles.
  * @note Ignores unsubmitted tasks and does not wait for device work. New submissions may extend the wait.
  *       Calling from a task or tile returns kErrorFlowWouldDeadlock.
  */
 AU_API int au_flow_wait_all(void) XFLOW_NOEXCEPT;
 
 /**
- * @brief Set the CPU affinity policy for pool workers.
- * @param policy One of XFlowAffinityPolicy.
- * @param custom_mask Used for CUSTOM_MASK only; bit N selects CPU N (CPU6+7 = 0xC0).
- * @return 0 if accepted, or an argument/platform error.
- * @note Custom CPUs must be initially allowed. Workers apply changes asynchronously; callers are unchanged.
+ * @brief Request a CPU mask for pool workers without binding the calling thread.
+ * @param mask Bit N selects CPU N (CPU6+7 = 0xC0); 0 restores the initial full CPU set.
+ * @return 0 if accepted, or an argument/platform error; unsupported platforms return kErrorNotSupported.
+ * @note Requested CPUs must belong to the scheduler's initial allowed set. Workers apply changes
+ *       asynchronously; OS application failures are logged. Set again to retry; use sys helpers to select CPUs.
  */
-AU_API int au_flow_set_affinity(int policy, uint64_t custom_mask) XFLOW_NOEXCEPT;
+AU_API int au_flow_set_affinity_mask(uint64_t mask) XFLOW_NOEXCEPT;
 
 /**
  * @brief Read the requested worker affinity mask for CPUs 0..63.
  * @return Requested mask, or 0 when unavailable.
- * @note Not proof of each worker's actual binding; DEFAULT can also restore allowed CPUs numbered above 63.
+ * @note Not proof of each worker's actual binding; a zero request also restores allowed CPUs numbered above 63.
  */
 AU_API uint64_t au_flow_get_affinity_mask(void) XFLOW_NOEXCEPT;
 
@@ -247,12 +230,13 @@ AU_API uint64_t au_flow_get_affinity_mask(void) XFLOW_NOEXCEPT;
 AU_API size_t au_flow_get_worker_count(void) XFLOW_NOEXCEPT;
 
 /**
- * @brief Drain accepted work, join all workers, and allow lazy worker creation again.
- * @note A global waitAll plus pool teardown, not just idle-thread cleanup; GPU work still needs an explicit wait.
- *       External submissions wait at the boundary; in-flight tasks/tiles may still submit.
- *       Calls from a task/tile/worker do nothing. Consumes completion errors without returning them.
+ * @brief Drain accepted tasks and tiles, join all workers, and allow lazy creation again.
+ * @return 0 on success, or kErrorFlowWouldDeadlock from a task/tile/worker; other failures return an error.
+ * @note External submissions wait at the boundary; in-flight tasks/tiles may still submit.
+ *       Task failures are read from their handles. Device work still needs an explicit wait.
+ *       Callers must finish all external API calls before unloading the library.
  */
-AU_API void au_flow_release_idle_workers(void) XFLOW_NOEXCEPT;
+AU_API int au_flow_release_workers(void) XFLOW_NOEXCEPT;
 
 #ifdef __cplusplus
 }

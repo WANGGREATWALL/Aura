@@ -1,16 +1,18 @@
 #include "sys/xsystem.h"
 
-#include "log/xerror.h"
-#include "sys/xsystem_property_detail.h"
-
+#include <array>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
+#include <new>
 #include <string>
 #include <thread>
+
+#include "log/xerror.h"
+#include "sys/xsystem_property_detail.h"
 
 #if AU_OS_WINDOWS
 #  include <windows.h>
@@ -20,6 +22,7 @@
 #  include <sys/sysctl.h>
 #  include <unistd.h>
 #elif AU_OS_LINUX || AU_OS_ANDROID
+#  include <sched.h>
 #  include <sys/sysinfo.h>
 #  include <sys/syscall.h>
 #  include <unistd.h>
@@ -213,6 +216,100 @@ std::string getCpuModelName() noexcept
     } catch (...) {
     }
     return {};
+}
+
+int getThreadAffinity(uint32_t* cpus, std::size_t capacity, std::size_t& count) noexcept
+{
+    count = 0;
+    if (!cpus && capacity)
+        return err::kErrorInvalidParam;
+#if AU_OS_LINUX || AU_OS_ANDROID
+    cpu_set_t set;
+    if (sched_getaffinity(0, sizeof(set), &set))
+        return err::kErrorPlatformAPI;
+    for (unsigned cpu = 0; cpu < CPU_SETSIZE; ++cpu)
+        if (CPU_ISSET(cpu, &set))
+            ++count;
+    if (!cpus && !capacity)
+        return 0;
+    if (capacity < count)
+        return err::kErrorOutOfRange;
+    size_t index = 0;
+    for (unsigned cpu = 0; cpu < CPU_SETSIZE; ++cpu)
+        if (CPU_ISSET(cpu, &set))
+            cpus[index++] = cpu;
+    return 0;
+#else
+    (void)cpus;
+    return err::kErrorNotSupported;
+#endif
+}
+
+int setThreadAffinity(const uint32_t* cpus, std::size_t count) noexcept
+{
+    if (!cpus || !count)
+        return err::kErrorInvalidParam;
+#if AU_OS_LINUX || AU_OS_ANDROID
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    for (size_t i = 0; i < count; ++i) {
+        if (cpus[i] >= CPU_SETSIZE)
+            return err::kErrorInvalidParam;
+        CPU_SET(cpus[i], &set);
+    }
+    return sched_setaffinity(0, sizeof(set), &set) ? err::kErrorPlatformAPI : 0;
+#else
+    return err::kErrorNotSupported;
+#endif
+}
+
+int selectCpuMask(CpuClass cpuClass, uint64_t& mask) noexcept
+{
+    mask = 0;
+    if (cpuClass != CpuClass::kPerformance && cpuClass != CpuClass::kPowerSaving)
+        return err::kErrorInvalidParam;
+#if AU_OS_LINUX || AU_OS_ANDROID
+    try {
+        // Only static capacities are cached; affinity and online CPUs are queried below.
+        static const std::array<unsigned, 64> capacities = [] {
+            std::array<unsigned, 64> values{};
+            for (unsigned cpu = 0; cpu < values.size(); ++cpu) {
+                std::ifstream input("/sys/devices/system/cpu/cpu" + std::to_string(cpu) + "/cpu_capacity");
+                unsigned      capacity = 0;
+                if (input >> capacity && capacity)
+                    values[cpu] = capacity;
+            }
+            return values;
+        }();
+        cpu_set_t allowed;
+        if (sched_getaffinity(0, sizeof(allowed), &allowed))
+            return err::kErrorPlatformAPI;
+        bool classified = true;
+        for (unsigned cpu = 0; cpu < capacities.size(); ++cpu)
+            if (CPU_ISSET(cpu, &allowed) && !capacities[cpu])
+                classified = false;
+        unsigned best = cpuClass == CpuClass::kPerformance ? 0 : UINT32_MAX;
+        for (unsigned cpu = 0; cpu < capacities.size(); ++cpu) {
+            if (!CPU_ISSET(cpu, &allowed))
+                continue;
+            const unsigned capacity = classified ? capacities[cpu] : 1024;
+            if ((cpuClass == CpuClass::kPerformance && capacity > best) ||
+                (cpuClass == CpuClass::kPowerSaving && capacity < best)) {
+                best = capacity;
+                mask = 0;
+            }
+            if (capacity == best)
+                mask |= UINT64_C(1) << cpu;
+        }
+        return mask ? 0 : err::kErrorPlatformAPI;
+    } catch (const std::bad_alloc&) {
+        return err::kErrorNoMemory;
+    } catch (...) {
+        return err::kErrorPlatformAPI;
+    }
+#else
+    return err::kErrorNotSupported;
+#endif
 }
 
 uint64_t getMemoryTotalBytes() noexcept
