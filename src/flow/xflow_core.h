@@ -46,7 +46,6 @@ struct Node
     State                                 mState = State::Created;
     int                                   mBuild = 0, mDependencyError = 0, mCode = 0;
     std::size_t                           mPending = 0;
-    bool                                  mGrouped = false;
     std::weak_ptr<Node>                   mGroupExit;  // Validate whole-group submission without an ownership cycle.
     std::vector<NodePtr>                  mPreds;
     std::vector<std::weak_ptr<Node>>      mSuccessors;

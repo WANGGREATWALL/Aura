@@ -192,7 +192,7 @@ int Core::submit(const NodePtr& root)
     // Compare weak ownership directly: locking an abandoned exit could destroy
     // its other members and run user deleters while mMutex is held.
     for (auto& n : batch)
-        if (n->mGrouped && !n->mGroupExit.expired() && collected.find(n->mGroupExit) == collected.end())
+        if (!n->mGroupExit.expired() && collected.find(n->mGroupExit) == collected.end())
             return au::err::kErrorInvalidParam;
     if (batch.empty())
         return 0;
@@ -617,8 +617,7 @@ int au_flow_group_add_task(XFlowGroupHandle g, XFlowTaskHandle h) noexcept
         int code = au::err::kErrorInvalidParam;
         if (h && std::find(g->mNodes.begin(), g->mNodes.end(), node(h)) != g->mNodes.end())
             return 0;
-        if (h && (!node(h)->mGrouped || node(h)->mGroupExit.expired() ||
-                  node(h)->mState != au::flow::detail::State::Created)) {
+        if (h && (node(h)->mGroupExit.expired() || node(h)->mState != au::flow::detail::State::Created)) {
             try {
                 g->mNodes.reserve(g->mNodes.size() + 1);
                 code = node(h)->mState == au::flow::detail::State::Created ? c.edge(head(g), node(h)) : 0;
@@ -626,10 +625,8 @@ int au_flow_group_add_task(XFlowGroupHandle g, XFlowTaskHandle h) noexcept
                     code = c.edge(node(h), tail(g));
                 if (!code) {
                     g->mNodes.insert(g->mNodes.end() - 1, node(h));
-                    if (node(h)->mState == au::flow::detail::State::Created) {
-                        node(h)->mGrouped   = true;
+                    if (node(h)->mState == au::flow::detail::State::Created)
                         node(h)->mGroupExit = tail(g);
-                    }
                 }
             } catch (...) {
                 code = au::err::kErrorNoMemory;
