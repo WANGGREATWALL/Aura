@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <exception>
 #include <set>
 #include <utility>
 
@@ -17,13 +18,18 @@ thread_local unsigned      gTileDepth = 0, gDepth = 0;
 thread_local std::uint64_t gAffinity = 0;
 
 template <class F>
-int boundary(F fn) noexcept
+int boundary(F fn, const char* name = nullptr) noexcept
 {
     try {
         return fn();
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc& error) {
+        XLOG_E("flow [%s]: %s\n", name ? name : "operation", error.what());
         return au::err::kErrorNoMemory;
+    } catch (const std::exception& error) {
+        XLOG_E("flow [%s]: %s\n", name ? name : "operation", error.what());
+        return au::err::kErrorUnknown;
     } catch (...) {
+        XLOG_E("flow [%s]: non-standard exception\n", name ? name : "operation");
         return au::err::kErrorUnknown;
     }
 }
@@ -164,28 +170,34 @@ void Core::grow()
     }
 }
 
-int Core::submit(const std::vector<NodePtr>& nodes)
+int Core::submit(const NodePtr& root)
 {
-    std::list<NodePtr> batch;
-    for (auto& n : nodes) {
-        if (n->mState != State::Created)
+    std::vector<NodePtr>                     stack{root};
+    std::set<NodePtr, std::owner_less<void>> collected;
+    std::list<NodePtr>                       batch;
+    while (!stack.empty()) {
+        auto n = std::move(stack.back());
+        stack.pop_back();
+        if (n->mState != State::Created || !collected.insert(n).second)
             continue;
         if (n->mBuild)
             return n->mBuild;
         // Acquire placement construction before publishing callable execution.
         if (!n->mPayloadReady.load(std::memory_order_acquire))
             return au::err::kErrorNotReady;
-        for (auto& p : n->mPreds)
-            if (p->mState == State::Created && std::find(nodes.begin(), nodes.end(), p) == nodes.end())
-                return au::err::kErrorInvalidParam;
-        if (std::find(batch.begin(), batch.end(), n) == batch.end())
-            batch.push_back(n);
+        batch.push_back(n);
+        stack.insert(stack.end(), n->mPreds.begin(), n->mPreds.end());
     }
 
+    // Compare weak ownership directly: locking an abandoned exit could destroy
+    // its other members and run user deleters while mMutex is held.
+    for (auto& n : batch)
+        if (n->mGrouped && collected.find(n->mGroupExit) == collected.end())
+            return au::err::kErrorInvalidParam;
     if (batch.empty())
         return 0;
-    if (mClosing && !gCurrent)
-        return au::err::kErrorInvalidParam;
+    if (mClosing && !gCurrent && !gTileDepth)
+        return au::err::kErrorStateInvalid;
     grow();  // No accepted state if the required thread could not start.
     for (auto it = batch.begin(); it != batch.end(); ++it) {
         auto&                       n = *it;
@@ -279,7 +291,8 @@ bool Core::step(std::unique_lock<std::mutex>& lock)
     if (traced)
         au::perf::traceBegin(&trace, n->mName);
     if (!code && n->mFunction)
-        code = boundary([&]() -> int { return n->mFunction(n->mPayload.get()); });
+        code = boundary([&]() -> int { return n->mFunction(n->mPayload.get()); },
+                        n->mName.empty() ? "unnamed task" : n->mName.c_str());
     if (traced)
         au::perf::traceEnd(&trace);
     const auto cost =
@@ -527,7 +540,7 @@ int au_flow_enqueue_task(XFlowTaskHandle h) noexcept
     return au::flow::detail::boundary([&]() -> int {
         auto& c = au::flow::detail::core();
         auto  l = submissionLock(c);
-        return c.submit({node(h)});
+        return c.submit(node(h));
     });
 }
 
@@ -612,7 +625,10 @@ int au_flow_group_add_task(XFlowGroupHandle g, XFlowTaskHandle h) noexcept
                     code = c.edge(node(h), tail(g));
                 if (!code) {
                     g->mNodes.insert(g->mNodes.end() - 1, node(h));
-                    node(h)->mGrouped = true;
+                    if (node(h)->mState == au::flow::detail::State::Created) {
+                        node(h)->mGrouped   = true;
+                        node(h)->mGroupExit = tail(g);
+                    }
                 }
             } catch (...) {
                 code = au::err::kErrorNoMemory;
@@ -620,6 +636,11 @@ int au_flow_group_add_task(XFlowGroupHandle g, XFlowTaskHandle h) noexcept
         }
         if (!g->mBuild)
             g->mBuild = code;
+        if (code) {
+            std::lock_guard<std::mutex> state(g->mEntry->mMutex);
+            if (!g->mEntry->mBuild)
+                g->mEntry->mBuild = g->mBuild;
+        }
         return code;
     });
 }
@@ -637,7 +658,7 @@ int au_flow_enqueue_group(XFlowGroupHandle g) noexcept
     return au::flow::detail::boundary([&]() -> int {
         auto& c = au::flow::detail::core();
         auto  l = submissionLock(c);
-        return g->mBuild ? g->mBuild : c.submit(g->mNodes);
+        return g->mBuild ? g->mBuild : c.submit(tail(g));
     });
 }
 

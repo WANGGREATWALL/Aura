@@ -87,10 +87,12 @@ AU_API void au_flow_release_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 AU_API int au_flow_add_dependency(XFlowTaskHandle pred, XFlowTaskHandle succ) XFLOW_NOEXCEPT;
 
 /**
- * @brief Submit a task for asynchronous execution when its dependencies finish.
+ * @brief Atomically submit a task and all its unsubmitted upstream dependencies.
  * @param task Task to submit.
- * @return 0 if accepted or previously submitted; otherwise a submission error.
- * @note Submit unsubmitted predecessors first, or together in a group. Re-enqueue never reruns a task.
+ * @return 0 if accepted or previously submitted; otherwise an error, with no new tasks accepted.
+ * @note Running/completed predecessors are not traversed or rerun. A Draft group member requires
+ *       its group exit in the collected batch; otherwise submission returns kErrorInvalidParam.
+ *       Task completion does not include device work it merely enqueues.
  */
 AU_API int au_flow_enqueue_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 
@@ -175,10 +177,11 @@ AU_API int au_flow_add_task_group_dependency(XFlowTaskHandle pred, XFlowGroupHan
 AU_API int au_flow_add_group_task_dependency(XFlowGroupHandle pred, XFlowTaskHandle succ) XFLOW_NOEXCEPT;
 
 /**
- * @brief Submit all unsubmitted group members as one batch.
+ * @brief Atomically submit all unsubmitted group members and their upstream dependencies.
  * @param group Group to submit.
  * @return 0 if accepted, or the first build/submission error.
- * @note Already submitted members are not rerun; validation precedes publishing new members.
+ * @note Already submitted members are not rerun. Validation precedes publishing any new tasks;
+ *       group errors also reject submission through a downstream task or chain.
  */
 AU_API int au_flow_enqueue_group(XFlowGroupHandle group) XFLOW_NOEXCEPT;
 

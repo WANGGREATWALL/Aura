@@ -25,6 +25,12 @@
  * referenced storage's lifetime. Moving a borrowed view still leaves a borrowed view.
  * Destroying a handle neither waits nor cancels; nested submissions are independent.
  * Handles belong to one runtime instance and must not cross independently linked libraries.
+ * For cooperative cancellation, check a caller-owned atomic flag at task entry and return
+ * kErrorAborted. It cannot forcibly interrupt a running function; check again during long work.
+ * Use RAII for cleanup, or run mandatory cleanup after confirming all relevant work is complete.
+ * A wait error does not guarantee completion of accepted work.
+ * There is no per-graph concurrency limit. The pool has at most 8 workers; waiting callers
+ * may also execute tasks. Express ordering with dependencies; each tiled loop has at most 4 participants.
  *
  * @warning flow does not track OpenCL events. Establish explicit synchronization before a
  * CPU consumer reads device results, either at the last GPU task's end or the consumer's
@@ -275,6 +281,8 @@ public:
 
     int code() const { return mCode; }
 
+    const T& last() const noexcept { return mLast; }
+
     template <class U>
     Link<U> operator>>(const U& next) const
     {
@@ -285,6 +293,16 @@ private:
     T   mLast;
     int mCode;
 };
+
+template <class T>
+struct IsLink : std::false_type
+{
+};
+
+template <class T>
+struct IsLink<Link<T>> : std::true_type
+{
+};
 }  // namespace detail
 
 /**
@@ -292,7 +310,9 @@ private:
  * @param a Predecessor task.
  * @param b Successor task; must not be submitted yet.
  * @return A chain result carrying the first build error.
- * @note Check (a >> b >> c).code() before enqueue; group overloads use the same rules.
+ * @note flow.enqueue(a >> b >> c) checks the chain error before submitting its upstream closure.
+ *       An already submitted successor returns kErrorStateInvalid without changing its result.
+ *       Group overloads use the same rules; a >> (b, c) links only a to c, not both tasks.
  */
 inline au::flow::detail::Link<Task> operator>>(const Task& a, const Task& b)
 {
@@ -387,7 +407,8 @@ public:
      */
     template <class F, class... A>
     typename std::enable_if<!std::is_same<typename std::decay<F>::type, Task>::value &&
-                                !std::is_same<typename std::decay<F>::type, Tasks>::value,
+                                !std::is_same<typename std::decay<F>::type, Tasks>::value &&
+                                !au::flow::detail::IsLink<typename std::decay<F>::type>::value,
                             Task>::type
     enqueue(F&& f, A&&... a)
     {
@@ -413,17 +434,37 @@ public:
         return task;
     }
 
+    /**
+     * @brief Submit a task and all its unsubmitted upstream dependencies as one batch.
+     * @param task Task at the end of the requested dependency graph.
+     * @return 0 if accepted, or a validation/submission error; failure accepts no new tasks.
+     * @note Accepted tasks are not rerun. A Draft group member requires its group exit in the batch;
+     *       submit the group or a successor of the whole group instead of a member alone.
+     */
     int enqueue(const Task& task) { return task.mError ? task.mError : au_flow_enqueue_task(task.nativeHandle()); }
 
+    /** @copydoc au_flow_enqueue_group */
     int enqueue(const Tasks& group) { return au_flow_enqueue_group(group.nativeHandle()); }
 
     /**
-     * @brief Create and submit a successor of an accepted or completed task.
+     * @brief Submit a dependency chain through its last task or group.
+     * @param chain Result of task/group operator>> calls.
+     * @return First chain error without submitting work, otherwise the batch submission result.
+     * @note Wait on chain.last() or a retained tail handle. This does not construct another Tasks group.
+     */
+    template <class T>
+    int enqueue(const au::flow::detail::Link<T>& chain)
+    {
+        return chain.code() ? chain.code() : enqueue(chain.last());
+    }
+
+    /**
+     * @brief Create and submit a successor, including any unsubmitted upstream tasks.
      * @param pred Predecessor task.
      * @param f Successor callable returning int or void.
      * @param a Arguments for the successor.
      * @return Successor task; setup/submission errors are available through wait() or code().
-     * @note The callable is skipped if the predecessor fails. Waiting does not submit an unsubmitted predecessor.
+     * @note The callable is skipped if the predecessor fails. Waiting itself never submits work.
      */
     template <class F, class... A>
     Task enqueueAfter(const Task& pred, F&& f, A&&... a)
@@ -433,11 +474,12 @@ public:
 
     /**
      * @brief Submit a successor that waits for all given predecessors.
-     * @param preds Accepted or completed predecessors; an empty list adds no dependency.
+     * @param preds Predecessors in any state; an empty list adds no dependency.
      * @param f Successor callable returning int or void.
      * @param a Arguments for the successor.
      * @return Successor task, carrying any setup/submission error.
-     * @note Any predecessor failure skips the successor body and propagates its error.
+     * @note Unsubmitted predecessors are included atomically; a failure leaves them unsubmitted.
+     *       Any predecessor failure skips the successor body and propagates its error.
      */
     template <class F, class... A>
     Task enqueueAfter(std::initializer_list<Task> preds, F&& f, A&&... a)
@@ -445,19 +487,19 @@ public:
         Task task = create(std::forward<F>(f), std::forward<A>(a)...);
         for (const auto& pred : preds)
             if (!task.mError)
-                task.mError = pred.precede(task);
+                task.mError = pred.mError ? pred.mError : pred.precede(task);
         if (!task.mError)
             task.mError = enqueue(task);
         return task;
     }
 
     /**
-     * @brief Submit a successor that waits for an accepted or completed group.
+     * @brief Submit a successor together with any unsubmitted predecessor group and its upstream tasks.
      * @param pred Predecessor group.
      * @param f Successor callable returning int or void.
      * @param a Arguments for the successor.
      * @return Successor task, carrying any setup/submission error.
-     * @note Does not submit the predecessor group; group failures skip the successor body.
+     * @note Group failures skip the successor body; validation failure publishes no new work.
      */
     template <class F, class... A>
     Task enqueueAfter(const Tasks& pred, F&& f, A&&... a)
