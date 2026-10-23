@@ -14,28 +14,50 @@
 
 /**
  * @file xflow.h
- * @brief Lightweight asynchronous tasks, dependencies, batch waits and synchronous CPU tiles.
- * @note C++11 facade over a C ABI. Workers are created lazily (at most 8); each tiled loop
- *       uses its caller and up to 3 helpers. releaseWorkers() drains and reclaims the pool.
+ * @brief Lightweight control-flow scheduler for algorithm libraries, with a C++11 facade over a C ABI.
  *
- * Tasks return int (0 means success) or void. A failed predecessor skips dependents and
- * propagates an upstream error, without guaranteeing which error wins at a multi-input join.
- * Completion covers the callable and payload cleanup, not asynchronous device work.
- * Arguments are decayed copies or moves; std::ref and borrowing views do not extend the
- * referenced storage's lifetime. Moving a borrowed view still leaves a borrowed view.
- * Destroying a handle neither waits nor cancels; nested submissions are independent.
- * Handles belong to one runtime instance and must not cross independently linked libraries.
- * For cooperative cancellation, check a caller-owned atomic flag at task entry and return
- * kErrorAborted. It cannot forcibly interrupt a running function; check again during long work.
- * Use RAII for cleanup, or run mandatory cleanup after confirming all relevant work is complete.
- * A wait error does not guarantee completion of accepted work.
- * There is no per-graph concurrency limit. The pool has at most 8 workers; waiting callers
- * may also execute tasks. Express ordering with dependencies; each tiled loop has at most 4 participants.
+ * @par Purpose
+ * Overlap asynchronous tasks with caller work, express parallel branches followed by a join,
+ * or synchronously split a CPU range into tiles. Scheduling is independent of memory and GPU modules.
  *
- * @warning flow does not track OpenCL events. Establish explicit synchronization before a
- * CPU consumer reads device results, either at the last GPU task's end or the consumer's
- * start. Consecutive kernels may enqueue without host waits; use queue order or explicit
- * event dependencies as appropriate. Prefer waiting for the needed event over clFinish().
+ * @par Task model
+ * Tasks return int (0 means success) or void. Failed predecessors skip dependents and propagate an
+ * upstream error; a multi-input join does not guarantee which error wins. enqueue() submits all Draft
+ * upstream tasks atomically. Completion includes the callable and payload cleanup, not device work.
+ *
+ * @par Ownership
+ * Arguments are decayed copies or moves. std::ref and borrowing views do not extend storage lifetime;
+ * moving a borrowed view still borrows. Handle destruction neither waits nor cancels, and nested
+ * submissions are independent. Handles must not cross independently linked runtime instances.
+ *
+ * @par Cancellation and cleanup
+ * Check a caller-owned atomic flag and return kErrorAborted for cooperative cancellation; running
+ * functions cannot be forcibly interrupted. Use RAII, or run mandatory cleanup after confirming all
+ * relevant work is complete. A wait error does not guarantee completion of accepted work.
+ *
+ * @par Concurrency
+ * Workers are created lazily (at most 8); releaseWorkers() drains and reclaims the pool. Waiting callers
+ * may also execute tasks. There is no per-graph limit; use dependencies for ordering. Each tiled loop
+ * uses its caller and up to 3 helpers.
+ *
+ * @par Device synchronization
+ * @warning flow does not track OpenCL events. Synchronize before a CPU consumer reads device results,
+ * either at the last GPU task's end or the consumer's start. Consecutive kernels may enqueue without
+ * host waits; use queue order or explicit event dependencies. Prefer the needed event over clFinish().
+ *
+ * @par Example: parallel branches and a join
+ * @code
+ * auto& flow = au::flow::Flow::get();
+ * auto a = flow.create([] {});  // Prepare input.
+ * auto b = flow.create([] {});  // First branch.
+ * auto c = flow.create([] {});  // Second branch.
+ * au::flow::Tasks group{b, c};
+ * auto done = flow.create([] {});  // Consume results.
+ * auto chain = a >> group >> done;
+ * int code = flow.enqueue(chain);
+ * if (!code)
+ *     code = chain.last().wait();
+ * @endcode
  */
 
 namespace au {
@@ -247,7 +269,8 @@ public:
      * @brief Add a task to a group that has not been submitted.
      * @param t Member task; duplicate additions are ignored.
      * @return 0 on success, or a build error saved for group submission.
-     * @note Unsubmitted tasks can join one group; submitted tasks may be shared as completion dependencies.
+     * @note Draft tasks can join one live group. After its exit expires, they may be regrouped;
+     *       existing dependencies and errors remain. Submitted tasks may be shared by several groups.
      */
     int add(const Task& t) { return au_flow_group_add_task(mHandle, t.nativeHandle()); }
 
@@ -438,8 +461,8 @@ public:
      * @brief Submit a task and all its unsubmitted upstream dependencies as one batch.
      * @param task Task at the end of the requested dependency graph.
      * @return 0 if accepted, or a validation/submission error; failure accepts no new tasks.
-     * @note Accepted tasks are not rerun. A Draft group member requires its group exit in the batch;
-     *       submit the group or a successor of the whole group instead of a member alone.
+     * @note Accepted tasks are not rerun. A Draft member with a live group exit requires that exit
+     *       in the batch. Once the exit expires, the member can be submitted with its existing dependencies.
      */
     int enqueue(const Task& task) { return task.mError ? task.mError : au_flow_enqueue_task(task.nativeHandle()); }
 

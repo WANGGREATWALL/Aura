@@ -90,9 +90,9 @@ AU_API int au_flow_add_dependency(XFlowTaskHandle pred, XFlowTaskHandle succ) XF
  * @brief Atomically submit a task and all its unsubmitted upstream dependencies.
  * @param task Task to submit.
  * @return 0 if accepted or previously submitted; otherwise an error, with no new tasks accepted.
- * @note Running/completed predecessors are not traversed or rerun. A Draft group member requires
- *       its group exit in the collected batch; otherwise submission returns kErrorInvalidParam.
- *       Task completion does not include device work it merely enqueues.
+ * @note Running/completed predecessors are not traversed or rerun. A Draft member with a live group exit
+ *       requires that exit in the batch, or returns kErrorInvalidParam. An expired exit permits submission;
+ *       existing dependencies and build errors remain. Completion excludes merely enqueued device work.
  */
 AU_API int au_flow_enqueue_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 
@@ -144,7 +144,8 @@ AU_API void au_flow_release_group(XFlowGroupHandle group) XFLOW_NOEXCEPT;
  * @param group Group whose submission has not started.
  * @param task Member task; duplicate additions are ignored.
  * @return 0 on success, or an argument, state or dependency error.
- * @note A task not yet submitted can join one group; submitted tasks can be joined by several.
+ * @note Draft tasks can join one live group; once its exit expires, they may join a new group without
+ *       losing previous dependencies or errors. Submitted tasks can be joined by several groups.
  *       The group retains the first add error and reports it on enqueue or wait.
  */
 AU_API int au_flow_group_add_task(XFlowGroupHandle group, XFlowTaskHandle task) XFLOW_NOEXCEPT;

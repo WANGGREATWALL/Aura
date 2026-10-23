@@ -510,6 +510,7 @@ TEST_F(XFlow, GroupClosureAndWholeGroupBoundary)
 
     auto transientMember = flow.create([] {}), transientTail = flow.create([] {});
     auto transient = au::flow::Tasks{transientMember} >> transientTail;
+    EXPECT_EQ(flow.enqueue(transientMember), au::err::kErrorInvalidParam);  // The exit is retained by the tail.
     ASSERT_EQ(flow.enqueue(transient), 0);  // The temporary group handle has already been destroyed.
     EXPECT_EQ(transientTail.wait(), 0);
 
@@ -534,8 +535,49 @@ TEST_F(XFlow, GroupClosureAndWholeGroupBoundary)
         au::flow::Tasks abandoned{orphan, flow.create([owner] {})};
     }
     EXPECT_TRUE(released.expired());  // Group-exit tracking must not keep sibling payloads alive.
-    EXPECT_EQ(flow.enqueue(orphan), au::err::kErrorInvalidParam);
-    expectCreated({orphan});
+    EXPECT_EQ(flow.enqueue(orphan), 0);
+    EXPECT_EQ(orphan.wait(), 0);
+
+    auto regrouped = flow.create([] {});
+    {
+        au::flow::Tasks abandoned{regrouped};
+    }
+    au::flow::Tasks replacement{regrouped};
+    ASSERT_EQ(flow.enqueue(replacement), 0);
+    EXPECT_EQ(replacement.wait(), 0);
+
+    std::atomic<int> stage{0};
+    auto             upstream = flow.create([&] { stage.store(1, std::memory_order_relaxed); });
+    auto             survivor = flow.create([&] { EXPECT_EQ(stage.load(std::memory_order_relaxed), 1); });
+    {
+        au::flow::Tasks abandoned{survivor};
+        EXPECT_EQ(upstream.precede(abandoned), 0);
+    }
+    EXPECT_EQ(flow.enqueue(survivor), 0);
+    EXPECT_EQ(survivor.wait(), 0);
+    EXPECT_TRUE(upstream.done());
+
+    auto            guarded = flow.create([] {});
+    au::flow::Tasks retained;
+    {
+        au::flow::Tasks original{guarded};
+        retained = original;
+    }
+    EXPECT_EQ(flow.enqueue(guarded), au::err::kErrorInvalidParam);
+    expectCreated({guarded});
+    retained = au::flow::Tasks();
+    EXPECT_EQ(flow.enqueue(guarded), 0);
+    EXPECT_EQ(guarded.wait(), 0);
+
+    auto failed = flow.create([] {});
+    {
+        au::flow::Tasks abandoned{failed};
+        EXPECT_EQ(abandoned.add(au::flow::Task()), au::err::kErrorInvalidParam);
+    }
+    EXPECT_EQ(flow.enqueue(failed), au::err::kErrorInvalidParam);  // Discarding a group must not erase its error.
+    au::flow::Tasks stillFailed{failed};
+    EXPECT_EQ(flow.enqueue(stillFailed), au::err::kErrorInvalidParam);
+    expectCreated({failed});
 }
 
 TEST_F(XFlow, ClosureValidationIsAtomic)
