@@ -1,30 +1,21 @@
 #ifndef AURA_XFLOW_H_
 #define AURA_XFLOW_H_
 
-#include <cstddef>
-#include <functional>
-#include <initializer_list>
-#include <memory>
-#include <new>
-#include <tuple>
-#include <type_traits>
-#include <utility>
-
-#include "flow/xflow_api.h"
-
 /**
  * @file xflow.h
  * @brief Lightweight control-flow scheduler for algorithm libraries, with a C++11 facade over a C ABI.
  *
  * @par Purpose
- * Overlap asynchronous tasks with caller work, express parallel branches followed by a join,
- * or synchronously split a CPU range into tiles. Scheduling is independent of memory and GPU modules.
+ * Run tasks asynchronously while the caller continues working, express fork/join dependencies,
+ * or run a synchronous parallel loop over an index range. Scheduling is independent of the
+ * memory and GPU modules; flow tracks control flow only, not device work.
  *
  * @par Task model
  * Tasks return int (0 means success) or void. Failed predecessors skip dependents and propagate an
  * upstream error; a multi-input join does not guarantee which error wins. enqueue() collects and
- * accepts all unsubmitted upstream tasks atomically. Completion includes the callable and payload cleanup,
- * not device work it starts asynchronously.
+ * accepts all unsubmitted upstream tasks atomically. A task completes when its body returns or is
+ * skipped and its payload (the stored callable and bound arguments) is destroyed; asynchronous
+ * device work it starts is not tracked.
  *
  * @par Task states
  * A task is unsubmitted until enqueue() accepts it. Once accepted it is pending (waiting for
@@ -37,14 +28,21 @@
  * task or group depends on its exit.
  *
  * @par Ownership
- * Arguments are decayed copies or moves. std::ref and borrowing views do not extend storage lifetime;
- * moving a borrowed view still borrows. Handle destruction neither waits nor cancels, and nested
- * enqueues are independent. Handles must not cross independently linked runtime instances.
+ * Arguments are decayed copies or moves; std::ref and borrowing views do not extend storage
+ * lifetime, and moving a borrowed view still borrows. Releasing a task or group handle only drops
+ * a reference: it never waits for or cancels work. Destroying the last reference to an unsubmitted
+ * task destroys its payload without running it. A task may enqueue more tasks; those are
+ * independent and are not implicitly joined or cancelled with the parent. Handles belong to the
+ * Aura runtime instance that created them: do not pass them to another linked copy of Aura or use
+ * them after it is unloaded.
  *
  * @par Cancellation and cleanup
- * Check a caller-owned atomic flag and return kErrorAborted for cooperative cancellation; running
- * functions cannot be forcibly interrupted. Use RAII, or run mandatory cleanup after confirming all
- * relevant work is complete. A wait error does not guarantee completion of accepted work.
+ * flow cannot interrupt a running task. For cooperative cancellation, have the task check a
+ * caller-owned atomic flag and return kErrorAborted; dependents then skip and propagate the error,
+ * but independent tasks keep running. Use RAII so early returns still release resources.
+ * Do not destroy shared state until every task that may use it has finished: a wait error does not
+ * mean other accepted tasks have stopped. Use waitAll()/releaseWorkers() or explicit waits on all
+ * relevant handles. Device work needs its own synchronization.
  *
  * @par Concurrency
  * Workers are created lazily (at most 8); releaseWorkers() drains and reclaims the pool. Waiting callers
@@ -57,6 +55,9 @@
  * host waits; use queue order or explicit event dependencies. Prefer the needed event over clFinish().
  *
  * @par Example: parallel branches and a join
+ *        ┌── b ──┐
+ * a ─────┤       ├──> done
+ *        └── c ──┘
  * @code
  * auto& flow = au::flow::Flow::get();
  * auto a = flow.create([] {});  // Prepare input.
@@ -71,8 +72,20 @@
  * @endcode
  */
 
+#include <cstddef>
+#include <functional>
+#include <initializer_list>
+#include <memory>
+#include <new>
+#include <tuple>
+#include <type_traits>
+#include <utility>
+
+#include "flow/xflow_api.h"
+
 namespace au {
 namespace flow AU_LOCAL {
+
 namespace detail {
 template <std::size_t... I>
 struct Indices
