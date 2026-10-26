@@ -19,6 +19,10 @@
 namespace au {
 namespace flow AU_LOCAL {
 namespace detail {
+constexpr std::size_t kMaxWorkers     = 8;
+constexpr std::size_t kMaxTileHelpers = 3;
+constexpr unsigned    kMaxWaitDepth   = 128;
+
 enum class State
 {
     Created,
@@ -75,26 +79,29 @@ struct TileJob
     void                     run(std::size_t worker) noexcept;
 };
 
-// Lock order: Core::mMutex -> node mutex(es). No callbacks under either.
+// mMutex serializes graph edits, state transitions and worker/tile bookkeeping.
+// Node mutexes protect public queries and payload commit; state writes hold both.
+// Lock order: Core::mMutex -> node mutex(es). User callbacks and final owners are released outside both.
 struct Core
 {
-    std::mutex                 mMutex;
-    std::condition_variable    mChanged;
-    std::list<NodePtr>         mAccepted;
-    Node *                     mHead = nullptr, *mTail = nullptr;
-    TileJob*                   mTiles = nullptr;
-    std::array<std::thread, 8> mThreads;
-    std::size_t                mCount = 0, mIdle = 0, mTileCallers = 0;
-    std::vector<std::uint32_t> mDefaultCpus;
-    bool                       mClosing = false, mStop = false, mReleasing = false;
-    std::uint64_t              mMask = 0, mDefaultMask = 0;
-    bool                       mDefaultAffinity = true;
-    int                        mAffinityStatus  = 0;
-    std::atomic<std::uint64_t> mAffinityGen{1};
+    std::mutex                           mMutex;
+    std::condition_variable              mChanged;
+    std::list<NodePtr>                   mAccepted;
+    Node *                               mHead = nullptr, *mTail = nullptr;
+    TileJob*                             mTiles = nullptr;
+    std::array<std::thread, kMaxWorkers> mThreads;
+    std::size_t                          mCount = 0, mIdle = 0, mTileCallers = 0;
+    std::vector<std::uint32_t>           mDefaultCpus;
+    bool                                 mClosing = false, mStop = false, mReleasing = false;
+    std::uint64_t                        mMask = 0, mDefaultMask = 0;
+    bool                                 mDefaultAffinity = true;
+    int                                  mAffinityStatus  = 0;
+    std::atomic<std::uint64_t>           mAffinityGen{1};
     Core();
 
     ~Core();
 
+    // Graph/queue helpers below require mMutex; they do not acquire it themselves.
     bool reaches(Node*, Node*, bool waits = false);
 
     int edge(const NodePtr&, const NodePtr&);
@@ -106,6 +113,9 @@ struct Core
     void grow();
 
     TileJob* tile();
+
+    // Temporarily unlock for OS/user work; the supplied lock is owned on entry and return.
+    void applyAffinity(std::unique_lock<std::mutex>&);
 
     bool step(std::unique_lock<std::mutex>&);
 

@@ -52,7 +52,8 @@
  * @par Concurrency
  * Workers are created lazily (at most 8); releaseWorkers() drains and reclaims the pool. Waiting callers
  * may also execute tasks. There is no per-graph limit; use dependencies for ordering. Each tiled loop
- * uses its caller and up to 3 helpers.
+ * uses its caller and up to 3 helpers. waitAll()/releaseWorkers() affect the whole shared runtime;
+ * individual algorithms normally wait on their own completion Task.
  *
  * @par Device synchronization
  * @warning flow does not track OpenCL events. Synchronize before a CPU consumer reads device results,
@@ -210,7 +211,7 @@ public:
 
     ~Task() { au_flow_release_task(mHandle); }
 
-    /// Owns a node; false for empty handles or setup/submission failures. Does not imply task success.
+    /// Owns a node; empty handles and failed create/enqueue results return false. Not proof of task success.
     bool valid() const noexcept { return mHandle != nullptr; }
 
     /**
@@ -560,6 +561,7 @@ public:
      * @param f Callback (begin, end) or (begin, end, worker_idx), using [begin, end).
      * @note Callback must not throw or wait on unfinished tasks. Lane IDs are caller=0 and pool slots=1..8.
      *       Nested loops run serially with lane 0; concurrent loops need separate scratch storage.
+     *       Callback return values are ignored; record errors in caller-owned state and check after return.
      */
     template <class F>
     void parallelizeTiledTasks(size_t range, size_t tile, F&& f)

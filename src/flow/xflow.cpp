@@ -238,15 +238,14 @@ int Core::submit(const NodePtr& root)
 TileJob* Core::tile()
 {
     for (auto* j = mTiles; j; j = j->mLink)
-        if (j->mHelpers.load(std::memory_order_relaxed) < 3 && j->mNext.load(std::memory_order_relaxed) < j->mTotal)
+        if (j->mHelpers.load(std::memory_order_relaxed) < kMaxTileHelpers &&
+            j->mNext.load(std::memory_order_relaxed) < j->mTotal)
             return j;
     return nullptr;
 }
 
-bool Core::step(std::unique_lock<std::mutex>& lock)
+void Core::applyAffinity(std::unique_lock<std::mutex>& lock)
 {
-    if (mStop)
-        return false;
     for (;;) {
         const auto generation = mAffinityGen.load(std::memory_order_acquire);
         if (!gWorkerIndex || gAffinity == generation || mDefaultCpus.empty())
@@ -270,6 +269,13 @@ bool Core::step(std::unique_lock<std::mutex>& lock)
         if (mAffinityGen.load(std::memory_order_acquire) == generation)
             break;
     }
+}
+
+bool Core::step(std::unique_lock<std::mutex>& lock)
+{
+    if (mStop)
+        return false;
+    applyAffinity(lock);
 
     if (auto* job = gWorkerIndex ? tile() : nullptr) {
         job->mHelpers.fetch_add(1, std::memory_order_relaxed);  // Job lifetime is also pinned by mMutex.
@@ -281,7 +287,7 @@ bool Core::step(std::unique_lock<std::mutex>& lock)
         return true;
     }
 
-    if (!mHead || gDepth >= 128)
+    if (!mHead || gDepth >= kMaxWaitDepth)
         return false;
     NodePtr n = *mHead->mAccepted;
     mHead     = n->mNext;
@@ -383,7 +389,7 @@ int Core::wait(const NodePtr& n)
         return n->mCode;
     if (n->mState == State::Created)
         return n->mBuild ? n->mBuild : au::err::kErrorStateInvalid;
-    if (gTileDepth || gDepth >= 128 || (gCurrent && reaches(n.get(), gCurrent, true)))
+    if (gTileDepth || gDepth >= kMaxWaitDepth || (gCurrent && reaches(n.get(), gCurrent, true)))
         return au::err::kErrorFlowWouldDeadlock;
     Node*  unused  = nullptr;
     Node*& waiting = gCurrent ? gCurrent->mWaiting : unused;
@@ -740,7 +746,7 @@ void au_flow_parallelize_tile_ex(size_t range, size_t tile, XFlowTileExFn fn, vo
     if (job.mTotal > 1) {
         job.mLink = c.mTiles;
         c.mTiles  = &job;
-        for (unsigned i = 0; i < 3; ++i) {
+        for (std::size_t i = 0; i < au::flow::detail::kMaxTileHelpers; ++i) {
             try {
                 c.grow();
             } catch (...) {
@@ -785,9 +791,9 @@ int au_flow_release_workers() noexcept
     if (au::flow::detail::gCurrent || au::flow::detail::gTileDepth || au::flow::detail::gWorkerIndex)
         return au::err::kErrorFlowWouldDeadlock;
     return au::flow::detail::boundary([]() -> int {
-        auto&                        c = au::flow::detail::core();
-        std::array<std::thread, 8>   retired;
-        std::unique_lock<std::mutex> lock(c.mMutex);
+        auto&                                                  c = au::flow::detail::core();
+        std::array<std::thread, au::flow::detail::kMaxWorkers> retired;
+        std::unique_lock<std::mutex>                           lock(c.mMutex);
         c.mChanged.wait(lock, [&] { return !c.mReleasing; });
         if (c.mClosing)
             return au::err::kErrorStateInvalid;

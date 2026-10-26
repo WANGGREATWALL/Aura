@@ -903,6 +903,32 @@ TEST_F(XFlow, ExpressionsNamedTasksAndEmptyIdentity)
     expectCreated({untouched});
 }
 
+TEST_F(XFlow, UnparenthesizedOperatorsFormIndependentChains)
+{
+    auto&             flow = au::flow::Flow::get();
+    std::atomic<int>  entered{0}, finished{0}, dependents{0};
+    std::atomic<bool> release{false};
+    auto              root = [&] {
+        entered.fetch_add(1, std::memory_order_release);
+        const bool ready = until([&] { return release.load(std::memory_order_acquire); });
+        finished.fetch_add(1, std::memory_order_release);
+        return ready ? 0 : 1;
+    };
+    auto successor = [&] {
+        EXPECT_TRUE(release.load(std::memory_order_acquire));
+        dependents.fetch_add(1, std::memory_order_relaxed);
+    };
+    auto       a = flow.create(root), b = flow.create(successor);
+    auto       c = flow.create(root), d = flow.create(successor);
+    auto       completion    = flow.enqueue(a >> b | c >> d);  // Exactly (a >> b) | (c >> d).
+    const bool parallelRoots = until([&] { return entered.load(std::memory_order_acquire) == 2; });
+    release.store(true, std::memory_order_release);
+    EXPECT_TRUE(parallelRoots);
+    EXPECT_EQ(completion.wait(), 0);
+    EXPECT_EQ(finished.load(std::memory_order_acquire), 2);
+    EXPECT_EQ(dependents.load(std::memory_order_relaxed), 2);
+}
+
 TEST_F(XFlow, NestedExpressionsAndLocalDependencies)
 {
     auto&                 flow = au::flow::Flow::get();
