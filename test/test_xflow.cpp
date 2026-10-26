@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1119,6 +1120,77 @@ TEST_F(XFlow, ErrorShortCircuiting)
     EXPECT_EQ(ran.load(std::memory_order_relaxed), 0);
     EXPECT_EQ(flow.enqueueAfter(a, [&] { ++ran; }).wait(), -123);
     EXPECT_EQ(ran.load(std::memory_order_relaxed), 0);
+}
+
+TEST_F(XFlow, RandomizedCycleChecksWithCompletedTasksAndGroups)
+{
+    auto&        flow = au::flow::Flow::get();
+    std::mt19937 random(1729);
+    for (unsigned graph = 0; graph < 50; ++graph) {
+        std::vector<au::flow::Task>            tasks;
+        std::vector<au::flow::detail::NodePtr> nodes;
+        std::array<std::array<bool, 32>, 32>   edges{};
+        for (unsigned i = 0; i < 24; ++i)
+            tasks.push_back(flow.create([] {}));
+        for (int code : {0, -123, 0, 17}) {
+            auto done = flow.enqueue([code] { return code; });
+            ASSERT_EQ(done.wait(), code);
+            tasks.push_back(done);
+        }
+        for (const auto& task : tasks)
+            nodes.push_back(task.nativeHandle()->mNode);
+        auto first  = legacyGroup({tasks[0], tasks[1]});
+        auto second = legacyGroup({tasks[2], tasks[3]});
+        ASSERT_NE(first, nullptr);
+        ASSERT_NE(second, nullptr);
+        auto recordGroup = [&](const LegacyGroup& group, std::size_t member) {
+            const auto entry = nodes.size(), exit = entry + 1;
+            nodes.push_back(group->mEntry);
+            nodes.push_back(group->mExit);
+            edges[entry][exit] = true;
+            for (std::size_t i : {member, member + 1}) {
+                edges[entry][i] = true;
+                edges[i][exit]  = true;
+            }
+        };
+        const auto firstEntry = nodes.size();
+        recordGroup(first, 0);
+        const auto secondEntry = nodes.size();
+        recordGroup(second, 2);
+        ASSERT_EQ(au_flow_add_group_dependency(first.get(), second.get()), 0);
+        edges[firstEntry + 1][secondEntry] = true;
+        {
+            auto abandoned = flow.create([] {});
+            ASSERT_EQ(tasks[14].precede(abandoned), 0);
+        }  // Leave an expired weak outgoing entry: the fast-path test must remain conservative.
+        auto&                       core = au::flow::detail::core();
+        std::lock_guard<std::mutex> lock(core.mMutex);
+        for (unsigned edit = 0; edit < 300; ++edit) {
+            const unsigned           pred = random() % nodes.size(), succ = random() % nodes.size();
+            std::array<bool, 32>     visited{};
+            std::array<unsigned, 32> stack{};
+            unsigned                 count = 1;
+            stack[0]                       = succ;
+            visited[succ]                  = true;
+            bool cycle                     = pred == succ;
+            while (count) {
+                const auto current = stack[--count];
+                cycle |= current == pred;
+                for (unsigned next = 0; next < nodes.size(); ++next)
+                    if (edges[current][next] && !visited[next]) {
+                        visited[next]  = true;
+                        stack[count++] = next;
+                    }
+            }
+            const int expected = pred == succ ? au::err::kErrorFlowCycleDetected
+                                 : nodes[succ]->mState != au::flow::detail::State::Created ? au::err::kErrorStateInvalid
+                                 : cycle ? au::err::kErrorFlowCycleDetected
+                                         : 0;
+            ASSERT_EQ(core.edge(nodes[pred], nodes[succ]), expected);
+            if (!expected)
+                edges[pred][succ] = true;
+        }
+    }
 }
 
 TEST_F(XFlow, CycleDetectionAndDiscardedDraftLifetime)

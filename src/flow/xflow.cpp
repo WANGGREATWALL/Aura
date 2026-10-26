@@ -144,10 +144,14 @@ int Core::edge(const NodePtr& pred, const NodePtr& succ)
     if (succ->mState != State::Created)
         return au::err::kErrorStateInvalid;
     try {
-        if (reaches(pred.get(), succ.get()))
-            return error(au::err::kErrorFlowCycleDetected);
         if (std::find(succ->mPreds.begin(), succ->mPreds.end(), pred) != succ->mPreds.end())
             return 0;
+        // Closure submission accepts every upstream node, and accepted targets reject new edges.
+        // Thus an accepted pred cannot depend on a Created succ. If that rule changes, revisit this guard.
+        // A Created succ has never finished, so all of its outgoing edges are in mSuccessors;
+        // an empty list rules out a return path. Expired weak entries merely keep DFS conservative.
+        if (pred->mState == State::Created && !succ->mSuccessors.empty() && reaches(pred.get(), succ.get()))
+            return error(au::err::kErrorFlowCycleDetected);
         reserveOne(succ->mPreds);
         if (pred->mState != State::Done) {
             pred->mSuccessors.emplace_back(succ);
