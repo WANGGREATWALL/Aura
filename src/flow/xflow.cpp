@@ -36,6 +36,17 @@ int boundary(F fn, const char* name = nullptr) noexcept
 
 void discard(void*) {}
 
+// Reserve before changing links/counts; the eventual append must not allocate.
+void reserveOne(std::vector<NodePtr>& values)
+{
+    if (values.size() == values.capacity()) {
+        const auto limit = values.max_size();
+        if (values.size() == limit)
+            throw std::bad_alloc();
+        values.reserve(values.empty() ? 1 : values.size() + std::min(values.size(), limit - values.size()));
+    }
+}
+
 void PayloadDeleter::operator()(void* data) const noexcept
 {
     if (mDestroy)
@@ -137,7 +148,7 @@ int Core::edge(const NodePtr& pred, const NodePtr& succ)
             return error(au::err::kErrorFlowCycleDetected);
         if (std::find(succ->mPreds.begin(), succ->mPreds.end(), pred) != succ->mPreds.end())
             return 0;
-        succ->mPreds.reserve(succ->mPreds.size() + 1);
+        reserveOne(succ->mPreds);
         if (pred->mState != State::Done) {
             pred->mSuccessors.emplace_back(succ);
             ++succ->mPending;
@@ -629,7 +640,7 @@ int au_flow_group_add_task(XFlowGroupHandle g, XFlowTaskHandle h) noexcept
             return 0;
         if (h && (node(h)->mGroupExit.expired() || node(h)->mState != au::flow::detail::State::Created)) {
             try {
-                g->mNodes.reserve(g->mNodes.size() + 1);
+                au::flow::detail::reserveOne(g->mNodes);
                 code = node(h)->mState == au::flow::detail::State::Created ? c.edge(head(g), node(h)) : 0;
                 if (!code)
                     code = c.edge(node(h), tail(g));

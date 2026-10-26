@@ -710,6 +710,39 @@ TEST_F(XFlow, LegacyGroupCompatibility)
     expectCreated({failed});
 }
 
+TEST_F(XFlow, LargeFanInAndLegacyGroupGrowth)
+{
+    auto&            flow = au::flow::Flow::get();
+    std::atomic<int> calls{0};
+    auto             sink        = flow.create([&] { EXPECT_EQ(calls.load(std::memory_order_relaxed), 256); });
+    std::size_t      predGrowths = 0, groupGrowths = 0;
+    auto             group = legacyGroup({});
+    ASSERT_NE(group, nullptr);
+    for (int i = 0; i < 256; ++i) {
+        auto        task            = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+        std::size_t oldPredCapacity = 0, oldGroupCapacity = 0;
+        {
+            auto&                       core = au::flow::detail::core();
+            std::lock_guard<std::mutex> lock(core.mMutex);
+            oldPredCapacity  = sink.nativeHandle()->mNode->mPreds.capacity();
+            oldGroupCapacity = group->mNodes.capacity();
+        }
+        ASSERT_EQ(task.precede(sink), 0);
+        ASSERT_EQ(au_flow_group_add_task(group.get(), task.nativeHandle()), 0);
+        {
+            auto&                       core = au::flow::detail::core();
+            std::lock_guard<std::mutex> lock(core.mMutex);
+            predGrowths += oldPredCapacity != sink.nativeHandle()->mNode->mPreds.capacity();
+            groupGrowths += oldGroupCapacity != group->mNodes.capacity();
+        }
+    }
+    EXPECT_LT(predGrowths, 16u);
+    EXPECT_LT(groupGrowths, 16u);  // Large fan-in must not reallocate once per edge/member.
+    ASSERT_EQ(au_flow_add_group_task_dependency(group.get(), sink.nativeHandle()), 0);
+    EXPECT_EQ(flow.enqueue(sink).wait(), 0);
+    EXPECT_EQ(au_flow_wait_group(group.get()), 0);
+}
+
 TEST_F(XFlow, ClosureValidationIsAtomic)
 {
     auto&            flow = au::flow::Flow::get();
