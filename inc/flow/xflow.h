@@ -475,9 +475,16 @@ public:
         return submit(createNamed(name, std::forward<F>(f), std::forward<A>(a)...));
     }
 
+    /// Submit an existing Task directly; the constraint preserves enqueue({}) as an empty expression.
+    template <class T>
+    typename std::enable_if<std::is_same<T, Task>::value, Task>::type enqueue(const T& task)
+    {
+        return submit(task);
+    }
+
     /**
-     * @brief Enqueue a task or expression and its unsubmitted upstream dependencies atomically.
-     * @param tasks Task (implicitly converted) or serial/parallel expression.
+     * @brief Enqueue an expression and its unsubmitted upstream dependencies atomically.
+     * @param tasks Serial/parallel expression.
      * @return Its completion Task, or a task carrying the build/submission error; failure accepts no new work.
      * @note Accepted nodes are not rerun. Empty expressions submit one empty task. costUs() measures
      *       only the exit task, not the whole graph. Failed results own no node and leave originals unchanged.

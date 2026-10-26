@@ -474,6 +474,31 @@ TEST_F(XFlow, AsyncEnqueueAndWait)
     EXPECT_TRUE(released.expired());
 }
 
+TEST_F(XFlow, EnqueueOverloadResolution)
+{
+    auto&            flow = au::flow::Flow::get();
+    std::atomic<int> calls{0};
+    auto             task       = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    const auto       constant   = task;
+    auto             completion = flow.enqueue(task);
+    EXPECT_EQ(completion.nativeHandle(), task.nativeHandle());
+    EXPECT_EQ(completion.wait(), 0);
+    EXPECT_EQ(flow.enqueue(constant).wait(), 0);
+    EXPECT_EQ(flow.enqueue(std::move(task)).wait(), 0);
+    EXPECT_TRUE(task.valid());  // Enqueue copies a handle even when given an rvalue.
+    EXPECT_EQ(flow.enqueue(flow.create([] {})).wait(), 0);
+    EXPECT_EQ(flow.enqueue({}).wait(), 0);
+    EXPECT_EQ(flow.enqueue({task}).nativeHandle(), task.nativeHandle());
+    EXPECT_EQ(flow.enqueue({task, constant}).wait(), 0);
+    au::flow::Tasks expression{task};
+    const auto      view = expression;
+    EXPECT_EQ(flow.enqueue(expression).wait(), 0);
+    EXPECT_EQ(flow.enqueue(view).wait(), 0);
+    EXPECT_EQ(flow.enqueue(std::move(expression)).wait(), 0);
+    EXPECT_EQ(flow.enqueue([](int result) { return result; }, 13).wait(), 13);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
+}
+
 TEST_F(XFlow, DependencyChainAndDiamondDAG)
 {
     auto&            flow = au::flow::Flow::get();
