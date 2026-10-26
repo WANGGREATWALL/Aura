@@ -308,6 +308,27 @@ TEST_F(XFlow, FailedResultsDoNotOwnNodes)
     EXPECT_EQ(businessFailure.wait(), -123);
     EXPECT_TRUE(businessFailure.valid());
     EXPECT_TRUE(businessFailure.done());
+
+    int                      destructors = 0;
+    ThrowingPayload<1, true> payload(destructors);
+    auto                     exhausted = flow.create(payload);
+    std::atomic<int>         calls{0};
+    auto                     next = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    EXPECT_EQ(exhausted.precede(next), au::err::kErrorNoMemory);
+    EXPECT_EQ(next.wait(), au::err::kErrorInvalidParam);
+    EXPECT_EQ(flow.enqueue(next).wait(), au::err::kErrorInvalidParam);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 0);
+
+    auto clean = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    EXPECT_EQ(clean.precede(exhausted), au::err::kErrorNoMemory);
+    {
+        auto&                       core = au::flow::detail::core();
+        std::lock_guard<std::mutex> lock(core.mMutex);
+        EXPECT_TRUE(clean.nativeHandle()->mNode->mSuccessors.empty());
+    }
+    EXPECT_EQ(flow.enqueue(clean).wait(), 0);
+    EXPECT_EQ(exhausted.precede(businessFailure), au::err::kErrorNoMemory);
+    EXPECT_EQ(businessFailure.code(), -123);  // Accepted results are never poisoned.
 }
 
 TEST_F(XFlow, ReleaseWorkersAndRespawn)

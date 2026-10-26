@@ -218,9 +218,21 @@ public:
      * @param next Successor; must still be unsubmitted.
      * @return 0 on success, or a build error.
      * @note Check the result before enqueueing; failed predecessors short-circuit next.
+     *       Saved successor errors return directly. A saved predecessor error also attempts to
+     *       invalidate an unsubmitted next with kErrorInvalidParam, while returning the original error.
      *       Device completion is not tracked; see the module warning.
      */
-    int precede(const Task& next) const { return au_flow_add_dependency(mHandle, next.mHandle); }
+    int precede(const Task& next) const
+    {
+        if (next.mError)
+            return next.mError;
+        if (mError) {
+            if (next.mHandle)
+                (void)au_flow_add_dependency(nullptr, next.mHandle);
+            return mError;
+        }
+        return au_flow_add_dependency(mHandle, next.mHandle);
+    }
 
     /**
      * @brief Wait for completion without enqueueing the task.

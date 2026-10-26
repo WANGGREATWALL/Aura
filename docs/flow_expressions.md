@@ -49,6 +49,9 @@ code = flow.enqueue(dynamic).wait();
 创建、构建或提交失败均返回不持有节点的错误 Task：`valid()==false`、`done()==true`，
 `nativeHandle()==nullptr`，通过 `wait()/code()` 读取错误。原始 Draft 句柄不因提交失败而失效。
 任务已执行但返回业务错误时仍持有节点，`valid()==true`；默认空 Task 则 `done()==false`。
+低层 `Task::precede()` 直接返回保存的端点错误。当前驱保存错误、后继有效时，
+它会尝试让未提交后继记录 `kErrorInvalidParam`，自身仍返回前驱原始错误；后继保存错误时不调用 C 层。
+该失效处理不替代检查返回值，也不修改已接受任务的结果。表达式仍由 Tasks 保留原始构建错误。
 分配失败同样通过错误句柄报告，不为报告失败再分配节点。未完成任务的 `kErrorNotReady`
 不是构建错误；已经完成的业务错误仍通过依赖传播。
 校验失败不接受任何新节点；成功后原子提交全部尚未提交的上游。重复提交不会重复执行。
