@@ -92,9 +92,8 @@ parent's `BUILD_TESTING` option is preserved. Android thread support is selected
 through `Threads::Threads`, and Android logging links `log`.
 
 `au::flow` is a control-flow scheduler with lazy workers, asynchronous callables,
-dynamic DAGs, error short-circuiting and synchronous tiled loops. See
-[au_flow_design.md](src/flow/au_flow_design.md) for its contracts and migration.
-The C ABI is version 3; consumers must rebuild against matching headers/library.
+dynamic DAGs, error short-circuiting and synchronous tiled loops. Public interfaces
+are in `flow/xflow.h` and `flow/xflow_api.h`; C functions use the `au_flow_xxx` prefix.
 GPU completion and memory ownership are explicit responsibilities of the callable.
 The GPU/MM/CV implementations retain the pre-flow-refactor baseline (`e6ab9b8`);
 flow does not add GPU backends, memory leases or managed access scopes.

@@ -1,110 +1,256 @@
-#ifndef AURA_INC_FLOW_XFLOW_H_
-#define AURA_INC_FLOW_XFLOW_H_
+#ifndef AURA_XFLOW_H_
+#define AURA_XFLOW_H_
+
+/**
+ * @file xflow.h
+ * @brief Lightweight control-flow scheduler for algorithm libraries, with a C++11 facade over a C ABI.
+ *
+ * @par Purpose
+ * Run tasks asynchronously while the caller continues working, express fork/join dependencies,
+ * or run a synchronous parallel loop over an index range. Scheduling is independent of the
+ * memory and GPU modules; flow tracks control flow only, not device work.
+ *
+ * @par Task model
+ * Tasks return int (0 means success) or void. Failed predecessors skip dependents and propagate an
+ * upstream error; a multi-input join does not guarantee which error wins. enqueue() collects and
+ * accepts all unsubmitted upstream tasks atomically. A task completes when its body returns or is
+ * skipped and its payload (the stored callable and bound arguments) is destroyed; asynchronous
+ * device work it starts is not tracked.
+ *
+ * @par Task states
+ * A task is unsubmitted until enqueue() accepts it. Once accepted it is pending (waiting for
+ * dependencies), running, or done; a second enqueue is a no-op and never runs it again.
+ *
+ * @par Group model
+ * A group has an internal entry gate and an exit gate. Adding an unsubmitted member links
+ * entry -> member -> exit; adding an accepted member links member -> exit only, because its
+ * execution order is already fixed. A group is in use while its handle exists or a downstream
+ * task or group depends on its exit.
+ *
+ * @par Ownership
+ * Arguments are decayed copies or moves; std::ref and borrowing views do not extend storage
+ * lifetime, and moving a borrowed view still borrows. Releasing a task or group handle only drops
+ * a reference: it never waits for or cancels work. Destroying the last reference to an unsubmitted
+ * task destroys its payload without running it. A task may enqueue more tasks; those are
+ * independent and are not implicitly joined or cancelled with the parent. Handles belong to the
+ * Aura runtime instance that created them: do not pass them to another linked copy of Aura or use
+ * them after it is unloaded.
+ *
+ * @par Cancellation and cleanup
+ * flow cannot interrupt a running task. For cooperative cancellation, have the task check a
+ * caller-owned atomic flag and return kErrorAborted; dependents then skip and propagate the error,
+ * but independent tasks keep running. Use RAII so early returns still release resources.
+ * Do not destroy shared state until every task that may use it has finished: a wait error does not
+ * mean other accepted tasks have stopped. Use waitAll()/releaseWorkers() or explicit waits on all
+ * relevant handles. Device work needs its own synchronization.
+ *
+ * @par Concurrency
+ * Workers are created lazily (at most 8); releaseWorkers() drains and reclaims the pool. Waiting callers
+ * may also execute tasks. There is no per-graph limit; use dependencies for ordering. Each tiled loop
+ * uses its caller and up to 3 helpers.
+ *
+ * @par Device synchronization
+ * @warning flow does not track OpenCL events. Synchronize before a CPU consumer reads device results,
+ * either at the last GPU task's end or the consumer's start. Consecutive kernels may enqueue without
+ * host waits; use queue order or explicit event dependencies. Prefer the needed event over clFinish().
+ *
+ * @par Example: parallel branches and a join
+ *        ┌── b ──┐
+ * a ─────┤       ├──> done
+ *        └── c ──┘
+ * @code
+ * auto& flow = au::flow::Flow::get();
+ * auto a = flow.create([] {});  // Prepare input.
+ * auto b = flow.create([] {});  // First branch.
+ * auto c = flow.create([] {});  // Second branch.
+ * au::flow::Tasks group{b, c};
+ * auto done = flow.create([] {});  // Consume results.
+ * auto chain = a >> group >> done;
+ * int code = flow.enqueue(chain);
+ * if (!code)
+ *     code = chain.last().wait();
+ * @endcode
+ */
+
 #include <cstddef>
 #include <functional>
 #include <initializer_list>
 #include <memory>
+#include <new>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
 #include "flow/xflow_api.h"
+
 namespace au {
 namespace flow AU_LOCAL {
-enum class AffinityPolicy : int
-{
-    kDefault     = XFLOW_AFFINITY_DEFAULT,
-    kPerformance = XFLOW_AFFINITY_PERFORMANCE,
-    kPowerSaving = XFLOW_AFFINITY_POWERSAVING,
-    kCustomMask  = XFLOW_AFFINITY_CUSTOM_MASK
-};
+
 namespace detail {
 template <std::size_t... I>
 struct Indices
 {
 };
+
 template <std::size_t N, std::size_t... I>
 struct Sequence : Sequence<N - 1, N - 1, I...>
 {
 };
+
 template <std::size_t... I>
 struct Sequence<0, I...>
 {
     typedef Indices<I...> Type;
 };
+
 template <class F, class... A>
 auto invoke(F&& f, A&&... a) -> typename std::enable_if<!std::is_member_pointer<typename std::decay<F>::type>::value,
                                                         decltype(std::forward<F>(f)(std::forward<A>(a)...))>::type
 {
     return std::forward<F>(f)(std::forward<A>(a)...);
 }
+
 template <class F, class... A>
 auto invoke(F&& f, A&&... a) -> typename std::enable_if<std::is_member_pointer<typename std::decay<F>::type>::value,
                                                         decltype(std::mem_fn(f)(std::forward<A>(a)...))>::type
 {
     return std::mem_fn(f)(std::forward<A>(a)...);
 }
+
 template <class C>
 typename std::enable_if<std::is_void<decltype(std::declval<C&>()())>::value, int>::type call(C& c)
 {
     c();
+
     return 0;
 }
+
 template <class C>
 typename std::enable_if<!std::is_void<decltype(std::declval<C&>()())>::value, int>::type call(C& c)
 {
     static_assert(std::is_same<decltype(c()), int>::value, "A flow task must return int or void");
+
     return c();
 }
+
 template <class F, class... A>
 struct Bound
 {
     F                mFunction;
     std::tuple<A...> mArguments;
+
     template <class G, class... B>
     Bound(G&& f, B&&... a) : mFunction(std::forward<G>(f)), mArguments(std::forward<B>(a)...)
     {
     }
+
     template <std::size_t... I>
     auto run(Indices<I...>)
         -> decltype(au::flow::detail::invoke(std::move(mFunction), std::move(std::get<I>(mArguments))...))
     {
         return au::flow::detail::invoke(std::move(mFunction), std::move(std::get<I>(mArguments))...);
     }
+
     auto operator()() -> decltype(this->run(typename Sequence<sizeof...(A)>::Type()))
     {
         return run(typename Sequence<sizeof...(A)>::Type());
     }
-    static int  execute(void* data) { return au::flow::detail::call(*static_cast<Bound*>(data)); }
-    static void destroy(void* data) { delete static_cast<Bound*>(data); }
+
+    static int execute(void* data) { return au::flow::detail::call(*static_cast<Bound*>(data)); }
+
+    static void destroy(void* data) { static_cast<Bound*>(data)->~Bound(); }
 };
+
+// Prefer the indexed callback when both signatures are callable (C++11).
+template <class F>
+auto invokeTile(F& f, size_t begin, size_t end, size_t worker, int) -> decltype(f(begin, end, worker), void())
+{
+    f(begin, end, worker);
+}
+
+template <class F>
+auto invokeTile(F& f, size_t begin, size_t end, size_t, long) -> decltype(f(begin, end), void())
+{
+    f(begin, end);
+}
 }  // namespace detail
+
 class Tasks;
 class Flow;
+
+/**
+ * @brief Shared task handle; copies share the task and moves transfer the handle.
+ * @note Destruction releases the handle without waiting or cancelling accepted work.
+ */
 class Task
 {
 public:
     Task() noexcept = default;
+
+    /// Adopt one owned reference; does not retain the raw handle.
     explicit Task(XFlowTaskHandle h) noexcept : mHandle(h) {}
-    Task(const Task& other) noexcept : mHandle(other.mHandle), mError(other.mError) { XFlow_RetainTask(mHandle); }
+
+    Task(const Task& other) noexcept : mHandle(other.mHandle), mError(other.mError) { au_flow_retain_task(mHandle); }
+
     Task(Task&& other) noexcept : mHandle(other.mHandle), mError(other.mError)
     {
         other.mHandle = nullptr;
         other.mError  = 0;
     }
+
     Task& operator=(Task other) noexcept
     {
         std::swap(mHandle, other.mHandle);
         std::swap(mError, other.mError);
         return *this;
     }
-    ~Task() { XFlow_ReleaseTask(mHandle); }
-    bool            valid() const noexcept { return mHandle != nullptr; }
-    int             precede(const Task& next) const { return XFlow_AddDependency(mHandle, next.mHandle); }
-    int             precede(const Tasks& next) const;
-    int             wait() const { return mError ? mError : XFlow_WaitTask(mHandle); }
-    int             result() const { return mError ? mError : XFlow_GetTaskResult(mHandle); }
-    int64_t         costUs() const { return XFlow_GetTaskCostUs(mHandle); }
+
+    ~Task() { au_flow_release_task(mHandle); }
+
+    /// Handle validity only; does not imply successful enqueue or execution.
+    bool valid() const noexcept { return mHandle != nullptr; }
+
+    /**
+     * @brief Make next depend on this task, including when this task is running or done.
+     * @param next Successor; must still be unsubmitted.
+     * @return 0 on success, or a build error.
+     * @note Check the result before enqueueing; failed predecessors short-circuit next.
+     *       Device completion is not tracked; see the module warning.
+     */
+    int precede(const Task& next) const { return au_flow_add_dependency(mHandle, next.mHandle); }
+
+    int precede(const Tasks& next) const;
+
+    /**
+     * @brief Wait for completion without enqueueing the task.
+     * @return Task result, a saved creation/enqueue error, or a wait error.
+     * @note May execute other ready tasks, without tracking device completion.
+     *       Unsubmitted tasks return kErrorStateInvalid or their saved build error.
+     */
+    int wait() const { return mError ? mError : au_flow_wait_task(mHandle); }
+
+    /**
+     * @brief Read the result without waiting.
+     * @return Final result, a saved error, or kErrorNotReady while unfinished; empty handles return kErrorInvalidParam.
+     */
+    int code() const { return mError ? mError : au_flow_get_task_result(mHandle); }
+
+    /**
+     * @brief Check completion without waiting.
+     * @return True after completion or a saved creation/enqueue failure; false for unsubmitted or
+     *         empty handles.
+     * @note Use code() for the result; completion does not imply success or device completion.
+     */
+    bool done() const { return mError || au_flow_task_done(mHandle); }
+
+    /**
+     * @brief Read final execution time in microseconds without waiting.
+     * @return Final elapsed time; 0 while unfinished or when unavailable.
+     * @note Wall time excludes queue/dependency delay; a completed task can take less than one microsecond.
+     */
+    int64_t costUs() const { return au_flow_get_task_cost_us(mHandle); }
+
+    /// Borrow the raw handle; retain it separately if it must outlive this owner.
     XFlowTaskHandle nativeHandle() const noexcept { return mHandle; }
 
 private:
@@ -112,36 +258,70 @@ private:
     XFlowTaskHandle mHandle = nullptr;
     int             mError  = 0;
 };
+
+/**
+ * @brief A group for batch enqueue and waiting; members may run in parallel.
+ * @note Copies share the same group. Releasing a group does not cancel its work.
+ */
 class Tasks
 {
 public:
-    explicit Tasks(const char* name = "Tasks") : mHandle(XFlow_CreateGroup(name)) {}
-    Tasks(const Tasks& other) noexcept : mHandle(other.mHandle) { XFlow_RetainGroup(mHandle); }
+    explicit Tasks(const char* name = "Tasks") : mHandle(au_flow_create_group(name)) {}
+
+    /// Create a group from members, retaining the first build error for enqueue() and wait().
+    Tasks(std::initializer_list<Task> tasks) : Tasks()
+    {
+        for (const auto& task : tasks)
+            if (add(task))
+                break;
+    }
+
+    Tasks(const Tasks& other) noexcept : mHandle(other.mHandle) { au_flow_retain_group(mHandle); }
+
     Tasks(Tasks&& other) noexcept : mHandle(other.mHandle) { other.mHandle = nullptr; }
+
     Tasks& operator=(Tasks other) noexcept
     {
         std::swap(mHandle, other.mHandle);
         return *this;
     }
-    ~Tasks() { XFlow_ReleaseGroup(mHandle); }
+
+    ~Tasks() { au_flow_release_group(mHandle); }
+
     bool valid() const noexcept { return mHandle != nullptr; }
-    int  add(const Task& t) { return XFlow_GroupAddTask(mHandle, t.nativeHandle()); }
-    template <class... T>
-    int add(const Task& first, const Task& second, const T&... rest)
-    {
-        int code = add(first);
-        return code ? code : add(second, rest...);
-    }
-    int              precede(const Task& t) const { return XFlow_AddGroupTaskDependency(mHandle, t.nativeHandle()); }
-    int              precede(const Tasks& g) const { return XFlow_AddGroupDependency(mHandle, g.mHandle); }
-    int              wait() const { return XFlow_WaitGroup(mHandle); }
-    const char*      dumpDot() const { return XFlow_DumpGroupDot(mHandle); }
+
+    /**
+     * @brief Add a task to a group that has not been enqueued.
+     * @param t Member task; duplicate additions are ignored.
+     * @return 0 on success, or a build error saved for the group's enqueue.
+     * @note An unsubmitted task can belong to only one group that is still in use. It can join a
+     *       new group after the previous group is released and no downstream task or group depends
+     *       on its exit; its existing dependencies and saved build errors remain. An accepted task
+     *       (pending, running, or done) can be shared by several groups.
+     * @note The group keeps its first add error and remains failed; enqueue and wait report it.
+     *       Duplicate additions are ignored. Create a new group to retry after a failed add.
+     */
+    int add(const Task& t) { return au_flow_group_add_task(mHandle, t.nativeHandle()); }
+
+    int precede(const Task& t) const { return au_flow_add_group_task_dependency(mHandle, t.nativeHandle()); }
+
+    int precede(const Tasks& g) const { return au_flow_add_group_dependency(mHandle, g.mHandle); }
+
+    /// Wait for every member; returns the propagated result without enqueueing the group.
+    int wait() const { return au_flow_wait_group(mHandle); }
+
+    /// Borrow the raw group handle; no owning reference is added.
     XFlowGroupHandle nativeHandle() const noexcept { return mHandle; }
 
 private:
     XFlowGroupHandle mHandle;
 };
-inline int Task::precede(const Tasks& next) const { return XFlow_AddTaskGroupDependency(mHandle, next.nativeHandle()); }
+
+inline int Task::precede(const Tasks& next) const
+{
+    return au_flow_add_task_group_dependency(mHandle, next.nativeHandle());
+}
+
 namespace detail {
 // Each temporary chain carries its own first error, including edits to accepted
 // targets. Explicit precede() returns int; no published task result is polluted.
@@ -150,7 +330,11 @@ class Link
 {
 public:
     Link(const T& last, int code) : mLast(last), mCode(code) {}
+
     int code() const { return mCode; }
+
+    const T& last() const noexcept { return mLast; }
+
     template <class U>
     Link<U> operator>>(const U& next) const
     {
@@ -161,23 +345,52 @@ private:
     T   mLast;
     int mCode;
 };
+
+template <class T>
+struct IsLink : std::false_type
+{
+};
+
+template <class T>
+struct IsLink<Link<T>> : std::true_type
+{
+};
 }  // namespace detail
+
+/**
+ * @brief Build a dependency chain without enqueueing any work.
+ * @param a Predecessor task.
+ * @param b Successor task; must still be unsubmitted.
+ * @return A chain result carrying the first build error.
+ * @note flow.enqueue(a >> b >> c) checks the chain error before enqueueing its upstream closure.
+ *       An already accepted successor (pending, running, or done) returns kErrorStateInvalid
+ *       without changing its result.
+ *       Group overloads use the same rules; a >> (b, c) links only a to c, not both tasks.
+ */
 inline au::flow::detail::Link<Task> operator>>(const Task& a, const Task& b)
 {
     return au::flow::detail::Link<Task>(b, a.precede(b));
 }
+
 inline au::flow::detail::Link<Tasks> operator>>(const Task& a, const Tasks& b)
 {
     return au::flow::detail::Link<Tasks>(b, a.precede(b));
 }
+
 inline au::flow::detail::Link<Task> operator>>(const Tasks& a, const Task& b)
 {
     return au::flow::detail::Link<Task>(b, a.precede(b));
 }
+
 inline au::flow::detail::Link<Tasks> operator>>(const Tasks& a, const Tasks& b)
 {
     return au::flow::detail::Link<Tasks>(b, a.precede(b));
 }
+
+/**
+ * @brief Shared scheduler with lazy pool workers and caller-assisted CPU tiles.
+ * @note Task completion does not join child tasks or GPU work automatically.
+ */
 class Flow
 {
 public:
@@ -186,35 +399,69 @@ public:
         static Flow instance;
         return instance;
     }
+
+    /**
+     * @brief Create a task for later enqueue or dependency building.
+     * @param f Callable returning int or void; void means success.
+     * @param a Arguments copied or moved into task storage; use std::ref to borrow.
+     * @return A task; creation errors are returned by wait(), code() or enqueue().
+     * @note Copies of pointers or borrowed views do not extend the backing storage lifetime.
+     */
     template <class F, class... A>
     Task create(F&& f, A&&... a)
     {
         return createNamed(nullptr, std::forward<F>(f), std::forward<A>(a)...);
     }
+
+    /**
+     * @brief Create a named task with the same ownership rules as create().
+     * @param name Optional copied name, used for tracing.
+     * @param f Callable returning int or void.
+     * @param a Arguments copied or moved into task storage.
+     * @return An unsubmitted task, carrying any creation error.
+     * @note Payload construction and commit are handled automatically.
+     */
     template <class F, class... A>
     Task createNamed(const char* name, F&& f, A&&... a)
     {
         Task task;
         try {
             typedef au::flow::detail::Bound<typename std::decay<F>::type, typename std::decay<A>::type...> Payload;
-#if __cplusplus < 201703L
-            static_assert(alignof(Payload) <= alignof(std::max_align_t),
-                          "Over-aligned callables require a C++17 consumer");
-#endif
-            std::unique_ptr<Payload> payload(new Payload(std::forward<F>(f), std::forward<A>(a)...));
-            task.mHandle = XFlow_CreateTask(name, &Payload::execute, payload.release(), &Payload::destroy);
-            if (!task.mHandle)
-                task.mError = XFLOW_ERROR_NO_MEMORY;
+            void* storage = nullptr;
+            task.mHandle  = au_flow_create_task_ex(name, sizeof(Payload), alignof(Payload), &Payload::execute,
+                                                   &Payload::destroy, &storage);
+            if (!task.mHandle) {
+                task.mError = au::err::kErrorNoMemory;
+                return task;
+            }
+            ::new (storage) Payload(std::forward<F>(f), std::forward<A>(a)...);
+            task.mError = au_flow_commit_task_payload(task.mHandle);
+            if (task.mError) {
+                // Commit failures leave storage unconstructed from the ABI's
+                // perspective; destroy our successfully constructed object.
+                Payload::destroy(storage);
+            }
         } catch (const std::bad_alloc&) {
-            task.mError = XFLOW_ERROR_NO_MEMORY;
+            task        = Task();
+            task.mError = au::err::kErrorNoMemory;
         } catch (...) {
-            task.mError = XFLOW_ERROR_EXCEPTION;
+            task        = Task();
+            task.mError = au::err::kErrorUnknown;
         }
         return task;
     }
+
+    /**
+     * @brief Create and immediately enqueue a task.
+     * @param f Callable returning int or void.
+     * @param a Arguments copied or moved into task storage.
+     * @return A task carrying its execution result or creation/enqueue error.
+     * @note Nested enqueues are independent. Device completion is not tracked; see the module warning.
+     */
     template <class F, class... A>
     typename std::enable_if<!std::is_same<typename std::decay<F>::type, Task>::value &&
-                                !std::is_same<typename std::decay<F>::type, Tasks>::value,
+                                !std::is_same<typename std::decay<F>::type, Tasks>::value &&
+                                !au::flow::detail::IsLink<typename std::decay<F>::type>::value,
                             Task>::type
     enqueue(F&& f, A&&... a)
     {
@@ -223,6 +470,14 @@ public:
             task.mError = enqueue(task);
         return task;
     }
+
+    /**
+     * @brief Create and enqueue a named task.
+     * @param name Optional copied name for tracing.
+     * @param f Callable returning int or void.
+     * @param a Arguments copied or moved into task storage.
+     * @return A task carrying its execution result or creation/enqueue error.
+     */
     template <class F, class... A>
     Task enqueueNamed(const char* name, F&& f, A&&... a)
     {
@@ -231,24 +486,77 @@ public:
             task.mError = enqueue(task);
         return task;
     }
-    int enqueue(const Task& task) { return task.mError ? task.mError : XFlow_EnqueueTask(task.nativeHandle()); }
-    int enqueue(const Tasks& group) { return XFlow_EnqueueGroup(group.nativeHandle()); }
+
+    /**
+     * @brief Enqueue a task and all its unsubmitted upstream dependencies as one batch.
+     * @param task Task at the end of the requested dependency graph.
+     * @return 0 if accepted, or a validation/enqueue error; failure accepts no new tasks.
+     * @note Accepted tasks are not rerun. An unsubmitted member of a group that is still in use
+     *       cannot be enqueued alone: enqueue the whole group, or a successor of the group, so
+     *       that its exit is part of the same enqueue batch. After the group is released and no
+     *       downstream task depends on its exit, the member can be enqueued with its existing
+     *       dependencies.
+     */
+    int enqueue(const Task& task) { return task.mError ? task.mError : au_flow_enqueue_task(task.nativeHandle()); }
+
+    /** @copydoc au_flow_enqueue_group */
+    int enqueue(const Tasks& group) { return au_flow_enqueue_group(group.nativeHandle()); }
+
+    /**
+     * @brief Enqueue a dependency chain through its last task or group.
+     * @param chain Result of task/group operator>> calls.
+     * @return First chain error without enqueueing work, otherwise the batch enqueue result.
+     * @note Wait on chain.last() or a retained tail handle. This does not construct another Tasks group.
+     */
+    template <class T>
+    int enqueue(const au::flow::detail::Link<T>& chain)
+    {
+        return chain.code() ? chain.code() : enqueue(chain.last());
+    }
+
+    /**
+     * @brief Create and enqueue a successor, including any unsubmitted upstream tasks.
+     * @param pred Predecessor task.
+     * @param f Successor callable returning int or void.
+     * @param a Arguments for the successor.
+     * @return Successor task; setup/enqueue errors are available through wait() or code().
+     * @note The callable is skipped if the predecessor fails. Waiting itself never enqueues work.
+     */
     template <class F, class... A>
     Task enqueueAfter(const Task& pred, F&& f, A&&... a)
     {
         return enqueueAfter({pred}, std::forward<F>(f), std::forward<A>(a)...);
     }
+
+    /**
+     * @brief Enqueue a successor that waits for all given predecessors.
+     * @param preds Predecessors in any state; an empty list adds no dependency.
+     * @param f Successor callable returning int or void.
+     * @param a Arguments for the successor.
+     * @return Successor task, carrying any setup/enqueue error.
+     * @note Unsubmitted predecessors are included atomically; a failure leaves them unsubmitted.
+     *       Any predecessor failure skips the successor body and propagates its error.
+     */
     template <class F, class... A>
     Task enqueueAfter(std::initializer_list<Task> preds, F&& f, A&&... a)
     {
         Task task = create(std::forward<F>(f), std::forward<A>(a)...);
         for (const auto& pred : preds)
             if (!task.mError)
-                task.mError = pred.precede(task);
+                task.mError = pred.mError ? pred.mError : pred.precede(task);
         if (!task.mError)
             task.mError = enqueue(task);
         return task;
     }
+
+    /**
+     * @brief Enqueue a successor together with any unsubmitted predecessor group and its upstream tasks.
+     * @param pred Predecessor group.
+     * @param f Successor callable returning int or void.
+     * @param a Arguments for the successor.
+     * @return Successor task, carrying any setup/enqueue error.
+     * @note Group failures skip the successor body; validation failure publishes no new work.
+     */
     template <class F, class... A>
     Task enqueueAfter(const Tasks& pred, F&& f, A&&... a)
     {
@@ -259,36 +567,59 @@ public:
             task.mError = enqueue(task);
         return task;
     }
-    int wait(const Task& task) { return task.wait(); }
-    int wait(const Tasks& group) { return group.wait(); }
-    int waitAll() { return XFlow_WaitAll(); }
-    int join(const Task& task) { return wait(task); }
-    int join(const Tasks& group) { return wait(group); }
-    int joinAll() { return waitAll(); }
+
+    /** @copydoc au_flow_wait_all */
+    int waitAll() { return au_flow_wait_all(); }
+
+    /**
+     * @brief Finish a tiled CPU loop before returning, using the caller and up to 3 helpers.
+     * @param range Number of elements; zero does nothing.
+     * @param tile Elements per tile; zero means 1.
+     * @param f Callback (begin, end) or (begin, end, worker_idx), using [begin, end).
+     * @note Callback must not throw or wait on unfinished tasks. Lane IDs are caller=0 and pool slots=1..8.
+     *       Nested loops run serially with lane 0; concurrent loops need separate scratch storage.
+     */
     template <class F>
     void parallelizeTiledTasks(size_t range, size_t tile, F&& f)
     {
         typedef std::reference_wrapper<typename std::remove_reference<F>::type> Function;
         Function                                                                callback(f);
-        XFlow_ParallelizeTile(
-            range, tile, [](size_t begin, size_t end, void* data) { (*static_cast<Function*>(data))(begin, end); },
+        au_flow_parallelize_tile_ex(
+            range, tile,
+            [](size_t begin, size_t end, size_t worker, void* data) {
+                au::flow::detail::invokeTile((*static_cast<Function*>(data)).get(), begin, end, worker, 0);
+            },
             &callback);
     }
-    int setAffinity(AffinityPolicy policy, uint64_t mask = 0)
-    {
-        return XFlow_SetAffinity(static_cast<int>(policy), mask);
-    }
-    uint64_t getAffinityMask() const { return XFlow_GetAffinityMask(); }
-    size_t   workerCount() const { return XFlow_GetWorkerCount(); }
+
+    /**
+     * @brief Request worker affinity; the calling thread is not bound.
+     * @param mask CPU bits, e.g. (UINT64_C(1) << 6) | (UINT64_C(1) << 7); 0 restores defaults.
+     * @return 0 if accepted, or an argument/platform error.
+     * @note Use sys::selectCpuMask() to select CPUs. Applied asynchronously; failures are logged.
+     */
+    int setAffinity(uint64_t mask = 0) { return au_flow_set_affinity_mask(mask); }
+
+    /** @copydoc au_flow_get_affinity_mask */
+    uint64_t getAffinityMask() const { return au_flow_get_affinity_mask(); }
+
+    size_t workerCount() const { return au_flow_get_worker_count(); }
+
+    /** @copydoc au_flow_release_workers */
+    int releaseWorkers() { return au_flow_release_workers(); }
 
 private:
-    Flow()                       = default;
-    ~Flow()                      = default;
-    Flow(const Flow&)            = delete;
+    Flow() = default;
+
+    ~Flow() = default;
+
+    Flow(const Flow&) = delete;
+
     Flow& operator=(const Flow&) = delete;
 };
 }  // namespace flow AU_LOCAL
 }  // namespace au
+
 #define XTHREAD_PARALLELIZE_TILED_TASK_QUOTE(range, tile) \
     ::au::flow::Flow::get().parallelizeTiledTasks((range), (tile), [&](size_t start, size_t end) { \
         for (size_t i = start; i < end; ++i) {

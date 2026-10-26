@@ -1,26 +1,30 @@
-#ifndef AURA_SYS_XVISIBILITY_H_
-#define AURA_SYS_XVISIBILITY_H_
+#ifndef AURA_XVISIBILITY_H_
+#define AURA_XVISIBILITY_H_
 
-/* Header-only SDK facades and binding callbacks must stay in their consumer's
- * shared object too. Private library flags alone do not hide inline/template
- * instantiations emitted by a consumer with default symbol visibility. */
+// AURA_STATIC is set for static Aura; AURA_EXPORTS only for a shared producer.
+#if defined(_WIN32)
+#if defined(AURA_STATIC)
+#define AU_API
+#elif defined(AURA_EXPORTS)
+#define AU_API __declspec(dllexport)
+#else
+#define AU_API __declspec(dllimport)
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+#if defined(AURA_STATIC)
+#define AU_API
+#else
+#define AU_API __attribute__((visibility("default")))
+#endif
+#else
+#define AU_API
+#endif
+
+// Keep consumer-emitted inline/template symbols local to their shared object.
 #if !defined(_WIN32) && (defined(__GNUC__) || defined(__clang__))
 #define AU_LOCAL __attribute__((visibility("hidden")))
 #else
 #define AU_LOCAL
 #endif
-/* C-compatible public ABI visibility (xsystem.h is C++ only). */
-#ifndef AURA_API
-#if defined(_WIN32) && !defined(AURA_STATIC)
-#if defined(AURA_EXPORTS)
-#define AURA_API __declspec(dllexport)
-#else
-#define AURA_API __declspec(dllimport)
-#endif
-#elif (defined(__GNUC__) || defined(__clang__)) && !defined(AURA_STATIC)
-#define AURA_API __attribute__((visibility("default")))
-#else
-#define AURA_API
-#endif
-#endif
+
 #endif

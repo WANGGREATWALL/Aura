@@ -2,14 +2,17 @@
 #define AURA_XSYSTEM_H_
 
 /** @file xsystem.h
- *  @brief Platform macros, ABI visibility and cross-platform system queries.
+ *  @brief Platform macros and cross-platform system queries.
  *
  *  Public declarations use C++11. All AU_OS_* and AU_ARCH_* macros have a
  *  numeric 0/1 value; use #if rather than #ifdef to select a platform.
  */
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
+
+#include "sys/xvisibility.h"
 
 #if defined(_WIN32)
 #  define AU_OS_WINDOWS 1
@@ -66,26 +69,6 @@
 #  define AU_ARCH_ARM 0
 #endif
 
-// AURA_STATIC is PUBLIC for static Aura; AURA_EXPORTS is PRIVATE for a shared
-// library producer. Neither macro is set in consumers of a shared Aura.
-#if AU_OS_WINDOWS
-#  if defined(AURA_STATIC)
-#    define AU_API
-#  elif defined(AURA_EXPORTS)
-#    define AU_API __declspec(dllexport)
-#  else
-#    define AU_API __declspec(dllimport)
-#  endif
-#elif defined(__GNUC__) || defined(__clang__)
-#  if defined(AURA_STATIC)
-#    define AU_API
-#  else
-#    define AU_API __attribute__((visibility("default")))
-#  endif
-#else
-#  define AU_API
-#endif
-
 namespace au {
 namespace sys {
 
@@ -131,6 +114,43 @@ AU_API int getLogicalCpuCount() noexcept;
 AU_API int getOnlineCpuCount() noexcept;
 /// Empty string on query or allocation failure.
 AU_API std::string getCpuModelName() noexcept;
+
+/// Select the fastest or slowest currently allowed CPUs using cpu_capacity.
+enum class CpuClass
+{
+    kPerformance,
+    kPowerSaving
+};
+
+/**
+ * @brief Select allowed CPUs 0..63 by capacity without changing thread affinity.
+ * @param cpuClass Performance selects the highest capacity, powersaving the lowest.
+ * @param[out] mask Selected CPU bits, or 0 on failure.
+ * @return 0 on success, or an argument/platform error; unsupported platforms return kErrorNotSupported.
+ * @note Capacities are cached; the calling thread's allowed CPUs are queried each time.
+ *       Missing capacity data treats CPUs equally. Pass the mask to au::flow::Flow::setAffinity().
+ */
+AU_API int selectCpuMask(CpuClass cpuClass, uint64_t& mask) noexcept;
+
+/**
+ * @brief Query the calling thread's current CPU affinity.
+ * @param cpus Output buffer; null with capacity=0 queries the required size only.
+ * @param capacity Number of entries available in cpus.
+ * @param[out] count Required entries, or 0 on query failure.
+ * @return 0 on success, kErrorOutOfRange for a short buffer, or an argument/platform error.
+ * @note Does not cache the allowed set. Unsupported platforms return kErrorNotSupported.
+ */
+AU_API int getThreadAffinity(uint32_t* cpus, std::size_t capacity, std::size_t& count) noexcept;
+
+/**
+ * @brief Bind the calling thread to the supplied CPUs.
+ * @param cpus Non-null CPU-ID array, borrowed only for this call.
+ * @param count Number of CPU IDs; must be nonzero.
+ * @return 0 if the OS accepts the request, or an argument/platform error.
+ * @note Query actual binding with getThreadAffinity(); OS restrictions may narrow the set.
+ *       To restore a previous binding, save its CPU list and apply it again.
+ */
+AU_API int setThreadAffinity(const uint32_t* cpus, std::size_t count) noexcept;
 
 /// Physical bytes; 0 on query failure. Available memory is an OS estimate.
 AU_API uint64_t getMemoryTotalBytes() noexcept;

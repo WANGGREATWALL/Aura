@@ -8,6 +8,7 @@
 
 #include "file/xfile.h"
 #include "file/xpath.h"
+#include "flow/xflow.h"
 #include "log/xerror.h"
 #include "log/xlogger.h"
 #include "math/xmath.h"
