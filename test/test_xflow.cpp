@@ -612,6 +612,9 @@ TEST_F(XFlow, LegacyGroupCompatibility)
     EXPECT_EQ(au_flow_wait_group(first.get()), 0);
     EXPECT_EQ(au_flow_wait_group(second.get()), 0);
     EXPECT_EQ(au_flow_enqueue_group(second.get()), 0);
+    EXPECT_FALSE(b.nativeHandle()->mNode->mGroupExit.expired());
+    EXPECT_EQ(au_flow_enqueue_task(b.nativeHandle()), 0);  // Accepted members bypass Draft group-boundary checks.
+    EXPECT_EQ(flow.enqueue(b).wait(), 0);
     EXPECT_EQ(count.load(std::memory_order_relaxed), 3);
 
     auto transientMember = flow.create([] {}), transientTail = flow.create([] {});

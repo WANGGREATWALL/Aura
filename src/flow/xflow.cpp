@@ -172,30 +172,37 @@ void Core::grow()
 
 int Core::submit(const NodePtr& root)
 {
-    std::vector<NodePtr>                     stack{root};
-    std::set<NodePtr, std::owner_less<void>> collected;
-    std::list<NodePtr>                       batch;
-    while (!stack.empty()) {
-        auto n = std::move(stack.back());
-        stack.pop_back();
-        if (n->mState != State::Created || !collected.insert(n).second)
-            continue;
-        if (n->mBuild)
-            return n->mBuild;
-        // Acquire placement construction before publishing callable execution.
-        if (!n->mPayloadReady.load(std::memory_order_acquire))
-            return au::err::kErrorNotReady;
-        batch.push_back(n);
-        stack.insert(stack.end(), n->mPreds.begin(), n->mPreds.end());
-    }
-
-    // Compare weak ownership directly: locking an abandoned exit could destroy
-    // its other members and run user deleters while mMutex is held.
-    for (auto& n : batch)
-        if (!n->mGroupExit.expired() && collected.find(n->mGroupExit) == collected.end())
-            return au::err::kErrorInvalidParam;
-    if (batch.empty())
+    if (root->mState != State::Created)
         return 0;
+    if (root->mBuild)
+        return root->mBuild;
+    // Acquire placement construction before publishing callable execution.
+    if (!root->mPayloadReady.load(std::memory_order_acquire))
+        return au::err::kErrorNotReady;
+    std::list<NodePtr> batch{root};
+    // Ordinary independent tasks need only an accepted-list entry, not graph containers.
+    // A live legacy group boundary always uses the full ownership validation below.
+    if (!root->mPreds.empty() || !root->mGroupExit.expired()) {
+        std::vector<NodePtr>                     stack(root->mPreds);
+        std::set<NodePtr, std::owner_less<void>> collected{root};
+        while (!stack.empty()) {
+            auto n = std::move(stack.back());
+            stack.pop_back();
+            if (n->mState != State::Created || !collected.insert(n).second)
+                continue;
+            if (n->mBuild)
+                return n->mBuild;
+            if (!n->mPayloadReady.load(std::memory_order_acquire))
+                return au::err::kErrorNotReady;
+            batch.push_back(n);
+            stack.insert(stack.end(), n->mPreds.begin(), n->mPreds.end());
+        }
+        // Compare weak ownership directly: locking an abandoned exit could destroy
+        // its other members and run user deleters while mMutex is held.
+        for (auto& n : batch)
+            if (!n->mGroupExit.expired() && collected.find(n->mGroupExit) == collected.end())
+                return au::err::kErrorInvalidParam;
+    }
     if (mClosing && !gCurrent && !gTileDepth)
         return au::err::kErrorStateInvalid;
     grow();  // No accepted state if the required thread could not start.
