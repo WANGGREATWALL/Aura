@@ -284,6 +284,32 @@ TEST_F(XFlow, CompletedDependenciesDoNotRetainHistory)
     EXPECT_TRUE(until([&] { return destroyed.load(std::memory_order_acquire); }));
 }
 
+TEST_F(XFlow, FailedResultsDoNotOwnNodes)
+{
+    auto&              flow = au::flow::Flow::get();
+    std::weak_ptr<int> lifetime;
+    auto               owner = std::make_shared<int>(1);
+    lifetime                 = owner;
+    auto failure             = flow.enqueueAfter(au::flow::Task(), [owner] {});
+    owner.reset();
+    EXPECT_TRUE(lifetime.expired());
+    EXPECT_FALSE(failure.valid());
+    EXPECT_TRUE(failure.done());
+    EXPECT_EQ(failure.nativeHandle(), nullptr);
+    EXPECT_EQ(failure.wait(), au::err::kErrorInvalidParam);
+    EXPECT_EQ(failure.costUs(), 0);
+    auto copy  = failure;
+    auto moved = std::move(copy);
+    EXPECT_EQ(moved.code(), au::err::kErrorInvalidParam);
+    EXPECT_FALSE(copy.valid());
+    EXPECT_FALSE(copy.done());
+
+    auto businessFailure = flow.enqueue([] { return -123; });
+    EXPECT_EQ(businessFailure.wait(), -123);
+    EXPECT_TRUE(businessFailure.valid());
+    EXPECT_TRUE(businessFailure.done());
+}
+
 TEST_F(XFlow, ReleaseWorkersAndRespawn)
 {
     auto& flow = au::flow::Flow::get();
@@ -954,6 +980,8 @@ TEST_F(XFlow, ExpressionCreationAndSubmissionErrors)
     au::flow::Task raw(au_flow_create_task_ex(nullptr, 1, 1, [](void*) { return 0; }, nullptr, &storage));
     ASSERT_TRUE(raw.valid());
     auto rejected = flow.enqueue(raw);
+    EXPECT_FALSE(rejected.valid());
+    EXPECT_EQ(rejected.nativeHandle(), nullptr);
     EXPECT_TRUE(rejected.done());
     EXPECT_EQ(rejected.code(), au::err::kErrorNotReady);
     EXPECT_FALSE(raw.done());
@@ -961,6 +989,7 @@ TEST_F(XFlow, ExpressionCreationAndSubmissionErrors)
     ASSERT_EQ(au_flow_commit_task_payload(raw.nativeHandle()), 0);
     EXPECT_EQ(flow.enqueue(raw).wait(), 0);
     EXPECT_EQ(raw.code(), 0);  // The submission error belonged to the returned handle, not this original.
+    EXPECT_EQ(rejected.wait(), au::err::kErrorNotReady);
     EXPECT_EQ(flow.enqueue(rejected | untouched).wait(), au::err::kErrorNotReady);
     expectCreated({untouched});
 

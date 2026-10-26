@@ -46,6 +46,9 @@ code = flow.enqueue(dynamic).wait();
 单独构造 `b | c` 不会给 b、c 添加入口前驱；串行已建立的依赖会保留，丢弃表达式不表示回滚。
 
 构建错误由表达式保存，提交失败由返回的 Task 保存，不覆盖原句柄的执行结果。
+创建、构建或提交失败均返回不持有节点的错误 Task：`valid()==false`、`done()==true`，
+`nativeHandle()==nullptr`，通过 `wait()/code()` 读取错误。原始 Draft 句柄不因提交失败而失效。
+任务已执行但返回业务错误时仍持有节点，`valid()==true`；默认空 Task 则 `done()==false`。
 分配失败同样通过错误句柄报告，不为报告失败再分配节点。未完成任务的 `kErrorNotReady`
 不是构建错误；已经完成的业务错误仍通过依赖传播。
 校验失败不接受任何新节点；成功后原子提交全部尚未提交的上游。重复提交不会重复执行。
@@ -71,6 +74,7 @@ GPU→CPU 边界的设备同步由任务函数自行完成。线程、tiled、�
 | `Tasks("name")` | 片段不命名；实际任务继续用 `createNamed/enqueueNamed` |
 | `Tasks::precede`、`Task::precede(Tasks)` | 使用 `>>`；低层 `Task::precede(Task)` 仍保留 |
 | `Tasks::nativeHandle()/valid()`、`detail::Link` | 不再提供；提交返回的 Task 提供有效性、结果和原始任务句柄 |
+| 提交失败的返回 Task 仍可能 `valid()==true` | 失败结果不再持有原节点；`valid()==false`、`done()==true`，从 `wait()/code()` 读错 |
 
 Task 不隐式转换为 int。使用 `auto` 保存旧提交返回值的调用点也要检查，不能只依赖编译错误定位。
 C 函数仍返回原来的接受状态码；Group C ABI、内部组归属校验和兼容行为保留。

@@ -210,7 +210,7 @@ public:
 
     ~Task() { au_flow_release_task(mHandle); }
 
-    /// Handle validity only; does not imply successful enqueue or execution.
+    /// Owns a node; false for empty handles or setup/submission failures. Does not imply task success.
     bool valid() const noexcept { return mHandle != nullptr; }
 
     /**
@@ -416,8 +416,7 @@ public:
             task.mHandle  = au_flow_create_task_ex(name, sizeof(Payload), alignof(Payload), &Payload::execute,
                                                    &Payload::destroy, &storage);
             if (!task.mHandle) {
-                task.mError = au::err::kErrorNoMemory;
-                return task;
+                return failure(au::err::kErrorNoMemory);
             }
             ::new (storage) Payload(std::forward<F>(f), std::forward<A>(a)...);
             task.mError = au_flow_commit_task_payload(task.mHandle);
@@ -425,13 +424,12 @@ public:
                 // Commit failures leave storage unconstructed from the ABI's
                 // perspective; destroy our successfully constructed object.
                 Payload::destroy(storage);
+                return failure(task.mError);
             }
         } catch (const std::bad_alloc&) {
-            task        = Task();
-            task.mError = au::err::kErrorNoMemory;
+            return failure(au::err::kErrorNoMemory);
         } catch (...) {
-            task        = Task();
-            task.mError = au::err::kErrorUnknown;
+            return failure(au::err::kErrorUnknown);
         }
         return task;
     }
@@ -470,14 +468,12 @@ public:
      * @param tasks Task (implicitly converted) or serial/parallel expression.
      * @return Its completion Task, or a task carrying the build/submission error; failure accepts no new work.
      * @note Accepted nodes are not rerun. Empty expressions submit one empty task. costUs() measures
-     *       only the exit task, not the whole graph. A submission error does not alter original handles.
+     *       only the exit task, not the whole graph. Failed results own no node and leave originals unchanged.
      */
     Task enqueue(const Tasks& tasks)
     {
         if (tasks.mError) {
-            Task failed;
-            failed.mError = tasks.mError;
-            return failed;
+            return failure(tasks.mError);
         }
         return submit(tasks.mHeads.empty() ? create([] {}) : tasks.mLast);
     }
@@ -576,11 +572,18 @@ public:
     int releaseWorkers() { return au_flow_release_workers(); }
 
 private:
+    static Task failure(int code) noexcept
+    {
+        Task failed;
+        failed.mError = code;
+        return failed;
+    }
+
     Task submit(Task task)
     {
         if (!task.mError)
             task.mError = au_flow_enqueue_task(task.mHandle);
-        return task;
+        return task.mError ? failure(task.mError) : std::move(task);
     }
 
     Flow() = default;
