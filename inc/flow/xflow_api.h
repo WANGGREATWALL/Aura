@@ -10,8 +10,9 @@
  * dependency. Once accepted, it is pending (waiting for dependencies), running, or done.
  * Enqueueing an accepted task returns 0 and never executes it again.
  *
- * @par Group model
- * A group has two internal gates: an entry gate and an exit gate. Adding an unsubmitted member
+ * @par Legacy C groups
+ * These interfaces remain ABI-compatible; the C++ Tasks expression does not use them.
+ * A C group has two internal gates: an entry gate and an exit gate. Adding an unsubmitted member
  * to a group that has not been enqueued links entry -> member -> exit. Adding an accepted task
  * to that group links task -> exit only, because its execution order is already fixed. A group
  * is in use while any owning handle exists or a downstream task or group depends on its exit.

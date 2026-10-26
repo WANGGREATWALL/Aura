@@ -21,15 +21,20 @@
  * A task is unsubmitted until enqueue() accepts it. Once accepted it is pending (waiting for
  * dependencies), running, or done; a second enqueue is a no-op and never runs it again.
  *
- * @par Group model
- * A group has an internal entry gate and an exit gate. Adding an unsubmitted member links
- * entry -> member -> exit; adding an accepted member links member -> exit only, because its
- * execution order is already fixed. A group is in use while its handle exists or a downstream
- * task or group depends on its exit.
+ * @par Expressions
+ * Task is one callable; Tasks is a value describing shared nodes, attachment heads and one exit.
+ * Use a >> (b | c) >> done for serial/parallel composition, or Tasks::parallel(first, last) for
+ * many branches. An attachment head is where a preceding fragment must connect, even if that
+ * node already has other dependencies. Operators build edges immediately; enqueue() returns
+ * the completion Task. Empty Tasks is an identity. Parenthesize parallel sections: >> binds
+ * tighter than |, so a >> b | c >> done means (a >> b) | (c >> done).
+ * Copies share work, not independent graph templates: later composition accumulates dependencies.
+ * Built edges are not rolled back when an expression is discarded. A bare b | c adds only a
+ * join after its branches, not a shared predecessor before them.
  *
  * @par Ownership
  * Arguments are decayed copies or moves; std::ref and borrowing views do not extend storage
- * lifetime, and moving a borrowed view still borrows. Releasing a task or group handle only drops
+ * lifetime, and moving a borrowed view still borrows. Releasing task or expression handles only drops
  * a reference: it never waits for or cancels work. Destroying the last reference to an unsubmitted
  * task destroys its payload without running it. A task may enqueue more tasks; those are
  * independent and are not implicitly joined or cancelled with the parent. Handles belong to the
@@ -63,15 +68,12 @@
  * auto a = flow.create([] {});  // Prepare input.
  * auto b = flow.create([] {});  // First branch.
  * auto c = flow.create([] {});  // Second branch.
- * au::flow::Tasks group{b, c};
  * auto done = flow.create([] {});  // Consume results.
- * auto chain = a >> group >> done;
- * int code = flow.enqueue(chain);
- * if (!code)
- *     code = chain.last().wait();
+ * int code = flow.enqueue(a >> (b | c) >> done).wait();
  * @endcode
  */
 
+#include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <initializer_list>
@@ -80,6 +82,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "flow/xflow_api.h"
 
@@ -145,8 +148,8 @@ struct Bound
     }
 
     template <std::size_t... I>
-    auto run(Indices<I...>)
-        -> decltype(au::flow::detail::invoke(std::move(mFunction), std::move(std::get<I>(mArguments))...))
+    auto run(Indices<I...>) -> decltype(au::flow::detail::invoke(std::move(mFunction),
+                                                                 std::move(std::get<I>(mArguments))...))
     {
         return au::flow::detail::invoke(std::move(mFunction), std::move(std::get<I>(mArguments))...);
     }
@@ -219,8 +222,6 @@ public:
      */
     int precede(const Task& next) const { return au_flow_add_dependency(mHandle, next.mHandle); }
 
-    int precede(const Tasks& next) const;
-
     /**
      * @brief Wait for completion without enqueueing the task.
      * @return Task result, a saved creation/enqueue error, or a wait error.
@@ -255,137 +256,121 @@ public:
 
 private:
     friend class Flow;
+    friend class Tasks;
     XFlowTaskHandle mHandle = nullptr;
     int             mError  = 0;
 };
 
 /**
- * @brief A group for batch enqueue and waiting; members may run in parallel.
- * @note Copies share the same group. Releasing a group does not cancel its work.
+ * @brief Serial/parallel expression sharing task nodes; an empty expression is an identity.
+ * @note Copies share nodes and later composition accumulates dependencies; nodes run only once.
+ *       This is not a mutable group. Wait on the Task returned by Flow::enqueue().
  */
 class Tasks
 {
 public:
-    explicit Tasks(const char* name = "Tasks") : mHandle(au_flow_create_group(name)) {}
+    Tasks() noexcept = default;
 
-    /// Create a group from members, retaining the first build error for enqueue() and wait().
-    Tasks(std::initializer_list<Task> tasks) : Tasks()
+    /// Convert one task without creating a node. An invalid task is an error, not an empty expression.
+    Tasks(const Task& task) : mLast(task), mError(task.mError)
     {
-        for (const auto& task : tasks)
-            if (add(task))
-                break;
+        if (!mError) {
+            if (!task.valid())
+                mError = au::err::kErrorInvalidParam;
+            else {
+                try {
+                    mHeads.push_back(task);
+                } catch (const std::bad_alloc&) {
+                    mError = au::err::kErrorNoMemory;
+                }
+            }
+        }
     }
 
-    Tasks(const Tasks& other) noexcept : mHandle(other.mHandle) { au_flow_retain_group(mHandle); }
+    /// Build flat parallel branches; elements may themselves contain serial/parallel expressions.
+    Tasks(std::initializer_list<Tasks> branches) : Tasks(parallel(branches.begin(), branches.end())) {}
 
-    Tasks(Tasks&& other) noexcept : mHandle(other.mHandle) { other.mHandle = nullptr; }
+    Tasks(const Tasks& other) : mLast(other.mLast), mError(other.mError)
+    {
+        if (!mError) {
+            try {
+                mHeads = other.mHeads;
+            } catch (const std::bad_alloc&) {
+                mError = au::err::kErrorNoMemory;
+            }
+        }
+    }
+
+    Tasks(Tasks&& other) noexcept : mHeads(std::move(other.mHeads)), mLast(std::move(other.mLast)), mError(other.mError)
+    {
+        other.mHeads.clear();
+        other.mError = 0;
+    }
 
     Tasks& operator=(Tasks other) noexcept
     {
-        std::swap(mHandle, other.mHandle);
+        mHeads.swap(other.mHeads);
+        std::swap(mLast, other.mLast);
+        std::swap(mError, other.mError);
         return *this;
     }
 
-    ~Tasks() { au_flow_release_group(mHandle); }
-
-    bool valid() const noexcept { return mHandle != nullptr; }
-
     /**
-     * @brief Add a task to a group that has not been enqueued.
-     * @param t Member task; duplicate additions are ignored.
-     * @return 0 on success, or a build error saved for the group's enqueue.
-     * @note An unsubmitted task can belong to only one group that is still in use. It can join a
-     *       new group after the previous group is released and no downstream task or group depends
-     *       on its exit; its existing dependencies and saved build errors remain. An accepted task
-     *       (pending, running, or done) can be shared by several groups.
-     * @note The group keeps its first add error and remains failed; enqueue and wait report it.
-     *       Duplicate additions are ignored. Create a new group to retry after a failed add.
+     * @brief Build flat parallel branches from a single-pass range of Task or Tasks.
+     * @param first First branch (inclusive).
+     * @param last One past the final branch.
+     * @return An expression; build errors are reported by enqueue().wait()/code().
+     * @note Empty branches are identities; one branch creates no node, multiple branches create
+     *       one ordinary join task. Prefer this or Tasks{...} over a long chain of binary |.
      */
-    int add(const Task& t) { return au_flow_group_add_task(mHandle, t.nativeHandle()); }
-
-    int precede(const Task& t) const { return au_flow_add_group_task_dependency(mHandle, t.nativeHandle()); }
-
-    int precede(const Tasks& g) const { return au_flow_add_group_dependency(mHandle, g.mHandle); }
-
-    /// Wait for every member; returns the propagated result without enqueueing the group.
-    int wait() const { return au_flow_wait_group(mHandle); }
-
-    /// Borrow the raw group handle; no owning reference is added.
-    XFlowGroupHandle nativeHandle() const noexcept { return mHandle; }
+    template <class Iterator>
+    static Tasks parallel(Iterator first, Iterator last);
 
 private:
-    XFlowGroupHandle mHandle;
+    friend class Flow;
+    friend Tasks      operator>>(const Tasks&, const Tasks&);
+    std::vector<Task> mHeads;
+    Task              mLast;
+    int               mError = 0;
 };
-
-inline int Task::precede(const Tasks& next) const
-{
-    return au_flow_add_task_group_dependency(mHandle, next.nativeHandle());
-}
-
-namespace detail {
-// Each temporary chain carries its own first error, including edits to accepted
-// targets. Explicit precede() returns int; no published task result is polluted.
-template <class T>
-class Link
-{
-public:
-    Link(const T& last, int code) : mLast(last), mCode(code) {}
-
-    int code() const { return mCode; }
-
-    const T& last() const noexcept { return mLast; }
-
-    template <class U>
-    Link<U> operator>>(const U& next) const
-    {
-        return Link<U>(next, mCode ? mCode : mLast.precede(next));
-    }
-
-private:
-    T   mLast;
-    int mCode;
-};
-
-template <class T>
-struct IsLink : std::false_type
-{
-};
-
-template <class T>
-struct IsLink<Link<T>> : std::true_type
-{
-};
-}  // namespace detail
 
 /**
  * @brief Build a dependency chain without enqueueing any work.
- * @param a Predecessor task.
- * @param b Successor task; must still be unsubmitted.
- * @return A chain result carrying the first build error.
- * @note flow.enqueue(a >> b >> c) checks the chain error before enqueueing its upstream closure.
- *       An already accepted successor (pending, running, or done) returns kErrorStateInvalid
- *       without changing its result.
- *       Group overloads use the same rules; a >> (b, c) links only a to c, not both tasks.
+ * @param a Predecessor fragment; its exit may already be accepted.
+ * @param b Successor fragment; each attachment head must still be unsubmitted.
+ * @return An expression carrying the first build error, checked before enqueue accepts any work.
+ * @note Connects a's exit to each of b's heads. Already built edges are not rolled back on failure.
+ *       Accepted successors report kErrorStateInvalid without changing their execution results.
+ *       a >> (b, c) uses the comma operator and links only to c; use a >> (b | c) instead.
  */
-inline au::flow::detail::Link<Task> operator>>(const Task& a, const Task& b)
+inline Tasks operator>>(const Tasks& a, const Tasks& b)
 {
-    return au::flow::detail::Link<Task>(b, a.precede(b));
+    if (a.mError)
+        return a;
+    if (b.mError)
+        return b;
+    if (a.mHeads.empty())
+        return b;
+    if (b.mHeads.empty())
+        return a;
+    Tasks result(a);
+    result.mLast = b.mLast;
+    for (const auto& head : b.mHeads) {
+        if (result.mError)
+            break;
+        result.mError = a.mLast.precede(head);
+    }
+    return result;
 }
 
-inline au::flow::detail::Link<Tasks> operator>>(const Task& a, const Tasks& b)
-{
-    return au::flow::detail::Link<Tasks>(b, a.precede(b));
-}
-
-inline au::flow::detail::Link<Task> operator>>(const Tasks& a, const Task& b)
-{
-    return au::flow::detail::Link<Task>(b, a.precede(b));
-}
-
-inline au::flow::detail::Link<Tasks> operator>>(const Tasks& a, const Tasks& b)
-{
-    return au::flow::detail::Link<Tasks>(b, a.precede(b));
-}
+/**
+ * @brief Build two parallel branches and an ordinary join task, without enqueueing work.
+ * @param a First fragment; accepted tasks are allowed.
+ * @param b Second fragment; accepted tasks are allowed.
+ * @return An expression; branch failures skip its join and propagate an upstream error.
+ * @note No entry task is created. Use parentheses around parallel sections when mixing | and >>.
+ */
+inline Tasks operator|(const Tasks& a, const Tasks& b);
 
 /**
  * @brief Shared scheduler with lazy pool workers and caller-assisted CPU tiles.
@@ -460,15 +445,11 @@ public:
      */
     template <class F, class... A>
     typename std::enable_if<!std::is_same<typename std::decay<F>::type, Task>::value &&
-                                !std::is_same<typename std::decay<F>::type, Tasks>::value &&
-                                !au::flow::detail::IsLink<typename std::decay<F>::type>::value,
+                                !std::is_same<typename std::decay<F>::type, Tasks>::value,
                             Task>::type
     enqueue(F&& f, A&&... a)
     {
-        Task task = create(std::forward<F>(f), std::forward<A>(a)...);
-        if (!task.mError)
-            task.mError = enqueue(task);
-        return task;
+        return submit(create(std::forward<F>(f), std::forward<A>(a)...));
     }
 
     /**
@@ -481,37 +462,24 @@ public:
     template <class F, class... A>
     Task enqueueNamed(const char* name, F&& f, A&&... a)
     {
-        Task task = createNamed(name, std::forward<F>(f), std::forward<A>(a)...);
-        if (!task.mError)
-            task.mError = enqueue(task);
-        return task;
+        return submit(createNamed(name, std::forward<F>(f), std::forward<A>(a)...));
     }
 
     /**
-     * @brief Enqueue a task and all its unsubmitted upstream dependencies as one batch.
-     * @param task Task at the end of the requested dependency graph.
-     * @return 0 if accepted, or a validation/enqueue error; failure accepts no new tasks.
-     * @note Accepted tasks are not rerun. An unsubmitted member of a group that is still in use
-     *       cannot be enqueued alone: enqueue the whole group, or a successor of the group, so
-     *       that its exit is part of the same enqueue batch. After the group is released and no
-     *       downstream task depends on its exit, the member can be enqueued with its existing
-     *       dependencies.
+     * @brief Enqueue a task or expression and its unsubmitted upstream dependencies atomically.
+     * @param tasks Task (implicitly converted) or serial/parallel expression.
+     * @return Its completion Task, or a task carrying the build/submission error; failure accepts no new work.
+     * @note Accepted nodes are not rerun. Empty expressions submit one empty task. costUs() measures
+     *       only the exit task, not the whole graph. A submission error does not alter original handles.
      */
-    int enqueue(const Task& task) { return task.mError ? task.mError : au_flow_enqueue_task(task.nativeHandle()); }
-
-    /** @copydoc au_flow_enqueue_group */
-    int enqueue(const Tasks& group) { return au_flow_enqueue_group(group.nativeHandle()); }
-
-    /**
-     * @brief Enqueue a dependency chain through its last task or group.
-     * @param chain Result of task/group operator>> calls.
-     * @return First chain error without enqueueing work, otherwise the batch enqueue result.
-     * @note Wait on chain.last() or a retained tail handle. This does not construct another Tasks group.
-     */
-    template <class T>
-    int enqueue(const au::flow::detail::Link<T>& chain)
+    Task enqueue(const Tasks& tasks)
     {
-        return chain.code() ? chain.code() : enqueue(chain.last());
+        if (tasks.mError) {
+            Task failed;
+            failed.mError = tasks.mError;
+            return failed;
+        }
+        return submit(tasks.mHeads.empty() ? create([] {}) : tasks.mLast);
     }
 
     /**
@@ -544,28 +512,27 @@ public:
         for (const auto& pred : preds)
             if (!task.mError)
                 task.mError = pred.mError ? pred.mError : pred.precede(task);
-        if (!task.mError)
-            task.mError = enqueue(task);
-        return task;
+        return submit(std::move(task));
     }
 
     /**
-     * @brief Enqueue a successor together with any unsubmitted predecessor group and its upstream tasks.
-     * @param pred Predecessor group.
+     * @brief Enqueue a successor of a fragment's exit, including its unsubmitted upstream tasks.
+     * @param pred Predecessor expression; an empty expression adds no dependency.
      * @param f Successor callable returning int or void.
      * @param a Arguments for the successor.
      * @return Successor task, carrying any setup/enqueue error.
-     * @note Group failures skip the successor body; validation failure publishes no new work.
+     * @note Upstream failures skip the successor body; validation failure publishes no new work.
      */
     template <class F, class... A>
     Task enqueueAfter(const Tasks& pred, F&& f, A&&... a)
     {
         Task task = create(std::forward<F>(f), std::forward<A>(a)...);
-        if (!task.mError)
-            task.mError = pred.precede(task);
-        if (!task.mError)
-            task.mError = enqueue(task);
-        return task;
+        if (!task.mError) {
+            task.mError = pred.mError;
+            if (!task.mError && !pred.mHeads.empty())
+                task.mError = pred.mLast.precede(task);
+        }
+        return submit(std::move(task));
     }
 
     /** @copydoc au_flow_wait_all */
@@ -609,6 +576,13 @@ public:
     int releaseWorkers() { return au_flow_release_workers(); }
 
 private:
+    Task submit(Task task)
+    {
+        if (!task.mError)
+            task.mError = au_flow_enqueue_task(task.mHandle);
+        return task;
+    }
+
     Flow() = default;
 
     ~Flow() = default;
@@ -617,6 +591,58 @@ private:
 
     Flow& operator=(const Flow&) = delete;
 };
+
+template <class Iterator>
+Tasks Tasks::parallel(Iterator first, Iterator last)
+{
+    Tasks result;
+    Task  join;
+    try {
+        for (; first != last; ++first) {
+            const Tasks& branch = *first;
+            if (branch.mError)
+                return branch;
+            if (branch.mHeads.empty())
+                continue;
+            if (result.mHeads.empty()) {
+                result = branch;
+                if (result.mError)
+                    return result;
+                continue;
+            }
+            if (!join.valid()) {
+                join          = Flow::get().create([] {});
+                result.mError = join.mError ? join.mError : result.mLast.precede(join);
+                if (result.mError)
+                    return result;
+                result.mLast = join;
+            }
+            result.mError = branch.mLast.precede(join);
+            if (result.mError)
+                return result;
+            result.mHeads.insert(result.mHeads.end(), branch.mHeads.begin(), branch.mHeads.end());
+        }
+        // Collect once, then deduplicate once; never fold the range through binary |.
+        std::sort(result.mHeads.begin(), result.mHeads.end(), [](const Task& a, const Task& b) {
+            return std::less<XFlowTaskHandle>()(a.nativeHandle(), b.nativeHandle());
+        });
+        result.mHeads.erase(
+            std::unique(result.mHeads.begin(), result.mHeads.end(),
+                        [](const Task& a, const Task& b) { return a.nativeHandle() == b.nativeHandle(); }),
+            result.mHeads.end());
+    } catch (const std::bad_alloc&) {
+        result.mError = au::err::kErrorNoMemory;
+    } catch (...) {
+        result.mError = au::err::kErrorUnknown;
+    }
+    return result;
+}
+
+inline Tasks operator|(const Tasks& a, const Tasks& b)
+{
+    const std::reference_wrapper<const Tasks> branches[] = {std::cref(a), std::cref(b)};
+    return Tasks::parallel(branches, branches + 2);
+}
 }  // namespace flow AU_LOCAL
 }  // namespace au
 
