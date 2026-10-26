@@ -304,12 +304,14 @@ bool Core::step(std::unique_lock<std::mutex>& lock)
     if (parent)
         parent->mExecuting = nullptr;
     std::vector<std::weak_ptr<Node>> successors;
+    std::vector<NodePtr>             predecessors;
     {
         std::lock_guard<std::mutex> state(n->mMutex);
         n->mCode  = code;
         n->mCost  = cost;
         n->mState = State::Done;
         successors.swap(n->mSuccessors);
+        predecessors.swap(n->mPreds);  // Completed dependencies no longer participate in scheduling or wait cycles.
     }
 
     for (auto& weak : successors)
@@ -328,6 +330,7 @@ bool Core::step(std::unique_lock<std::mutex>& lock)
     mAccepted.erase(n->mAccepted);
     mChanged.notify_all();
     lock.unlock();
+    predecessors.clear();
     n.reset();
     lock.lock();  // Last owners/deleters never run under scheduler locks.
     return true;

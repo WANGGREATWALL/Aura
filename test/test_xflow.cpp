@@ -232,6 +232,58 @@ TEST_F(XFlow, InlineAndLargePayloadLifetime)
     au_flow_release_task(raw);
 }
 
+TEST_F(XFlow, CompletedDependenciesDoNotRetainHistory)
+{
+    auto&                                                 flow = au::flow::Flow::get();
+    std::array<std::weak_ptr<au::flow::detail::Node>, 64> window;
+    std::atomic<int>                                      calls{0};
+    auto                                                  tail = flow.enqueue([] {});
+    ASSERT_EQ(tail.wait(), 0);
+    for (std::size_t i = 0; i < 100000; ++i) {
+        auto next = flow.enqueueAfter(tail, [&, i] {
+            calls.fetch_add(1, std::memory_order_relaxed);
+            return i == 50000 ? -123 : 0;
+        });
+        ASSERT_EQ(next.wait(), i < 50000 ? 0 : -123);
+        tail      = std::move(next);
+        auto& old = window[i % window.size()];
+        // Keep only a bounded weak window: make_shared coallocates the node and control block.
+        if (i >= window.size())
+            ASSERT_TRUE(until([&] { return old.expired(); }));
+        old = tail.nativeHandle()->mNode;
+    }
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 50001);  // Failed descendants were skipped too.
+    ASSERT_EQ(flow.releaseWorkers(), 0);
+    for (std::size_t i = 0; i < window.size(); ++i)
+        EXPECT_EQ(window[i].expired(), i != (99999 % window.size()));
+    tail = au::flow::Task();
+    for (const auto& weak : window)
+        EXPECT_TRUE(weak.expired());
+
+    auto&             core = au::flow::detail::core();
+    std::atomic<bool> destroyed{false};
+    auto              upstream  = au::flow::detail::NodePtr(new au::flow::detail::Node(
+                                                  nullptr, [](void*) { return 0; }, nullptr, nullptr),
+                                                            [&](au::flow::detail::Node* node) {
+                                                  // Reentrant scheduler access would deadlock if the last predecessor
+                                                  // owner died under its lock.
+                                                  {
+                                                      std::lock_guard<std::mutex> lock(core.mMutex);
+                                                  }
+                                                  delete node;
+                                                  destroyed.store(true, std::memory_order_release);
+                                              });
+    auto              successor = flow.create([] {});
+    {
+        std::lock_guard<std::mutex> lock(core.mMutex);
+        ASSERT_EQ(core.edge(upstream, successor.nativeHandle()->mNode), 0);
+        ASSERT_EQ(core.submit(successor.nativeHandle()->mNode), 0);
+    }
+    upstream.reset();
+    EXPECT_EQ(successor.wait(), 0);
+    EXPECT_TRUE(until([&] { return destroyed.load(std::memory_order_acquire); }));
+}
+
 TEST_F(XFlow, ReleaseWorkersAndRespawn)
 {
     auto& flow = au::flow::Flow::get();
