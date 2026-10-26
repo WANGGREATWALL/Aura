@@ -121,9 +121,9 @@ int Core::edge(const NodePtr& pred, const NodePtr& succ)
 {
     if (!succ)
         return au::err::kErrorInvalidParam;
-    // Core::mMutex already protects links and predecessor state; only succ's build error needs its query lock.
-    std::lock_guard<std::mutex> lock(succ->mMutex);
-    auto                        error = [&](int code) {
+    // Core::mMutex protects links and state; public build-error queries also need the node lock.
+    auto error = [&](int code) {
+        std::lock_guard<std::mutex> lock(succ->mMutex);
         if (succ->mState == State::Created && !succ->mBuild)
             succ->mBuild = code;
         return code;
