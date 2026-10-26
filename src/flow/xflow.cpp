@@ -34,8 +34,6 @@ int boundary(F fn, const char* name = nullptr) noexcept
     }
 }
 
-void discard(void*) {}
-
 // Reserve before changing links/counts; the eventual append must not allocate.
 void reserveOne(std::vector<NodePtr>& values)
 {
@@ -81,7 +79,6 @@ Core::Core()
                     mDefaultMask |= UINT64_C(1) << cpu;
         }
     }
-    mMask = mDefaultMask;
 }
 
 Core::~Core()
@@ -124,23 +121,19 @@ int Core::edge(const NodePtr& pred, const NodePtr& succ)
 {
     if (!succ)
         return au::err::kErrorInvalidParam;
-    auto error = [&](int code) {
+    // Core::mMutex already protects links and predecessor state; only succ's build error needs its query lock.
+    std::lock_guard<std::mutex> lock(succ->mMutex);
+    auto                        error = [&](int code) {
         if (succ->mState == State::Created && !succ->mBuild)
             succ->mBuild = code;
         return code;
     };
 
-    if (pred == succ) {
-        std::lock_guard<std::mutex> lock(succ->mMutex);
+    if (pred == succ)
         return error(au::err::kErrorFlowCycleDetected);
-    }
-
-    if (!pred) {
-        std::lock_guard<std::mutex> lock(succ->mMutex);
+    if (!pred)
         return error(au::err::kErrorInvalidParam);
-    }
 
-    std::scoped_lock lock(pred->mMutex, succ->mMutex);
     if (succ->mState != State::Created)
         return au::err::kErrorStateInvalid;
     try {
@@ -196,14 +189,13 @@ int Core::submit(const NodePtr& root)
         return au::err::kErrorNotReady;
     std::list<NodePtr> batch{root};
     // Ordinary independent tasks need only an accepted-list entry, not graph containers.
-    // A live legacy group boundary always uses the full ownership validation below.
-    if (!root->mPreds.empty() || !root->mGroupExit.expired()) {
-        std::vector<NodePtr>                     stack(root->mPreds);
-        std::set<NodePtr, std::owner_less<void>> collected{root};
+    if (!root->mPreds.empty()) {
+        std::vector<NodePtr> stack(root->mPreds);
+        std::set<Node*>      collected{root.get()};
         while (!stack.empty()) {
             auto n = std::move(stack.back());
             stack.pop_back();
-            if (n->mState != State::Created || !collected.insert(n).second)
+            if (n->mState != State::Created || !collected.insert(n.get()).second)
                 continue;
             if (n->mBuild)
                 return n->mBuild;
@@ -212,11 +204,6 @@ int Core::submit(const NodePtr& root)
             batch.push_back(n);
             stack.insert(stack.end(), n->mPreds.begin(), n->mPreds.end());
         }
-        // Compare weak ownership directly: locking an abandoned exit could destroy
-        // its other members and run user deleters while mMutex is held.
-        for (auto& n : batch)
-            if (!n->mGroupExit.expired() && collected.find(n->mGroupExit) == collected.end())
-                return au::err::kErrorInvalidParam;
     }
     if (mClosing && !gCurrent && !gTileDepth)
         return au::err::kErrorStateInvalid;
@@ -250,8 +237,8 @@ void Core::applyAffinity(std::unique_lock<std::mutex>& lock)
         const auto generation = mAffinityGen.load(std::memory_order_acquire);
         if (!gWorkerIndex || gAffinity == generation || mDefaultCpus.empty())
             break;
-        const auto mask     = mMask;
-        const bool defaults = mDefaultAffinity;
+        const auto mask     = mRequestedMask;
+        const bool defaults = !mask;
         lock.unlock();
         std::array<std::uint32_t, 64> selected;
         std::size_t                   count = 0;
@@ -315,10 +302,10 @@ bool Core::step(std::unique_lock<std::mutex>& lock)
     int                 code  = n->mDependencyError;
     const auto          start = std::chrono::steady_clock::now();
     au::perf::PerfScope trace{};
-    const bool          traced = !code && n->mFunction && !n->mName.empty();
+    const bool          traced = !code && !n->mName.empty();
     if (traced)
         au::perf::traceBegin(&trace, n->mName);
-    if (!code && n->mFunction)
+    if (!code)
         code = boundary([&]() -> int { return n->mFunction(n->mPayload.get()); },
                         n->mName.empty() ? "unnamed task" : n->mName.c_str());
     if (traced)
@@ -436,52 +423,11 @@ typedef au::flow::detail::NodePtr NodePtr;
 
 NodePtr node(XFlowTaskHandle h) { return h ? h->mNode : NodePtr(); }
 
-NodePtr head(XFlowGroupHandle h) { return h ? h->mEntry : NodePtr(); }
-
-NodePtr tail(XFlowGroupHandle h) { return h ? h->mExit : NodePtr(); }
-
 std::unique_lock<std::mutex> submissionLock(au::flow::detail::Core& c)
 {
     std::unique_lock<std::mutex> lock(c.mMutex);
     c.mChanged.wait(lock, [&] { return !c.mReleasing || au::flow::detail::gCurrent || au::flow::detail::gTileDepth; });
     return lock;
-}
-
-int link(const NodePtr& a, const NodePtr& b)
-{
-    return au::flow::detail::boundary([&]() -> int {
-        auto&                       c = au::flow::detail::core();
-        std::lock_guard<std::mutex> l(c.mMutex);
-        return c.edge(a, b);
-    });
-}
-
-int incoming(const NodePtr& pred, XFlowGroupHandle b)
-{
-    if (!b)
-        return au::err::kErrorInvalidParam;
-    return au::flow::detail::boundary([&]() -> int {
-        auto&                       c = au::flow::detail::core();
-        std::lock_guard<std::mutex> lock(c.mMutex);
-        for (auto& n : b->mNodes)
-            if (n->mState != au::flow::detail::State::Created)
-                return au::err::kErrorStateInvalid;
-        return c.edge(pred, head(b));
-    });
-}
-
-template <class H>
-void retain(H h)
-{
-    if (h)
-        h->mRefs.fetch_add(1, std::memory_order_relaxed);
-}
-
-template <class H>
-void release(H h)
-{
-    if (h && h->mRefs.fetch_sub(1, std::memory_order_acq_rel) == 1)
-        delete h;
 }
 
 }  // namespace
@@ -490,11 +436,10 @@ extern "C" {
 XFlowTaskHandle au_flow_create_task(const char* name, XFlowTaskFn fn, void* data, XFlowDeleterFn destroy) noexcept
 {
     try {
-        auto payload = std::unique_ptr<void, au::flow::detail::PayloadDeleter>(
-            data, {destroy ? destroy : &au::flow::detail::discard, 0});
+        auto payload = std::unique_ptr<void, au::flow::detail::PayloadDeleter>(data, {destroy, 0});
         if (!fn)
             return nullptr;
-        auto owner               = std::make_shared<XFlowTaskNode>(fn, nullptr);
+        auto owner               = std::make_shared<XFlowTaskNode>(fn);
         owner->mStorage.mPayload = std::move(payload);
         owner->mStorage.mName    = name ? name : "";
         owner->mNode             = NodePtr(owner, &owner->mStorage);
@@ -512,13 +457,11 @@ XFlowTaskHandle au_flow_create_task_ex(const char* name, size_t size, size_t ali
     if (!out || !fn || !size || !alignment || (alignment & (alignment - 1)))
         return nullptr;
     try {
-        auto  owner = std::make_shared<XFlowTaskNode>(fn, nullptr);
-        auto& n     = owner->mStorage;
-        n.mName     = name ? name : "";
-        owner->mUsesInlinePayload =
-            size <= XFlowTaskNode::kInlinePayloadCapacity && alignment <= alignof(std::max_align_t);
+        auto  owner   = std::make_shared<XFlowTaskNode>(fn);
+        auto& n       = owner->mStorage;
+        n.mName       = name ? name : "";
         void* storage = owner->mInlinePayload;
-        if (!owner->mUsesInlinePayload) {
+        if (size > XFlowTaskNode::kInlinePayloadCapacity || alignment > alignof(std::max_align_t)) {
             if (alignment > alignof(std::max_align_t))
                 storage = ::operator new(size, std::align_val_t(alignment));
             else
@@ -551,7 +494,11 @@ int au_flow_commit_task_payload(XFlowTaskHandle h) noexcept
     });
 }
 
-void au_flow_retain_task(XFlowTaskHandle h) noexcept { retain(h); }
+void au_flow_retain_task(XFlowTaskHandle h) noexcept
+{
+    if (h)
+        h->mRefs.fetch_add(1, std::memory_order_relaxed);
+}
 
 void au_flow_release_task(XFlowTaskHandle h) noexcept
 {
@@ -562,7 +509,15 @@ void au_flow_release_task(XFlowTaskHandle h) noexcept
     }
 }
 
-int au_flow_add_dependency(XFlowTaskHandle a, XFlowTaskHandle b) noexcept { return link(node(a), node(b)); }
+int au_flow_add_dependency(XFlowTaskHandle a, XFlowTaskHandle b) noexcept
+{
+    const auto pred = node(a), succ = node(b);
+    return au::flow::detail::boundary([&]() -> int {
+        auto&                       c = au::flow::detail::core();
+        std::lock_guard<std::mutex> lock(c.mMutex);
+        return c.edge(pred, succ);
+    });
+}
 
 int au_flow_enqueue_task(XFlowTaskHandle h) noexcept
 {
@@ -614,99 +569,6 @@ int64_t au_flow_get_task_cost_us(XFlowTaskHandle h) noexcept
     } catch (...) {
         return 0;
     }
-}
-
-XFlowGroupHandle au_flow_create_group(const char* name) noexcept
-{
-    try {
-        auto g = std::make_unique<XFlowGroupNode>();
-        for (int i = 0; i < 2; ++i)
-            g->mNodes.push_back(
-                std::make_shared<au::flow::detail::Node>(name, nullptr, nullptr, &au::flow::detail::discard));
-        g->mEntry = g->mNodes.front();
-        g->mExit  = g->mNodes.back();
-        g->mBuild = link(head(g.get()), tail(g.get()));
-        return g.release();
-    } catch (...) {
-        return nullptr;
-    }
-}
-
-void au_flow_retain_group(XFlowGroupHandle h) noexcept { retain(h); }
-
-void au_flow_release_group(XFlowGroupHandle h) noexcept { release(h); }
-
-int au_flow_group_add_task(XFlowGroupHandle g, XFlowTaskHandle h) noexcept
-{
-    if (!g)
-        return au::err::kErrorInvalidParam;
-    return au::flow::detail::boundary([&]() -> int {
-        auto&                       c = au::flow::detail::core();
-        std::lock_guard<std::mutex> lock(c.mMutex);
-        if (head(g)->mState != au::flow::detail::State::Created)
-            return au::err::kErrorStateInvalid;
-        int code = au::err::kErrorInvalidParam;
-        if (h && std::find(g->mNodes.begin(), g->mNodes.end(), node(h)) != g->mNodes.end())
-            return 0;
-        if (h && (node(h)->mGroupExit.expired() || node(h)->mState != au::flow::detail::State::Created)) {
-            try {
-                au::flow::detail::reserveOne(g->mNodes);
-                code = node(h)->mState == au::flow::detail::State::Created ? c.edge(head(g), node(h)) : 0;
-                if (!code)
-                    code = c.edge(node(h), tail(g));
-                if (!code) {
-                    g->mNodes.insert(g->mNodes.end() - 1, node(h));
-                    if (node(h)->mState == au::flow::detail::State::Created)
-                        node(h)->mGroupExit = tail(g);
-                }
-            } catch (...) {
-                code = au::err::kErrorNoMemory;
-            }
-        }
-        if (!g->mBuild)
-            g->mBuild = code;
-        if (code) {
-            std::lock_guard<std::mutex> state(g->mEntry->mMutex);
-            if (!g->mEntry->mBuild)
-                g->mEntry->mBuild = g->mBuild;
-        }
-        return code;
-    });
-}
-
-int au_flow_add_task_group_dependency(XFlowTaskHandle a, XFlowGroupHandle b) noexcept { return incoming(node(a), b); }
-
-int au_flow_add_group_dependency(XFlowGroupHandle a, XFlowGroupHandle b) noexcept { return incoming(tail(a), b); }
-
-int au_flow_add_group_task_dependency(XFlowGroupHandle a, XFlowTaskHandle b) noexcept { return link(tail(a), node(b)); }
-
-int au_flow_enqueue_group(XFlowGroupHandle g) noexcept
-{
-    if (!g)
-        return au::err::kErrorInvalidParam;
-    return au::flow::detail::boundary([&]() -> int {
-        auto& c = au::flow::detail::core();
-        auto  l = submissionLock(c);
-        return g->mBuild ? g->mBuild : c.submit(tail(g));
-    });
-}
-
-int au_flow_wait_group(XFlowGroupHandle g) noexcept
-{
-    if (!g)
-        return au::err::kErrorInvalidParam;
-    return au::flow::detail::boundary([&]() -> int {
-        auto& c = au::flow::detail::core();
-        {
-            std::lock_guard<std::mutex> lock(c.mMutex);
-            if (g->mBuild)
-                return g->mBuild;
-            for (auto& n : g->mNodes)
-                if (n->mBuild)
-                    return n->mBuild;
-        }
-        return c.wait(tail(g));
-    });
 }
 
 void au_flow_parallelize_tile_ex(size_t range, size_t tile, XFlowTileExFn fn, void* data) noexcept
@@ -833,8 +695,7 @@ int au_flow_set_affinity_mask(uint64_t mask) noexcept
         if (mask & ~c.mDefaultMask)
             return au::err::kErrorInvalidParam;
         std::lock_guard<std::mutex> lock(c.mMutex);
-        c.mMask            = mask ? mask : c.mDefaultMask;
-        c.mDefaultAffinity = !mask;
+        c.mRequestedMask = mask;
         c.mAffinityGen.fetch_add(1, std::memory_order_release);  // Workers acquire the accepted configuration.
         c.mChanged.notify_all();
         return 0;
@@ -846,7 +707,7 @@ uint64_t au_flow_get_affinity_mask() noexcept
     try {
         auto&                       c = au::flow::detail::core();
         std::lock_guard<std::mutex> lock(c.mMutex);
-        return c.mMask;
+        return c.mRequestedMask ? c.mRequestedMask : c.mDefaultMask;
     } catch (...) {
         return 0;
     }

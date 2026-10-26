@@ -38,18 +38,6 @@ void expectCreated(std::initializer_list<au::flow::Task> tasks)
         EXPECT_EQ(task.nativeHandle()->mNode->mState, au::flow::detail::State::Created);
 }
 
-// Keep the released C Group contract covered without restoring the old C++ facade.
-typedef std::unique_ptr<XFlowGroupNode, void (*)(XFlowGroupHandle)> LegacyGroup;
-
-LegacyGroup legacyGroup(std::initializer_list<au::flow::Task> members)
-{
-    LegacyGroup group(au_flow_create_group(nullptr), &au_flow_release_group);
-    for (const auto& task : members)
-        if (au_flow_group_add_task(group.get(), task.nativeHandle()))
-            break;
-    return group;
-}
-
 struct Member
 {
     int add(int& value, int amount) const
@@ -155,7 +143,6 @@ TEST_F(XFlow, InlineAndLargePayloadLifetime)
         auto small = flow.create(PayloadProbe<1>(calls, destructors));
         ASSERT_TRUE(small.valid());
         auto* handle = small.nativeHandle();
-        EXPECT_TRUE(handle->mUsesInlinePayload);
         EXPECT_EQ(handle->mNode.get(), &handle->mStorage);
         EXPECT_EQ(handle->mNode->mPayload.get(), handle->mInlinePayload);
         ASSERT_EQ(flow.enqueue(small).wait(), 0);
@@ -166,7 +153,7 @@ TEST_F(XFlow, InlineAndLargePayloadLifetime)
     {
         auto large = flow.create(PayloadProbe<256>(calls, destructors));
         ASSERT_TRUE(large.valid());
-        EXPECT_FALSE(large.nativeHandle()->mUsesInlinePayload);
+        EXPECT_NE(large.nativeHandle()->mNode->mPayload.get(), large.nativeHandle()->mInlinePayload);
         ASSERT_EQ(flow.enqueue(large).wait(), 0);
         EXPECT_EQ(large.wait(), 0);
     }
@@ -174,7 +161,7 @@ TEST_F(XFlow, InlineAndLargePayloadLifetime)
     {
         auto aligned = flow.create(PayloadProbe<1, 128>(calls, destructors));
         ASSERT_TRUE(aligned.valid());
-        EXPECT_FALSE(aligned.nativeHandle()->mUsesInlinePayload);
+        EXPECT_NE(aligned.nativeHandle()->mNode->mPayload.get(), aligned.nativeHandle()->mInlinePayload);
         EXPECT_EQ(reinterpret_cast<uintptr_t>(aligned.nativeHandle()->mNode->mPayload.get()) % 128, 0u);
         ASSERT_EQ(flow.enqueue(aligned).wait(), 0);
         EXPECT_EQ(aligned.wait(), 0);
@@ -263,8 +250,7 @@ TEST_F(XFlow, CompletedDependenciesDoNotRetainHistory)
 
     auto&             core = au::flow::detail::core();
     std::atomic<bool> destroyed{false};
-    auto              upstream  = au::flow::detail::NodePtr(new au::flow::detail::Node(
-                                                  nullptr, [](void*) { return 0; }, nullptr, nullptr),
+    auto              upstream  = au::flow::detail::NodePtr(new au::flow::detail::Node([](void*) { return 0; }),
                                                             [&](au::flow::detail::Node* node) {
                                                   // Reentrant scheduler access would deadlock if the last predecessor
                                                   // owner died under its lock.
@@ -620,128 +606,29 @@ TEST_F(XFlow, MixedStateExpressionSubmission)
     EXPECT_EQ(done.code(), 0);
 }
 
-TEST_F(XFlow, LegacyGroupCompatibility)
-{
-    auto&            flow = au::flow::Flow::get();
-    std::atomic<int> count{0};
-    auto             a     = flow.create([&] { count.fetch_add(1, std::memory_order_relaxed); });
-    auto             b     = flow.create([&] { count.fetch_add(1, std::memory_order_relaxed); });
-    auto             c     = flow.create([&] { count.fetch_add(1, std::memory_order_relaxed); });
-    auto             d     = flow.create([&] { EXPECT_EQ(count.load(std::memory_order_relaxed), 3); });
-    auto             first = legacyGroup({b, b}), second = legacyGroup({c});
-    ASSERT_NE(first, nullptr);
-    ASSERT_NE(second, nullptr);
-    ASSERT_EQ(au_flow_add_task_group_dependency(a.nativeHandle(), first.get()), 0);
-    ASSERT_EQ(au_flow_add_group_dependency(first.get(), second.get()), 0);
-    ASSERT_EQ(au_flow_add_group_task_dependency(second.get(), d.nativeHandle()), 0);
-    ASSERT_EQ(flow.enqueue(d).wait(), 0);
-    EXPECT_EQ(au_flow_wait_group(first.get()), 0);
-    EXPECT_EQ(au_flow_wait_group(second.get()), 0);
-    EXPECT_EQ(au_flow_enqueue_group(second.get()), 0);
-    EXPECT_FALSE(b.nativeHandle()->mNode->mGroupExit.expired());
-    EXPECT_EQ(au_flow_enqueue_task(b.nativeHandle()), 0);  // Accepted members bypass Draft group-boundary checks.
-    EXPECT_EQ(flow.enqueue(b).wait(), 0);
-    EXPECT_EQ(count.load(std::memory_order_relaxed), 3);
-
-    auto transientMember = flow.create([] {}), transientTail = flow.create([] {});
-    {
-        auto transient = legacyGroup({transientMember});
-        ASSERT_EQ(au_flow_add_group_task_dependency(transient.get(), transientTail.nativeHandle()), 0);
-    }
-    EXPECT_EQ(flow.enqueue(transientMember).wait(), au::err::kErrorInvalidParam);
-    EXPECT_EQ(flow.enqueue(transientTail).wait(), 0);  // The tail retained the abandoned group's exit.
-
-    auto x = flow.create([] {}), y = flow.create([] {}), tail = flow.create([] {});
-    auto group = legacyGroup({x, y});
-    ASSERT_EQ(x.precede(tail), 0);
-    EXPECT_EQ(flow.enqueue(x).wait(), au::err::kErrorInvalidParam);
-    EXPECT_EQ(flow.enqueue(tail).wait(), au::err::kErrorInvalidParam);
-    EXPECT_EQ(flow.enqueueAfter(x, [] {}).wait(), au::err::kErrorInvalidParam);
-    expectCreated({x, y, tail});
-    ASSERT_EQ(au_flow_enqueue_group(group.get()), 0);
-    ASSERT_EQ(au_flow_wait_group(group.get()), 0);
-    EXPECT_EQ(flow.enqueue(tail).wait(), 0);
-
-    auto               orphan = flow.create([] {});
-    std::weak_ptr<int> released;
-    {
-        auto owner     = std::make_shared<int>(1);
-        released       = owner;
-        auto abandoned = legacyGroup({orphan, flow.create([owner] {})});
-    }
-    EXPECT_TRUE(released.expired());
-    EXPECT_EQ(flow.enqueue(orphan).wait(), 0);
-    auto regrouped = flow.create([] {});
-    {
-        auto abandoned = legacyGroup({regrouped});
-    }
-    auto replacement = legacyGroup({regrouped});
-    ASSERT_EQ(au_flow_enqueue_group(replacement.get()), 0);
-    EXPECT_EQ(au_flow_wait_group(replacement.get()), 0);
-
-    std::atomic<int> stage{0};
-    auto             upstream = flow.create([&] { stage.store(1, std::memory_order_relaxed); });
-    auto             survivor = flow.create([&] { EXPECT_EQ(stage.load(std::memory_order_relaxed), 1); });
-    {
-        auto abandoned = legacyGroup({survivor});
-        ASSERT_EQ(au_flow_add_task_group_dependency(upstream.nativeHandle(), abandoned.get()), 0);
-    }
-    EXPECT_EQ(flow.enqueue(survivor).wait(), 0);
-    EXPECT_TRUE(upstream.done());
-
-    auto guarded  = flow.create([] {});
-    auto retained = legacyGroup({guarded});
-    au_flow_retain_group(retained.get());
-    {
-        LegacyGroup copy(retained.get(), &au_flow_release_group);
-    }
-    EXPECT_EQ(flow.enqueue(guarded).wait(), au::err::kErrorInvalidParam);
-    expectCreated({guarded});
-    retained.reset();
-    EXPECT_EQ(flow.enqueue(guarded).wait(), 0);
-
-    auto failed = flow.create([] {});
-    {
-        auto abandoned = legacyGroup({failed});
-        EXPECT_EQ(au_flow_group_add_task(abandoned.get(), nullptr), au::err::kErrorInvalidParam);
-        EXPECT_EQ(au_flow_enqueue_group(abandoned.get()), au::err::kErrorInvalidParam);
-        EXPECT_EQ(au_flow_wait_group(abandoned.get()), au::err::kErrorInvalidParam);
-    }
-    EXPECT_EQ(flow.enqueue(failed).wait(), au::err::kErrorInvalidParam);
-    expectCreated({failed});
-}
-
-TEST_F(XFlow, LargeFanInAndLegacyGroupGrowth)
+TEST_F(XFlow, LargeFanInGrowth)
 {
     auto&            flow = au::flow::Flow::get();
     std::atomic<int> calls{0};
-    auto             sink        = flow.create([&] { EXPECT_EQ(calls.load(std::memory_order_relaxed), 256); });
-    std::size_t      predGrowths = 0, groupGrowths = 0;
-    auto             group = legacyGroup({});
-    ASSERT_NE(group, nullptr);
+    auto             sink    = flow.create([&] { EXPECT_EQ(calls.load(std::memory_order_relaxed), 256); });
+    std::size_t      growths = 0;
     for (int i = 0; i < 256; ++i) {
-        auto        task            = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
-        std::size_t oldPredCapacity = 0, oldGroupCapacity = 0;
+        auto        task     = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+        std::size_t capacity = 0;
         {
             auto&                       core = au::flow::detail::core();
             std::lock_guard<std::mutex> lock(core.mMutex);
-            oldPredCapacity  = sink.nativeHandle()->mNode->mPreds.capacity();
-            oldGroupCapacity = group->mNodes.capacity();
+            capacity = sink.nativeHandle()->mNode->mPreds.capacity();
         }
         ASSERT_EQ(task.precede(sink), 0);
-        ASSERT_EQ(au_flow_group_add_task(group.get(), task.nativeHandle()), 0);
         {
             auto&                       core = au::flow::detail::core();
             std::lock_guard<std::mutex> lock(core.mMutex);
-            predGrowths += oldPredCapacity != sink.nativeHandle()->mNode->mPreds.capacity();
-            groupGrowths += oldGroupCapacity != group->mNodes.capacity();
+            growths += capacity != sink.nativeHandle()->mNode->mPreds.capacity();
         }
     }
-    EXPECT_LT(predGrowths, 16u);
-    EXPECT_LT(groupGrowths, 16u);  // Large fan-in must not reallocate once per edge/member.
-    ASSERT_EQ(au_flow_add_group_task_dependency(group.get(), sink.nativeHandle()), 0);
-    EXPECT_EQ(flow.enqueue(sink).wait(), 0);
-    EXPECT_EQ(au_flow_wait_group(group.get()), 0);
+    EXPECT_LT(growths, 16u);                  // Large fan-in must not reallocate once per edge.
+    EXPECT_EQ(flow.enqueue(sink).wait(), 0);  // The DAG retains inputs after their public handles are gone.
 }
 
 TEST_F(XFlow, ClosureValidationIsAtomic)
@@ -1050,6 +937,13 @@ TEST_F(XFlow, FlatRangesSharingAndDiscardedExpressions)
     EXPECT_EQ(flow.enqueue(second).wait(), 0);
     EXPECT_TRUE(b.done());
 
+    auto            common = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    au::flow::Tasks firstJoin{common, flow.create([] {})}, secondJoin{common, flow.create([] {})};
+    EXPECT_EQ(flow.enqueue(common).wait(), 0);  // Expressions do not reserve or own exclusive membership.
+    EXPECT_EQ(flow.enqueue(firstJoin).wait(), 0);
+    EXPECT_EQ(flow.enqueue(secondJoin).wait(), 0);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 65);  // Both joins share the same execution.
+
     auto abandoned = flow.create([] {}), untouched = flow.create([] {});
     {
         auto discarded = abandoned | untouched;
@@ -1068,7 +962,7 @@ TEST_F(XFlow, FlatRangesSharingAndDiscardedExpressions)
     auto                         serialTail = flow.create([] {});
     std::vector<au::flow::Tasks> fragments{duplicate >> serialTail, duplicate, au::flow::Tasks{}};
     EXPECT_EQ(flow.enqueue(au::flow::Tasks::parallel(fragments.begin(), fragments.end())).wait(), 0);
-    EXPECT_EQ(calls.load(std::memory_order_relaxed), 65);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 66);
 }
 
 TEST_F(XFlow, ExpressionCreationAndSubmissionErrors)
@@ -1148,7 +1042,7 @@ TEST_F(XFlow, ErrorShortCircuiting)
     EXPECT_EQ(ran.load(std::memory_order_relaxed), 0);
 }
 
-TEST_F(XFlow, RandomizedCycleChecksWithCompletedTasksAndGroups)
+TEST_F(XFlow, RandomizedCycleChecksWithCompletedTasksAndForkJoins)
 {
     auto&        flow = au::flow::Flow::get();
     std::mt19937 random(1729);
@@ -1156,7 +1050,7 @@ TEST_F(XFlow, RandomizedCycleChecksWithCompletedTasksAndGroups)
         std::vector<au::flow::Task>            tasks;
         std::vector<au::flow::detail::NodePtr> nodes;
         std::array<std::array<bool, 32>, 32>   edges{};
-        for (unsigned i = 0; i < 24; ++i)
+        for (unsigned i = 0; i < 28; ++i)
             tasks.push_back(flow.create([] {}));
         for (int code : {0, -123, 0, 17}) {
             auto done = flow.enqueue([code] { return code; });
@@ -1165,26 +1059,12 @@ TEST_F(XFlow, RandomizedCycleChecksWithCompletedTasksAndGroups)
         }
         for (const auto& task : tasks)
             nodes.push_back(task.nativeHandle()->mNode);
-        auto first  = legacyGroup({tasks[0], tasks[1]});
-        auto second = legacyGroup({tasks[2], tasks[3]});
-        ASSERT_NE(first, nullptr);
-        ASSERT_NE(second, nullptr);
-        auto recordGroup = [&](const LegacyGroup& group, std::size_t member) {
-            const auto entry = nodes.size(), exit = entry + 1;
-            nodes.push_back(group->mEntry);
-            nodes.push_back(group->mExit);
-            edges[entry][exit] = true;
-            for (std::size_t i : {member, member + 1}) {
-                edges[entry][i] = true;
-                edges[i][exit]  = true;
-            }
-        };
-        const auto firstEntry = nodes.size();
-        recordGroup(first, 0);
-        const auto secondEntry = nodes.size();
-        recordGroup(second, 2);
-        ASSERT_EQ(au_flow_add_group_dependency(first.get(), second.get()), 0);
-        edges[firstEntry + 1][secondEntry] = true;
+        const std::pair<unsigned, unsigned> seeds[] = {{0, 1}, {0, 2}, {1, 3}, {2, 3}, {3, 4},
+                                                       {4, 5}, {4, 6}, {5, 7}, {6, 7}};
+        for (const auto& edge : seeds) {
+            ASSERT_EQ(tasks[edge.first].precede(tasks[edge.second]), 0);
+            edges[edge.first][edge.second] = true;
+        }
         {
             auto abandoned = flow.create([] {});
             ASSERT_EQ(tasks[14].precede(abandoned), 0);
@@ -1374,6 +1254,18 @@ TEST_F(XFlow, CpuAffinity)
             EXPECT_EQ(flow.setAffinity(outside), au::err::kErrorInvalidParam);
         }
     }
-    EXPECT_EQ(flow.setAffinity(), 0);
+    ASSERT_EQ(flow.setAffinity(), 0);
+    EXPECT_EQ(flow.getAffinityMask(), allowed);
+    std::vector<uint32_t> expected(count), restored(count);
+    ASSERT_EQ(au::sys::getThreadAffinity(expected.data(), expected.size(), count), 0);
+    auto worker = flow.enqueue([&] {
+        std::size_t size = 0;
+        EXPECT_EQ(au::sys::getThreadAffinity(restored.data(), restored.size(), size), 0);
+        restored.resize(size);
+    });
+    // A zero request restores the complete default CPU list, including CPUs numbered above 63.
+    EXPECT_TRUE(until([&] { return worker.done(); }));
+    EXPECT_EQ(worker.wait(), 0);
+    EXPECT_EQ(restored, expected);
 }
 #endif

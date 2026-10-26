@@ -50,22 +50,18 @@ struct Node
     State                                 mState = State::Created;
     int                                   mBuild = 0, mDependencyError = 0, mCode = 0;
     std::size_t                           mPending = 0;
-    std::weak_ptr<Node>                   mGroupExit;  // Validate whole-group submission without an ownership cycle.
     std::vector<NodePtr>                  mPreds;
     std::vector<std::weak_ptr<Node>>      mSuccessors;
     Node *                                mNext = nullptr, *mWaiting = nullptr, *mExecuting = nullptr;
     std::list<NodePtr>::iterator          mAccepted;
-    XFlowTaskFn                           mFunction;
+    XFlowTaskFn                           mFunction;  // Task factories reject null functions.
     std::unique_ptr<void, PayloadDeleter> mPayload;
     XFlowDeleterFn                        mPendingDestroy = nullptr;
     std::atomic<bool>                     mPayloadReady{true};
     std::string                           mName;
     std::int64_t                          mCost = 0;
 
-    Node(const char* name, XFlowTaskFn fn, void* data, XFlowDeleterFn destroy)
-        : mFunction(fn), mPayload(data, PayloadDeleter{destroy, 0}), mName(name ? name : "")
-    {
-    }
+    explicit Node(XFlowTaskFn fn) : mFunction(fn) {}
 };
 
 struct TileJob
@@ -81,7 +77,7 @@ struct TileJob
 
 // mMutex serializes graph edits, state transitions and worker/tile bookkeeping.
 // Node mutexes protect public queries and payload commit; state writes hold both.
-// Lock order: Core::mMutex -> node mutex(es). User callbacks and final owners are released outside both.
+// Lock order: Core::mMutex -> node mutex. User callbacks and final owners are released outside both.
 struct Core
 {
     std::mutex                           mMutex;
@@ -93,9 +89,8 @@ struct Core
     std::size_t                          mCount = 0, mIdle = 0, mTileCallers = 0;
     std::vector<std::uint32_t>           mDefaultCpus;
     bool                                 mClosing = false, mStop = false, mReleasing = false;
-    std::uint64_t                        mMask = 0, mDefaultMask = 0;
-    bool                                 mDefaultAffinity = true;
-    int                                  mAffinityStatus  = 0;
+    std::uint64_t                        mRequestedMask = 0, mDefaultMask = 0;  // Zero restores all default CPUs.
+    int                                  mAffinityStatus = 0;
     std::atomic<std::uint64_t>           mAffinityGen{1};
     Core();
 
@@ -140,16 +135,8 @@ struct AU_LOCAL XFlowTaskNode
     // One C owning pin, explicitly cleared by the final C release. Aliasing
     // shared owners in the DAG/accepted list retain this entire allocation.
     au::flow::detail::NodePtr mNode;
-    bool                      mUsesInlinePayload = false;
 
-    XFlowTaskNode(XFlowTaskFn fn, XFlowDeleterFn destroy) : mStorage(nullptr, fn, nullptr, destroy) {}
+    explicit XFlowTaskNode(XFlowTaskFn fn) : mStorage(fn) {}
 };
 
-struct AU_LOCAL XFlowGroupNode
-{
-    std::atomic<std::size_t>               mRefs{1};
-    au::flow::detail::NodePtr              mEntry, mExit;
-    std::vector<au::flow::detail::NodePtr> mNodes;
-    int                                    mBuild = 0;
-};
 #endif

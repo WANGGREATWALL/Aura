@@ -277,7 +277,7 @@ private:
 /**
  * @brief Serial/parallel expression sharing task nodes; an empty expression is an identity.
  * @note Copies share nodes and later composition accumulates dependencies; nodes run only once.
- *       This is not a mutable group. Wait on the Task returned by Flow::enqueue().
+ *       Wait on the Task returned by Flow::enqueue().
  */
 class Tasks
 {
