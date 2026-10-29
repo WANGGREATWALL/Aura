@@ -34,6 +34,24 @@
  * creates k-1 joins linked in series; Tasks{...} or Tasks::parallel(first, last) creates one
  * join for all branches and sorts the heads once.
  *
+ * @par Example: flat parallel versus binary |
+ *        Tasks::parallel(first, last) / Tasks{a, b, c, d}: one join, n edges
+ *
+ *             a ──┐
+ *             b ──┤
+ *             c ──┼──> J
+ *             d ──┘
+ *
+ *        a | b | c | d is left-associative: n-1 joins in series, 2(n-1) edges
+ *
+ *             a ──┐
+ *                 ├──> J1 ──┐
+ *             b ──┘         │
+ *                           ├──> J2 ──┐
+ *             c ────────────┘         │
+ *                                     ├──> J3
+ *             d ──────────────────────┘
+ *
  * @par Ownership
  * Arguments are decayed copies or moves; std::ref and borrowing views do not extend storage
  * lifetime, and moving a borrowed view still borrows. Releasing task or expression handles only drops
@@ -389,7 +407,8 @@ inline Tasks operator>>(const Tasks& a, const Tasks& b)
  *       real node, one more dispatch hop on the way to the exit, and a copy plus re-sort of the
  *       accumulated head list, so construction is superlinear. Tasks{...} and Tasks::parallel()
  *       build one join for all branches and sort once. Heads, exit condition and skip-on-failure
- *       behavior are the same either way; only graph topology and cost differ.
+ *       behavior are the same either way; only graph topology and cost differ. The file-level
+ *       Example draws both topologies.
  */
 inline Tasks operator|(const Tasks& a, const Tasks& b);
 
