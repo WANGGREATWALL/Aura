@@ -14,8 +14,9 @@ namespace flow AU_LOCAL {
 namespace detail {
 thread_local Node*         gCurrent     = nullptr;
 thread_local std::size_t   gWorkerIndex = 0;
-thread_local unsigned      gTileDepth = 0, gDepth = 0;
-thread_local std::uint64_t gAffinity = 0;
+thread_local unsigned      gTileDepth   = 0;
+thread_local unsigned      gDepth       = 0;
+thread_local std::uint64_t gAffinity    = 0;
 
 template <class F>
 int boundary(F fn, const char* name = nullptr) noexcept
@@ -511,7 +512,8 @@ void au_flow_release_task(XFlowTaskHandle h) noexcept
 
 int au_flow_add_dependency(XFlowTaskHandle a, XFlowTaskHandle b) noexcept
 {
-    const auto pred = node(a), succ = node(b);
+    const auto pred = node(a);
+    const auto succ = node(b);
     return au::flow::detail::boundary([&]() -> int {
         auto&                       c = au::flow::detail::core();
         std::lock_guard<std::mutex> lock(c.mMutex);

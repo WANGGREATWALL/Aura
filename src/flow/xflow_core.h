@@ -47,12 +47,16 @@ struct PayloadDeleter
 struct Node
 {
     std::mutex                            mMutex;
-    State                                 mState = State::Created;
-    int                                   mBuild = 0, mDependencyError = 0, mCode = 0;
-    std::size_t                           mPending = 0;
+    State                                 mState           = State::Created;
+    int                                   mBuild           = 0;
+    int                                   mDependencyError = 0;
+    int                                   mCode            = 0;
+    std::size_t                           mPending         = 0;
     std::vector<NodePtr>                  mPreds;
     std::vector<std::weak_ptr<Node>>      mSuccessors;
-    Node *                                mNext = nullptr, *mWaiting = nullptr, *mExecuting = nullptr;
+    Node*                                 mNext      = nullptr;
+    Node*                                 mWaiting   = nullptr;
+    Node*                                 mExecuting = nullptr;
     std::list<NodePtr>::iterator          mAccepted;
     XFlowTaskFn                           mFunction;  // Task factories reject null functions.
     std::unique_ptr<void, PayloadDeleter> mPayload;
@@ -68,11 +72,14 @@ struct TileJob
 {
     std::atomic<std::size_t> mNext{0};
     std::atomic<std::size_t> mHelpers{0};
-    std::size_t              mRange, mTile, mTotal;
+    std::size_t              mRange;
+    std::size_t              mTile;
+    std::size_t              mTotal;
     XFlowTileExFn            mFunction;
     void*                    mData;
     TileJob*                 mLink = nullptr;
-    void                     run(std::size_t worker) noexcept;
+
+    void run(std::size_t worker) noexcept;
 };
 
 // mMutex serializes graph edits, state transitions and worker/tile bookkeeping.
@@ -83,40 +90,38 @@ struct Core
     std::mutex                           mMutex;
     std::condition_variable              mChanged;
     std::list<NodePtr>                   mAccepted;
-    Node *                               mHead = nullptr, *mTail = nullptr;
+    Node*                                mHead  = nullptr;
+    Node*                                mTail  = nullptr;
     TileJob*                             mTiles = nullptr;
     std::array<std::thread, kMaxWorkers> mThreads;
-    std::size_t                          mCount = 0, mIdle = 0, mTileCallers = 0;
+    std::size_t                          mCount       = 0;
+    std::size_t                          mIdle        = 0;
+    std::size_t                          mTileCallers = 0;
     std::vector<std::uint32_t>           mDefaultCpus;
-    bool                                 mClosing = false, mStop = false, mReleasing = false;
-    std::uint64_t                        mRequestedMask = 0, mDefaultMask = 0;  // Zero restores all default CPUs.
+    bool                                 mClosing        = false;
+    bool                                 mStop           = false;
+    bool                                 mReleasing      = false;
+    std::uint64_t                        mRequestedMask  = 0;  // Zero restores all default CPUs.
+    std::uint64_t                        mDefaultMask    = 0;
     int                                  mAffinityStatus = 0;
     std::atomic<std::uint64_t>           mAffinityGen{1};
-    Core();
 
+    Core();
     ~Core();
 
     // Graph/queue helpers below require mMutex; they do not acquire it themselves.
-    bool reaches(Node*, Node*, bool waits = false);
-
-    int edge(const NodePtr&, const NodePtr&);
-
-    int submit(const NodePtr&);
-
-    void ready(Node*);
-
-    void grow();
-
+    bool     reaches(Node*, Node*, bool waits = false);
+    int      edge(const NodePtr&, const NodePtr&);
+    int      submit(const NodePtr&);
+    void     ready(Node*);
+    void     grow();
     TileJob* tile();
 
     // Temporarily unlock for OS/user work; the supplied lock is owned on entry and return.
     void applyAffinity(std::unique_lock<std::mutex>&);
-
     bool step(std::unique_lock<std::mutex>&);
-
     void worker(std::size_t index);
-
-    int wait(const NodePtr&);
+    int  wait(const NodePtr&);
 };
 
 Core& core();
@@ -132,6 +137,7 @@ struct AU_LOCAL XFlowTaskNode
     alignas(std::max_align_t) unsigned char mInlinePayload[kInlinePayloadCapacity];
 
     au::flow::detail::Node mStorage;
+
     // One C owning pin, explicitly cleared by the final C release. Aliasing
     // shared owners in the DAG/accepted list retain this entire allocation.
     au::flow::detail::NodePtr mNode;
