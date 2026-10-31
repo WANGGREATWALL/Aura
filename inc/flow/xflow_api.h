@@ -10,12 +10,6 @@
  * dependency. Once accepted, it is pending (waiting for dependencies), running, or done.
  * Enqueueing an accepted task returns 0 and never executes it again.
  *
- * @par Group model
- * A group has two internal gates: an entry gate and an exit gate. Adding an unsubmitted member
- * to a group that has not been enqueued links entry -> member -> exit. Adding an accepted task
- * to that group links task -> exit only, because its execution order is already fixed. A group
- * is in use while any owning handle exists or a downstream task or group depends on its exit.
- *
  * @note Completion means the callable returned or the task was skipped, and its payload was
  *       destroyed. Device work the callable starts asynchronously is not tracked.
  * @note All entry points are noexcept and report failures as negative error codes; no C++
@@ -38,11 +32,6 @@ extern "C" {
  * @note Release does not cancel or wait. Keep an owned reference while using the handle.
  */
 typedef struct XFlowTaskNode* XFlowTaskHandle;
-/**
- * @brief Owning group handle; keeps its member tasks alive.
- * @note Retain/release each owned reference. Release does not cancel or wait for members.
- */
-typedef struct XFlowGroupNode* XFlowGroupHandle;
 /// Task body: return 0 on success, otherwise an error passed to dependents.
 typedef int (*XFlowTaskFn)(void* user_data);
 /// Payload cleanup callback; must not throw.
@@ -125,11 +114,6 @@ AU_API int au_flow_add_dependency(XFlowTaskHandle pred, XFlowTaskHandle succ) XF
  * @note The upstream walk collects unsubmitted predecessors and stops at any predecessor that is
  *       already accepted (pending, running, or done). Accepted tasks are not enqueued again or
  *       executed twice; their own predecessors were accepted at the same time.
- * @note An unsubmitted task that belongs to a group cannot be enqueued alone while that group is
- *       still in use. Enqueue the whole group, or a successor of the group, so that its exit is
- *       part of the same enqueue batch; otherwise this returns kErrorInvalidParam. After the group
- *       is released and no downstream task depends on its exit, the task may be enqueued alone,
- *       but its existing dependencies and any saved build error still apply.
  * @note Completion means the callable returned or the task was skipped, and its payload was
  *       destroyed. Device work the callable starts asynchronously is not tracked.
  */
@@ -174,79 +158,6 @@ AU_API int au_flow_task_done(XFlowTaskHandle task) XFLOW_NOEXCEPT;
  * @note Does not wait. Wall time excludes queue/dependency delay; a completed task can also report 0.
  */
 AU_API int64_t au_flow_get_task_cost_us(XFlowTaskHandle task) XFLOW_NOEXCEPT;
-
-/**
- * @brief Create an empty task group for batch enqueue and completion.
- * @param name Optional group name; copied on creation.
- * @return An owned group handle, or null on failure.
- */
-AU_API XFlowGroupHandle au_flow_create_group(const char* name) XFLOW_NOEXCEPT;
-
-AU_API void au_flow_retain_group(XFlowGroupHandle group) XFLOW_NOEXCEPT;
-
-AU_API void au_flow_release_group(XFlowGroupHandle group) XFLOW_NOEXCEPT;
-
-/**
- * @brief Add a task that the group must wait for.
- * @param group Group that has not been enqueued.
- * @param task Member task; duplicate additions are ignored.
- * @return 0 on success, or an argument, state, or dependency error.
- * @note An unsubmitted task can belong to only one group that is still in use. It can join a new
- *       group after the previous group is released and no downstream task or group depends on its
- *       exit; its existing dependencies and saved build errors remain. An accepted task (pending,
- *       running, or done) can be added to several groups as a completion dependency: those
- *       groups wait for it, but its execution order is unchanged and it is not rerun.
- * @note The group keeps its first add error and remains failed; enqueue and wait report it.
- *       Duplicate additions are ignored. Create a new group to retry after a failed add.
- */
-AU_API int au_flow_group_add_task(XFlowGroupHandle group, XFlowTaskHandle task) XFLOW_NOEXCEPT;
-
-/**
- * @brief Start succ only after every task in pred finishes.
- * @param pred Predecessor group.
- * @param succ Successor group whose members must still be unsubmitted.
- * @return 0 on success, or an argument, state or cycle error.
- * @note Connects the predecessor group's exit to the successor group's entry; failures
- *       short-circuit downstream tasks.
- */
-AU_API int au_flow_add_group_dependency(XFlowGroupHandle pred, XFlowGroupHandle succ) XFLOW_NOEXCEPT;
-
-/**
- * @brief Start a group only after a predecessor task finishes.
- * @param pred Predecessor task.
- * @param succ Successor group whose members must still be unsubmitted.
- * @return 0 on success, or an argument, state or cycle error.
- * @note Failures in pred short-circuit the successor group. Device completion is not tracked.
- */
-AU_API int au_flow_add_task_group_dependency(XFlowTaskHandle pred, XFlowGroupHandle succ) XFLOW_NOEXCEPT;
-
-/**
- * @brief Run a task only after every task in a group finishes.
- * @param pred Predecessor group.
- * @param succ Successor task; must still be unsubmitted.
- * @return 0 on success, or an argument, state or cycle error.
- * @note Failures in the group short-circuit succ.
- */
-AU_API int au_flow_add_group_task_dependency(XFlowGroupHandle pred, XFlowTaskHandle succ) XFLOW_NOEXCEPT;
-
-/**
- * @brief Atomically enqueue all unsubmitted group members and their upstream dependencies.
- * @param group Group to enqueue.
- * @return 0 if accepted, or the first build/enqueue error.
- * @note All collected tasks are validated before any is accepted: this call accepts either all
- *       of them or none. Members already accepted (pending, running, or done) are skipped and
- *       never rerun. A build error retained by the group also fails when a downstream task or
- *       group that depends on it is enqueued.
- */
-AU_API int au_flow_enqueue_group(XFlowGroupHandle group) XFLOW_NOEXCEPT;
-
-/**
- * @brief Wait for the group to complete.
- * @param group Group to wait for.
- * @return 0 if all work succeeds, a propagated task error, or a build/wait error.
- * @note Does not enqueue the group; has the same cooperative wait rules as au_flow_wait_task.
- */
-AU_API int au_flow_wait_group(XFlowGroupHandle group) XFLOW_NOEXCEPT;
 
 /**
  * @brief Run [0, range) as a synchronous parallel loop; returns after all tiles finish.

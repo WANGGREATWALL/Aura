@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -142,10 +143,9 @@ TEST_F(XFlow, InlineAndLargePayloadLifetime)
         auto small = flow.create(PayloadProbe<1>(calls, destructors));
         ASSERT_TRUE(small.valid());
         auto* handle = small.nativeHandle();
-        EXPECT_TRUE(handle->mUsesInlinePayload);
         EXPECT_EQ(handle->mNode.get(), &handle->mStorage);
         EXPECT_EQ(handle->mNode->mPayload.get(), handle->mInlinePayload);
-        ASSERT_EQ(flow.enqueue(small), 0);
+        ASSERT_EQ(flow.enqueue(small).wait(), 0);
         EXPECT_EQ(small.wait(), 0);
         EXPECT_EQ(destructors.load(std::memory_order_relaxed), 1);
     }
@@ -153,17 +153,17 @@ TEST_F(XFlow, InlineAndLargePayloadLifetime)
     {
         auto large = flow.create(PayloadProbe<256>(calls, destructors));
         ASSERT_TRUE(large.valid());
-        EXPECT_FALSE(large.nativeHandle()->mUsesInlinePayload);
-        ASSERT_EQ(flow.enqueue(large), 0);
+        EXPECT_NE(large.nativeHandle()->mNode->mPayload.get(), large.nativeHandle()->mInlinePayload);
+        ASSERT_EQ(flow.enqueue(large).wait(), 0);
         EXPECT_EQ(large.wait(), 0);
     }
 
     {
         auto aligned = flow.create(PayloadProbe<1, 128>(calls, destructors));
         ASSERT_TRUE(aligned.valid());
-        EXPECT_FALSE(aligned.nativeHandle()->mUsesInlinePayload);
+        EXPECT_NE(aligned.nativeHandle()->mNode->mPayload.get(), aligned.nativeHandle()->mInlinePayload);
         EXPECT_EQ(reinterpret_cast<uintptr_t>(aligned.nativeHandle()->mNode->mPayload.get()) % 128, 0u);
-        ASSERT_EQ(flow.enqueue(aligned), 0);
+        ASSERT_EQ(flow.enqueue(aligned).wait(), 0);
         EXPECT_EQ(aligned.wait(), 0);
     }
 
@@ -218,6 +218,104 @@ TEST_F(XFlow, InlineAndLargePayloadLifetime)
     ASSERT_NE(raw, nullptr);
     EXPECT_EQ(au_flow_enqueue_task(raw), au::err::kErrorNotReady);
     au_flow_release_task(raw);
+}
+
+TEST_F(XFlow, CompletedDependenciesDoNotRetainHistory)
+{
+    auto&                                                 flow = au::flow::Flow::get();
+    std::array<std::weak_ptr<au::flow::detail::Node>, 64> window;
+    std::atomic<int>                                      calls{0};
+    auto                                                  tail = flow.enqueue([] {});
+    ASSERT_EQ(tail.wait(), 0);
+    for (std::size_t i = 0; i < 100000; ++i) {
+        auto next = flow.enqueueAfter(tail, [&, i] {
+            calls.fetch_add(1, std::memory_order_relaxed);
+            return i == 50000 ? -123 : 0;
+        });
+        ASSERT_EQ(next.wait(), i < 50000 ? 0 : -123);
+        tail      = std::move(next);
+        auto& old = window[i % window.size()];
+        // Keep only a bounded weak window: make_shared coallocates the node and control block.
+        if (i >= window.size())
+            ASSERT_TRUE(until([&] { return old.expired(); }));
+        old = tail.nativeHandle()->mNode;
+    }
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 50001);  // Failed descendants were skipped too.
+    ASSERT_EQ(flow.releaseWorkers(), 0);
+    for (std::size_t i = 0; i < window.size(); ++i)
+        EXPECT_EQ(window[i].expired(), i != (99999 % window.size()));
+    tail = au::flow::Task();
+    for (const auto& weak : window)
+        EXPECT_TRUE(weak.expired());
+
+    auto&             core = au::flow::detail::core();
+    std::atomic<bool> destroyed{false};
+    auto              upstream  = au::flow::detail::NodePtr(new au::flow::detail::Node([](void*) { return 0; }),
+                                                            [&](au::flow::detail::Node* node) {
+                                                  // Reentrant scheduler access would deadlock if the last predecessor
+                                                  // owner died under its lock.
+                                                  {
+                                                      std::lock_guard<std::mutex> lock(core.mMutex);
+                                                  }
+                                                  delete node;
+                                                  destroyed.store(true, std::memory_order_release);
+                                              });
+    auto              successor = flow.create([] {});
+    {
+        std::lock_guard<std::mutex> lock(core.mMutex);
+        ASSERT_EQ(core.edge(upstream, successor.nativeHandle()->mNode), 0);
+        ASSERT_EQ(core.submit(successor.nativeHandle()->mNode), 0);
+    }
+    upstream.reset();
+    EXPECT_EQ(successor.wait(), 0);
+    EXPECT_TRUE(until([&] { return destroyed.load(std::memory_order_acquire); }));
+}
+
+TEST_F(XFlow, FailedResultsDoNotOwnNodes)
+{
+    auto&              flow = au::flow::Flow::get();
+    std::weak_ptr<int> lifetime;
+    auto               owner = std::make_shared<int>(1);
+    lifetime                 = owner;
+    auto failure             = flow.enqueueAfter(au::flow::Task(), [owner] {});
+    owner.reset();
+    EXPECT_TRUE(lifetime.expired());
+    EXPECT_FALSE(failure.valid());
+    EXPECT_TRUE(failure.done());
+    EXPECT_EQ(failure.nativeHandle(), nullptr);
+    EXPECT_EQ(failure.wait(), au::err::kErrorInvalidParam);
+    EXPECT_EQ(failure.costUs(), 0);
+    auto copy  = failure;
+    auto moved = std::move(copy);
+    EXPECT_EQ(moved.code(), au::err::kErrorInvalidParam);
+    EXPECT_FALSE(copy.valid());
+    EXPECT_FALSE(copy.done());
+
+    auto businessFailure = flow.enqueue([] { return -123; });
+    EXPECT_EQ(businessFailure.wait(), -123);
+    EXPECT_TRUE(businessFailure.valid());
+    EXPECT_TRUE(businessFailure.done());
+
+    int                      destructors = 0;
+    ThrowingPayload<1, true> payload(destructors);
+    auto                     exhausted = flow.create(payload);
+    std::atomic<int>         calls{0};
+    auto                     next = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    EXPECT_EQ(exhausted.precede(next), au::err::kErrorNoMemory);
+    EXPECT_EQ(next.wait(), au::err::kErrorInvalidParam);
+    EXPECT_EQ(flow.enqueue(next).wait(), au::err::kErrorInvalidParam);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 0);
+
+    auto clean = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    EXPECT_EQ(clean.precede(exhausted), au::err::kErrorNoMemory);
+    {
+        auto&                       core = au::flow::detail::core();
+        std::lock_guard<std::mutex> lock(core.mMutex);
+        EXPECT_TRUE(clean.nativeHandle()->mNode->mSuccessors.empty());
+    }
+    EXPECT_EQ(flow.enqueue(clean).wait(), 0);
+    EXPECT_EQ(exhausted.precede(businessFailure), au::err::kErrorNoMemory);
+    EXPECT_EQ(businessFailure.code(), -123);  // Accepted results are never poisoned.
 }
 
 TEST_F(XFlow, ReleaseWorkersAndRespawn)
@@ -343,8 +441,8 @@ TEST_F(XFlow, AsyncEnqueueAndWait)
     auto copy = draft;
     draft     = std::move(draft);
     copy      = copy;
-    EXPECT_EQ(flow.enqueue(draft), 0);
-    EXPECT_EQ(flow.enqueue(copy), 0);
+    EXPECT_EQ(flow.enqueue(draft).wait(), 0);
+    EXPECT_EQ(flow.enqueue(copy).wait(), 0);
     EXPECT_EQ(copy.wait(), 0);
     EXPECT_TRUE(copy.done());
     EXPECT_EQ(copy.code(), 0);
@@ -355,36 +453,58 @@ TEST_F(XFlow, AsyncEnqueueAndWait)
         auto owner               = std::make_shared<int>(7);
         released                 = owner;
         auto            detached = flow.create([owner] {});
-        au::flow::Tasks group;
-        EXPECT_EQ(group.add(detached), 0);
-        EXPECT_EQ(flow.enqueue(group), 0);
+        au::flow::Tasks group{detached};
+        EXPECT_EQ(flow.enqueue(group).wait(), 0);
     }
 
     EXPECT_EQ(flow.waitAll(), 0);
     EXPECT_TRUE(released.expired());
 }
 
+TEST_F(XFlow, EnqueueOverloadResolution)
+{
+    auto&            flow = au::flow::Flow::get();
+    std::atomic<int> calls{0};
+    auto             task       = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    const auto       constant   = task;
+    auto             completion = flow.enqueue(task);
+    EXPECT_EQ(completion.nativeHandle(), task.nativeHandle());
+    EXPECT_EQ(completion.wait(), 0);
+    EXPECT_EQ(flow.enqueue(constant).wait(), 0);
+    EXPECT_EQ(flow.enqueue(std::move(task)).wait(), 0);
+    EXPECT_TRUE(task.valid());  // Enqueue copies a handle even when given an rvalue.
+    EXPECT_EQ(flow.enqueue(flow.create([] {})).wait(), 0);
+    EXPECT_EQ(flow.enqueue({}).wait(), 0);
+    EXPECT_EQ(flow.enqueue({task}).nativeHandle(), task.nativeHandle());
+    EXPECT_EQ(flow.enqueue({task, constant}).wait(), 0);
+    au::flow::Tasks expression{task};
+    const auto      view = expression;
+    EXPECT_EQ(flow.enqueue(expression).wait(), 0);
+    EXPECT_EQ(flow.enqueue(view).wait(), 0);
+    EXPECT_EQ(flow.enqueue(std::move(expression)).wait(), 0);
+    EXPECT_EQ(flow.enqueue([](int result) { return result; }, 13).wait(), 13);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
+}
+
 TEST_F(XFlow, DependencyChainAndDiamondDAG)
 {
     auto&            flow = au::flow::Flow::get();
     std::atomic<int> stage{0};
-    auto             a = flow.create([&] { stage.store(1, std::memory_order_relaxed); });
-    auto             b = flow.create([&] {
+    auto             a     = flow.create([&] { stage.store(1, std::memory_order_relaxed); });
+    auto             b     = flow.create([&] {
         EXPECT_GE(stage.load(std::memory_order_relaxed), 1);
         stage.fetch_add(1, std::memory_order_relaxed);
     });
-    auto             c = flow.create([&] {
+    auto             c     = flow.create([&] {
         EXPECT_GE(stage.load(std::memory_order_relaxed), 1);
         stage.fetch_add(1, std::memory_order_relaxed);
     });
-    auto             d = flow.create([&] { EXPECT_EQ(stage.load(std::memory_order_relaxed), 3); });
-    EXPECT_EQ((a >> b >> d).code(), 0);
-    EXPECT_EQ((a >> c >> d).code(), 0);
+    auto             d     = flow.create([&] { EXPECT_EQ(stage.load(std::memory_order_relaxed), 3); });
+    auto             graph = a >> (b | c) >> d;
     EXPECT_EQ(a.precede(b), 0);  // Duplicate edges are idempotent.
-    au::flow::Tasks graph{a, b, c, d};
-    ASSERT_EQ(flow.enqueue(graph), 0);
-    ASSERT_EQ(graph.wait(), 0);
-    EXPECT_EQ(flow.enqueue(graph), 0);
+    ASSERT_EQ(flow.enqueue(graph).wait(), 0);
+    ASSERT_EQ(d.wait(), 0);
+    EXPECT_EQ(flow.enqueue(graph).wait(), 0);
     EXPECT_EQ(stage.load(std::memory_order_relaxed), 3);
 }
 
@@ -419,7 +539,7 @@ TEST_F(XFlow, CompletionQueriesAndIndependentBarriers)
     EXPECT_EQ(running.code(), au::err::kErrorNotReady);
 }
 
-TEST_F(XFlow, UpstreamClosureAndLinkSubmission)
+TEST_F(XFlow, UpstreamClosureAndExpressionSubmission)
 {
     auto&            flow = au::flow::Flow::get();
     std::atomic<int> roots{0}, branches{0};
@@ -433,18 +553,18 @@ TEST_F(XFlow, UpstreamClosureAndLinkSubmission)
         branches.fetch_add(1, std::memory_order_relaxed);
     });
     auto             tail  = flow.create([&] { EXPECT_EQ(branches.load(std::memory_order_relaxed), 2); });
-    ASSERT_EQ((root >> left >> tail).code(), 0);
+    (void)(root >> left >> tail);
     auto        chain = root >> right >> tail;
     const auto& view  = chain;
-    ASSERT_EQ(flow.enqueue(view), 0);
-    EXPECT_EQ(chain.last().nativeHandle(), tail.nativeHandle());
+    ASSERT_EQ(flow.enqueue(view).wait(), 0);
+    EXPECT_EQ(flow.enqueue(chain).nativeHandle(), tail.nativeHandle());
     EXPECT_EQ(tail.wait(), 0);
-    EXPECT_EQ(flow.enqueue(chain), 0);
+    EXPECT_EQ(flow.enqueue(chain).wait(), 0);
     EXPECT_EQ(roots.load(std::memory_order_relaxed), 1);
     EXPECT_EQ(branches.load(std::memory_order_relaxed), 2);
 
     auto a = flow.create([] {}), b = flow.create([] {});
-    EXPECT_EQ(flow.enqueue(a >> b), 0);  // Temporary Link must not select enqueue(callable).
+    EXPECT_EQ(flow.enqueue(a >> b).wait(), 0);  // Temporary expression must not select enqueue(callable).
     EXPECT_EQ(b.wait(), 0);
     EXPECT_TRUE(a.done());
     auto draft     = flow.create([] {});
@@ -453,7 +573,7 @@ TEST_F(XFlow, UpstreamClosureAndLinkSubmission)
     EXPECT_TRUE(draft.done());
 }
 
-TEST_F(XFlow, MixedStateLinkSubmission)
+TEST_F(XFlow, MixedStateExpressionSubmission)
 {
     auto& flow = au::flow::Flow::get();
     auto  done = flow.enqueue([] {});
@@ -464,17 +584,18 @@ TEST_F(XFlow, MixedStateLinkSubmission)
         return until([&] { return release.load(std::memory_order_acquire); }) ? 0 : 1;
     });
     EXPECT_TRUE(until([&] { return entered.load(std::memory_order_acquire); }));
-    auto pending = flow.create([] {});
-    EXPECT_EQ(flow.enqueue(running >> pending), 0);
+    auto pending           = flow.create([] {});
+    auto pendingCompletion = flow.enqueue(running >> pending);
+    EXPECT_EQ(pendingCompletion.code(), au::err::kErrorNotReady);
     auto draft = flow.create([] {}), tail = flow.create([] {}), untouched = flow.create([] {});
     EXPECT_EQ(done.precede(draft), 0);
     EXPECT_EQ(running.precede(draft), 0);
     EXPECT_EQ(pending.precede(draft), 0);
-    EXPECT_EQ(flow.enqueue(draft >> tail), 0);
+    auto tailCompletion = flow.enqueue(draft >> tail);
+    EXPECT_EQ(tailCompletion.code(), au::err::kErrorNotReady);
     for (const auto& target : {done, running, pending}) {
         auto invalid = untouched >> target;
-        EXPECT_EQ(invalid.code(), au::err::kErrorStateInvalid);
-        EXPECT_EQ(flow.enqueue(invalid), au::err::kErrorStateInvalid);
+        EXPECT_EQ(flow.enqueue(invalid).wait(), au::err::kErrorStateInvalid);
     }
     expectCreated({untouched});
     EXPECT_FALSE(pending.done());
@@ -485,99 +606,29 @@ TEST_F(XFlow, MixedStateLinkSubmission)
     EXPECT_EQ(done.code(), 0);
 }
 
-TEST_F(XFlow, GroupClosureAndWholeGroupBoundary)
+TEST_F(XFlow, LargeFanInGrowth)
 {
     auto&            flow = au::flow::Flow::get();
-    std::atomic<int> count{0};
-    auto             a = flow.create([&] { count.fetch_add(1, std::memory_order_relaxed); });
-    auto             b = flow.create([&] { count.fetch_add(1, std::memory_order_relaxed); });
-    auto             c = flow.create([&] { count.fetch_add(1, std::memory_order_relaxed); });
-    auto             d = flow.create([&] { EXPECT_EQ(count.load(std::memory_order_relaxed), 3); });
-    au::flow::Tasks  first{b}, second{c};
-    auto             chain = a >> first >> second >> d;
-    ASSERT_EQ(flow.enqueue(chain), 0);
-    EXPECT_EQ(chain.last().wait(), 0);
-    EXPECT_EQ(first.wait(), 0);
-    EXPECT_EQ(second.wait(), 0);
-    EXPECT_EQ(flow.enqueue(chain), 0);
-    EXPECT_EQ(count.load(std::memory_order_relaxed), 3);
-
-    auto            head = flow.create([] {}), member = flow.create([] {});
-    au::flow::Tasks last{member};
-    const auto      groupChain = head >> last;
-    ASSERT_EQ(flow.enqueue(groupChain), 0);
-    EXPECT_EQ(groupChain.last().wait(), 0);
-
-    auto transientMember = flow.create([] {}), transientTail = flow.create([] {});
-    auto transient = au::flow::Tasks{transientMember} >> transientTail;
-    EXPECT_EQ(flow.enqueue(transientMember), au::err::kErrorInvalidParam);  // The exit is retained by the tail.
-    ASSERT_EQ(flow.enqueue(transient), 0);  // The temporary group handle has already been destroyed.
-    EXPECT_EQ(transientTail.wait(), 0);
-
-    auto            x = flow.create([] {}), y = flow.create([] {}), tail = flow.create([] {});
-    au::flow::Tasks group{x, y};
-    EXPECT_EQ(x.precede(tail), 0);
-    EXPECT_EQ(flow.enqueue(x), au::err::kErrorInvalidParam);
-    EXPECT_EQ(flow.enqueue(tail), au::err::kErrorInvalidParam);
-    auto rejected = flow.enqueueAfter(x, [] {});
-    EXPECT_EQ(rejected.code(), au::err::kErrorInvalidParam);
-    EXPECT_TRUE(rejected.done());
-    expectCreated({x, y, tail});
-    EXPECT_EQ(flow.enqueueAfter(group, [] {}).wait(), 0);
-    EXPECT_EQ(flow.enqueue(tail), 0);
-    EXPECT_EQ(tail.wait(), 0);
-
-    auto               orphan = flow.create([] {});
-    std::weak_ptr<int> released;
-    {
-        auto owner = std::make_shared<int>(1);
-        released   = owner;
-        au::flow::Tasks abandoned{orphan, flow.create([owner] {})};
+    std::atomic<int> calls{0};
+    auto             sink    = flow.create([&] { EXPECT_EQ(calls.load(std::memory_order_relaxed), 256); });
+    std::size_t      growths = 0;
+    for (int i = 0; i < 256; ++i) {
+        auto        task     = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+        std::size_t capacity = 0;
+        {
+            auto&                       core = au::flow::detail::core();
+            std::lock_guard<std::mutex> lock(core.mMutex);
+            capacity = sink.nativeHandle()->mNode->mPreds.capacity();
+        }
+        ASSERT_EQ(task.precede(sink), 0);
+        {
+            auto&                       core = au::flow::detail::core();
+            std::lock_guard<std::mutex> lock(core.mMutex);
+            growths += capacity != sink.nativeHandle()->mNode->mPreds.capacity();
+        }
     }
-    EXPECT_TRUE(released.expired());  // Group-exit tracking must not keep sibling payloads alive.
-    EXPECT_EQ(flow.enqueue(orphan), 0);
-    EXPECT_EQ(orphan.wait(), 0);
-
-    auto regrouped = flow.create([] {});
-    {
-        au::flow::Tasks abandoned{regrouped};
-    }
-    au::flow::Tasks replacement{regrouped};
-    ASSERT_EQ(flow.enqueue(replacement), 0);
-    EXPECT_EQ(replacement.wait(), 0);
-
-    std::atomic<int> stage{0};
-    auto             upstream = flow.create([&] { stage.store(1, std::memory_order_relaxed); });
-    auto             survivor = flow.create([&] { EXPECT_EQ(stage.load(std::memory_order_relaxed), 1); });
-    {
-        au::flow::Tasks abandoned{survivor};
-        EXPECT_EQ(upstream.precede(abandoned), 0);
-    }
-    EXPECT_EQ(flow.enqueue(survivor), 0);
-    EXPECT_EQ(survivor.wait(), 0);
-    EXPECT_TRUE(upstream.done());
-
-    auto            guarded = flow.create([] {});
-    au::flow::Tasks retained;
-    {
-        au::flow::Tasks original{guarded};
-        retained = original;
-    }
-    EXPECT_EQ(flow.enqueue(guarded), au::err::kErrorInvalidParam);
-    expectCreated({guarded});
-    retained = au::flow::Tasks();
-    EXPECT_EQ(flow.enqueue(guarded), 0);
-    EXPECT_EQ(guarded.wait(), 0);
-
-    auto failed = flow.create([] {});
-    {
-        au::flow::Tasks abandoned{failed};
-        EXPECT_EQ(abandoned.add(au::flow::Task()), au::err::kErrorInvalidParam);
-    }
-    EXPECT_EQ(flow.enqueue(failed), au::err::kErrorInvalidParam);  // Discarding a group must not erase its error.
-    au::flow::Tasks stillFailed{failed};
-    EXPECT_EQ(flow.enqueue(stillFailed), au::err::kErrorInvalidParam);
-    expectCreated({failed});
+    EXPECT_LT(growths, 16u);                  // Large fan-in must not reallocate once per edge.
+    EXPECT_EQ(flow.enqueue(sink).wait(), 0);  // The DAG retains inputs after their public handles are gone.
 }
 
 TEST_F(XFlow, ClosureValidationIsAtomic)
@@ -586,12 +637,10 @@ TEST_F(XFlow, ClosureValidationIsAtomic)
     std::atomic<int> calls{0};
     auto             good   = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
     auto             member = flow.create([] {}), tail = flow.create([] {});
-    au::flow::Tasks  bad{member};
-    ASSERT_EQ(bad.add(au::flow::Task()), au::err::kErrorInvalidParam);
-    auto chain = bad >> tail;
-    ASSERT_EQ(chain.code(), 0);
+    au::flow::Tasks  bad{member, au::flow::Task()};
+    auto             chain = bad >> tail;
     ASSERT_EQ(good.precede(tail), 0);
-    EXPECT_EQ(flow.enqueue(chain), au::err::kErrorInvalidParam);
+    EXPECT_EQ(flow.enqueue(chain).wait(), au::err::kErrorInvalidParam);
     auto rejected = flow.enqueueAfter(bad, [] {});
     EXPECT_EQ(rejected.wait(), au::err::kErrorInvalidParam);
     EXPECT_EQ(rejected.code(), au::err::kErrorInvalidParam);
@@ -604,11 +653,11 @@ TEST_F(XFlow, ClosureValidationIsAtomic)
     auto waiting = flow.create([] {});
     ASSERT_EQ(raw.precede(waiting), 0);
     ASSERT_EQ(good.precede(waiting), 0);
-    EXPECT_EQ(flow.enqueue(waiting), au::err::kErrorNotReady);
+    EXPECT_EQ(flow.enqueue(waiting).wait(), au::err::kErrorNotReady);
     expectCreated({raw, good, waiting});
     ::new (storage) unsigned char(0);
     ASSERT_EQ(au_flow_commit_task_payload(raw.nativeHandle()), 0);
-    ASSERT_EQ(flow.enqueue(waiting), 0);
+    ASSERT_EQ(flow.enqueue(waiting).wait(), 0);
     EXPECT_EQ(waiting.wait(), 0);
     EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
 
@@ -616,7 +665,7 @@ TEST_F(XFlow, ClosureValidationIsAtomic)
     EXPECT_EQ(invalid.precede(invalid), au::err::kErrorFlowCycleDetected);
     EXPECT_EQ(invalid.precede(end), 0);
     EXPECT_EQ(clean.precede(end), 0);
-    EXPECT_EQ(flow.enqueue(end), au::err::kErrorFlowCycleDetected);
+    EXPECT_EQ(flow.enqueue(end).wait(), au::err::kErrorFlowCycleDetected);
     expectCreated({invalid, clean, end});
     auto stopA = flow.create([] {}), stopB = flow.create([] {});
     EXPECT_EQ(stopA.precede(stopB), 0);
@@ -625,12 +674,12 @@ TEST_F(XFlow, ClosureValidationIsAtomic)
         std::lock_guard<std::mutex> lock(core.mMutex);
         core.mClosing = true;
     }
-    const int stopped = flow.enqueue(stopB);
+    const auto stopped = flow.enqueue(stopB);
     {
         std::lock_guard<std::mutex> lock(core.mMutex);
         core.mClosing = false;
     }
-    EXPECT_EQ(stopped, au::err::kErrorStateInvalid);
+    EXPECT_EQ(stopped.wait(), au::err::kErrorStateInvalid);
     expectCreated({stopA, stopB});
     EXPECT_EQ(calls.load(std::memory_order_relaxed), 1);
 }
@@ -649,7 +698,7 @@ TEST_F(XFlow, TaskExceptionDiagnostics)
     const int unknown  = flow.enqueueNamed("other-task", []() -> int { throw 7; }).wait();
     au::flow::Task cTask(
         au_flow_create_task("c-task", [](void*) -> int { throw std::runtime_error("c-detail"); }, nullptr, nullptr));
-    const int         submitted = flow.enqueue(cTask);
+    const auto        submitted = flow.enqueue(cTask);
     const int         cCode     = cTask.wait();
     const std::string output    = ::testing::internal::GetCapturedStdout();
     log.setLevel(level);
@@ -657,7 +706,7 @@ TEST_F(XFlow, TaskExceptionDiagnostics)
     EXPECT_EQ(standard, au::err::kErrorUnknown);
     EXPECT_EQ(memory, au::err::kErrorNoMemory);
     EXPECT_EQ(unknown, au::err::kErrorUnknown);
-    EXPECT_EQ(submitted, 0);
+    EXPECT_EQ(submitted.wait(), au::err::kErrorUnknown);
     EXPECT_EQ(cCode, au::err::kErrorUnknown);
     for (const char* text : {"std-task", "task-detail", "oom-task", "other-task", "c-task", "c-detail"})
         EXPECT_NE(output.find(text), std::string::npos);
@@ -689,81 +738,365 @@ TEST_F(XFlow, DynamicEnqueueAfter)
 
     auto running = flow.enqueue([] {});
     ASSERT_EQ(running.wait(), 0);
-    EXPECT_EQ((running >> running).code(), au::err::kErrorFlowCycleDetected);
+    EXPECT_EQ(flow.enqueue(running >> running).wait(), au::err::kErrorFlowCycleDetected);
     EXPECT_EQ(running.code(), 0);
     EXPECT_EQ(flow.enqueueAfter(au::flow::Task(), [] {}).wait(), au::err::kErrorInvalidParam);
 }
 
-TEST_F(XFlow, TasksClusterAndNamedTasks)
+TEST_F(XFlow, ExpressionsNamedTasksAndEmptyIdentity)
 {
     auto&            flow = au::flow::Flow::get();
     std::atomic<int> count{0};
-    auto             a = flow.createNamed("a\"\\\n", [&] { count.fetch_add(1, std::memory_order_relaxed); });
-    auto             b = flow.createNamed("b", [&] {
-        EXPECT_EQ(count.load(std::memory_order_relaxed), 1);
+    auto             a = flow.createNamed("prepare", [&] { count.fetch_add(1, std::memory_order_relaxed); });
+    auto             b = flow.createNamed("left", [&] {
+        EXPECT_GE(count.load(std::memory_order_relaxed), 1);
         count.fetch_add(1, std::memory_order_relaxed);
     });
-    auto             c = flow.createNamed("c", [&] {
-        EXPECT_EQ(count.load(std::memory_order_relaxed), 2);
+    auto             c = flow.createNamed("right", [&] {
+        EXPECT_GE(count.load(std::memory_order_relaxed), 1);
         count.fetch_add(1, std::memory_order_relaxed);
     });
-    auto             d = flow.createNamed("d", [&] { EXPECT_EQ(count.load(std::memory_order_relaxed), 3); });
-    au::flow::Tasks  first("first"), second("second");
-    EXPECT_EQ(first.add(b), 0);
-    EXPECT_EQ(second.add(c), 0);
-    EXPECT_EQ((a >> first >> second >> d).code(), 0);
-    EXPECT_EQ(flow.enqueue(a), 0);
-    EXPECT_EQ(flow.enqueue(first), 0);
-    EXPECT_EQ(flow.enqueue(second), 0);
-    EXPECT_EQ(flow.enqueue(d), 0);
-    auto tail = flow.enqueueAfter(second, [] {});
-    EXPECT_EQ(tail.wait(), 0);
-    EXPECT_EQ(d.wait(), 0);
+    auto             d = flow.createNamed("finish", [&] { EXPECT_EQ(count.load(std::memory_order_relaxed), 3); });
+    au::flow::Tasks  empty;
+    auto             graph = a >> (empty | b | c) >> empty >> d;
+    auto             copy  = graph;
+    graph                  = std::move(graph);
+    copy                   = copy;
+    auto completion        = flow.enqueue(graph);
+    EXPECT_EQ(completion.wait(), 0);
+    EXPECT_EQ(completion.nativeHandle(), d.nativeHandle());
+    EXPECT_EQ(flow.enqueue(copy).wait(), 0);
+    EXPECT_EQ(flow.enqueueAfter(copy, [] {}).wait(), 0);
+    EXPECT_EQ(count.load(std::memory_order_relaxed), 3);
     EXPECT_GE(a.costUs(), 0);
-    au::flow::Tasks empty;
-    EXPECT_EQ(flow.enqueue(empty), 0);
-    EXPECT_EQ(empty.wait(), 0);
-    auto copy = second;
-    second    = au::flow::Tasks();
-    EXPECT_EQ(copy.wait(), 0);
-    auto            accepted = flow.enqueue([] {});
-    auto            pending  = flow.create([] {});
-    au::flow::Tasks mixed{accepted, pending};
-    EXPECT_EQ(flow.enqueue(mixed), 0);
-    EXPECT_EQ(mixed.wait(), 0);
-    auto incoming = flow.create([] {});
-    EXPECT_EQ(incoming.precede(mixed), au::err::kErrorStateInvalid);
-    EXPECT_EQ(accepted.wait(), 0);
-    au::flow::Tasks rejected;
-    EXPECT_EQ(rejected.add(au::flow::Task()), au::err::kErrorInvalidParam);
-    EXPECT_EQ(flow.enqueue(rejected), au::err::kErrorInvalidParam);
-    EXPECT_EQ(rejected.wait(), au::err::kErrorInvalidParam);
-    auto rejectedCopy = rejected;
-    EXPECT_EQ(rejectedCopy.wait(), au::err::kErrorInvalidParam);
+    auto emptyCompletion = flow.enqueue(empty);
+    EXPECT_TRUE(emptyCompletion.valid());
+    EXPECT_EQ(emptyCompletion.wait(), 0);
+    EXPECT_EQ(flow.enqueueAfter(empty, [] {}).wait(), 0);
+
+    auto single = flow.create([] {});
+    EXPECT_EQ(flow.enqueue(empty >> single >> empty).nativeHandle(), single.nativeHandle());
+    EXPECT_EQ(single.wait(), 0);
+    EXPECT_EQ(flow.enqueue(au::flow::Tasks{empty, single, empty}).nativeHandle(), single.nativeHandle());
+    EXPECT_EQ(flow.enqueue(au::flow::Tasks{empty, empty}).wait(), 0);
+    auto failed = flow.enqueue(au::flow::Task() | empty);
+    EXPECT_TRUE(failed.done());
+    EXPECT_EQ(failed.wait(), au::err::kErrorInvalidParam);
+    EXPECT_EQ(flow.enqueue(empty >> au::flow::Task()).wait(), au::err::kErrorInvalidParam);
     auto            untouched = flow.create([] {});
-    au::flow::Tasks failedList{au::flow::Task(), untouched};
-    EXPECT_EQ(flow.enqueue(failedList), au::err::kErrorInvalidParam);
-    EXPECT_EQ(failedList.wait(), au::err::kErrorInvalidParam);
-    EXPECT_FALSE(untouched.done());
-    EXPECT_EQ(untouched.wait(), au::err::kErrorStateInvalid);
+    au::flow::Tasks rejected{au::flow::Task(), untouched};
+    EXPECT_EQ(flow.enqueue(rejected).wait(), au::err::kErrorInvalidParam);
+    EXPECT_EQ(flow.enqueue(rejected).code(), au::err::kErrorInvalidParam);
+    expectCreated({untouched});
+}
+
+TEST_F(XFlow, UnparenthesizedOperatorsFormIndependentChains)
+{
+    auto&             flow = au::flow::Flow::get();
+    std::atomic<int>  entered{0}, finished{0}, dependents{0};
+    std::atomic<bool> release{false};
+    auto              root = [&] {
+        entered.fetch_add(1, std::memory_order_release);
+        const bool ready = until([&] { return release.load(std::memory_order_acquire); });
+        finished.fetch_add(1, std::memory_order_release);
+        return ready ? 0 : 1;
+    };
+    auto successor = [&] {
+        EXPECT_TRUE(release.load(std::memory_order_acquire));
+        dependents.fetch_add(1, std::memory_order_relaxed);
+    };
+    auto       a = flow.create(root), b = flow.create(successor);
+    auto       c = flow.create(root), d = flow.create(successor);
+    auto       completion    = flow.enqueue(a >> b | c >> d);  // Exactly (a >> b) | (c >> d).
+    const bool parallelRoots = until([&] { return entered.load(std::memory_order_acquire) == 2; });
+    release.store(true, std::memory_order_release);
+    EXPECT_TRUE(parallelRoots);
+    EXPECT_EQ(completion.wait(), 0);
+    EXPECT_EQ(finished.load(std::memory_order_acquire), 2);
+    EXPECT_EQ(dependents.load(std::memory_order_relaxed), 2);
+}
+
+TEST_F(XFlow, NestedExpressionsAndLocalDependencies)
+{
+    auto&                 flow = au::flow::Flow::get();
+    std::atomic<unsigned> completed{0};
+    auto                  make = [&](unsigned index, unsigned dependencies) {
+        return flow.create([&, index, dependencies] {
+            EXPECT_EQ(completed.load(std::memory_order_acquire) & dependencies, dependencies);
+            completed.fetch_or(1u << index, std::memory_order_acq_rel);
+        });
+    };
+    auto a = make(0, 0), b = make(1, 1), c = make(2, 1), d = make(3, 1);
+    auto e = make(4, 1u << 3), f = make(5, 1), g = make(6, 1);
+    auto h = make(7, 1u << 6), i = make(8, 1u << 7);
+    auto j = make(9, 511), k = make(10, 1u << 9), l = make(11, 511);
+    auto graph = a >> (b | c | ((d >> e) | f | (g >> h >> i))) >> ((j >> k) | l);
+    EXPECT_EQ(flow.enqueue(graph).wait(), 0);
+    EXPECT_EQ(completed.load(std::memory_order_relaxed), 4095u);
+
+    std::atomic<int> stage{0};
+    auto             first  = flow.create([&] { EXPECT_EQ(stage.fetch_add(1, std::memory_order_relaxed), 0); });
+    auto             second = flow.create([&] { EXPECT_EQ(stage.fetch_add(1, std::memory_order_relaxed), 1); });
+    auto             third  = flow.create([&] { EXPECT_EQ(stage.fetch_add(1, std::memory_order_relaxed), 2); });
+    (void)(first >> second >> third);
+    // Listing existing nodes adds a join, without replacing their local dependency edges.
+    EXPECT_EQ(flow.enqueue(au::flow::Tasks{first, second, third}).wait(), 0);
+    EXPECT_EQ(stage.load(std::memory_order_relaxed), 3);
+}
+
+TEST_F(XFlow, ParallelAcceptedPredecessorsAndBranchErrors)
+{
+    auto& flow = au::flow::Flow::get();
+    auto  done = flow.enqueue([] {});
+    ASSERT_EQ(done.wait(), 0);
+    std::atomic<bool> entered{false}, release{false};
+    auto              running = flow.enqueue([&] {
+        entered.store(true, std::memory_order_release);
+        return until([&] { return release.load(std::memory_order_acquire); }) ? 0 : 1;
+    });
+    EXPECT_TRUE(until([&] { return entered.load(std::memory_order_acquire); }));
+    std::atomic<int> count{0};
+    auto             pending    = flow.enqueueAfter(running, [&] { count.fetch_add(1, std::memory_order_relaxed); });
+    auto             consumer   = flow.create([&] { EXPECT_EQ(count.load(std::memory_order_relaxed), 1); });
+    auto             branches   = done | running | pending;
+    auto             completion = flow.enqueue(branches >> consumer);
+    EXPECT_FALSE(completion.done());
+    auto incoming = flow.create([] {});
+    auto rejected = flow.enqueue(incoming >> branches);
+    EXPECT_EQ(rejected.wait(), au::err::kErrorStateInvalid);
+    EXPECT_EQ(rejected.code(), au::err::kErrorStateInvalid);
+    expectCreated({incoming});
+    EXPECT_EQ(running.code(), au::err::kErrorNotReady);
+    release.store(true, std::memory_order_release);
+    EXPECT_EQ(completion.wait(), 0);
+    EXPECT_EQ(pending.wait(), 0);
+
+    auto failed = flow.enqueue([] { return -123; });
+    ASSERT_EQ(failed.wait(), -123);
+    auto sibling = flow.create([&] { count.fetch_add(1, std::memory_order_relaxed); });
+    auto skipped = flow.create([&] { ADD_FAILURE() << "Failed join must skip its successor"; });
+    EXPECT_EQ(flow.enqueue((failed | sibling) >> skipped).wait(), -123);
+    EXPECT_EQ(sibling.wait(), 0);
+    EXPECT_EQ(count.load(std::memory_order_relaxed), 2);
+
+    auto notReadyResult = flow.enqueue([] { return au::err::kErrorNotReady; });
+    ASSERT_EQ(notReadyResult.wait(), au::err::kErrorNotReady);
+    auto independent = flow.create([&] { count.fetch_add(1, std::memory_order_relaxed); });
+    EXPECT_EQ(flow.enqueue(notReadyResult | independent).wait(), au::err::kErrorNotReady);
+    EXPECT_EQ(independent.wait(), 0);  // A completed business error is not an expression build error.
+    EXPECT_EQ(count.load(std::memory_order_relaxed), 3);
+}
+
+TEST_F(XFlow, FlatRangesSharingAndDiscardedExpressions)
+{
+    auto&                       flow = au::flow::Flow::get();
+    std::atomic<int>            calls{0};
+    std::vector<au::flow::Task> tasks;
+    for (int i = 0; i < 64; ++i)
+        tasks.push_back(flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); }));
+
+    // Copies share a cursor: attempting a preliminary traversal would consume this input range.
+    struct Input
+    {
+        const std::vector<au::flow::Task>* mTasks;
+        std::size_t*                       mPosition;
+        bool                               mEnd;
+
+        const au::flow::Task& operator*() const { return (*mTasks)[*mPosition]; }
+
+        Input& operator++()
+        {
+            ++*mPosition;
+            return *this;
+        }
+
+        bool operator!=(const Input&) const { return !mEnd && *mPosition < mTasks->size(); }
+    };
+
+    std::size_t position = 0;
+    auto        flat     = au::flow::Tasks::parallel(Input{&tasks, &position, false}, Input{&tasks, &position, true});
+    EXPECT_EQ(position, tasks.size());
+    EXPECT_EQ(flow.enqueue(flat).wait(), 0);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 64);
+    EXPECT_EQ(flow.enqueue(flat).wait(), 0);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 64);
+    EXPECT_EQ(flow.enqueue(au::flow::Tasks::parallel(tasks.begin(), tasks.begin())).wait(), 0);
+    auto single = flow.enqueue(au::flow::Tasks::parallel(tasks.begin(), tasks.begin() + 1));
+    EXPECT_EQ(single.nativeHandle(), tasks[0].nativeHandle());
+    EXPECT_EQ(single.wait(), 0);
+
+    std::atomic<unsigned> flags{0};
+    auto                  a      = flow.create([&] { flags.fetch_or(1, std::memory_order_relaxed); });
+    auto                  b      = flow.create([&] { flags.fetch_or(2, std::memory_order_relaxed); });
+    auto                  left   = flow.create([&] { EXPECT_EQ(flags.load(std::memory_order_relaxed), 3u); });
+    auto                  right  = flow.create([&] { EXPECT_EQ(flags.load(std::memory_order_relaxed), 3u); });
+    auto                  shared = left | right;
+    auto                  first  = a >> shared;
+    auto                  second = b >> shared;  // Shared nodes accumulate both prefixes.
+    EXPECT_EQ(flow.enqueue(first).wait(), 0);
+    EXPECT_EQ(flow.enqueue(second).wait(), 0);
+    EXPECT_TRUE(b.done());
+
+    auto            common = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    au::flow::Tasks firstJoin{common, flow.create([] {})}, secondJoin{common, flow.create([] {})};
+    EXPECT_EQ(flow.enqueue(common).wait(), 0);  // Expressions do not reserve or own exclusive membership.
+    EXPECT_EQ(flow.enqueue(firstJoin).wait(), 0);
+    EXPECT_EQ(flow.enqueue(secondJoin).wait(), 0);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 65);  // Both joins share the same execution.
+
+    auto abandoned = flow.create([] {}), untouched = flow.create([] {});
+    {
+        auto discarded = abandoned | untouched;
+    }
+    EXPECT_EQ(flow.enqueue(abandoned).wait(), 0);
+    expectCreated({untouched});  // A discarded parallel join did not add an entry before either branch.
+
+    auto head = flow.create([] {}), tail = flow.create([] {});
+    {
+        auto discarded = head >> tail;
+    }
+    EXPECT_EQ(flow.enqueue(tail).wait(), 0);
+    EXPECT_TRUE(head.done());  // Eager serial edges survive destruction of their expression.
+
+    auto                         duplicate  = flow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    auto                         serialTail = flow.create([] {});
+    std::vector<au::flow::Tasks> fragments{duplicate >> serialTail, duplicate, au::flow::Tasks{}};
+    EXPECT_EQ(flow.enqueue(au::flow::Tasks::parallel(fragments.begin(), fragments.end())).wait(), 0);
+    EXPECT_EQ(calls.load(std::memory_order_relaxed), 66);
+}
+
+TEST_F(XFlow, ExpressionCreationAndSubmissionErrors)
+{
+    auto&                    flow        = au::flow::Flow::get();
+    int                      destructors = 0;
+    ThrowingPayload<1, true> payload(destructors);
+    auto                     failed    = flow.create(payload);
+    auto                     untouched = flow.create([] {});
+    au::flow::Tasks          empty;
+    EXPECT_EQ(flow.enqueue(untouched >> failed).wait(), au::err::kErrorNoMemory);
+    EXPECT_EQ(flow.enqueue(empty | failed).wait(), au::err::kErrorNoMemory);
+    EXPECT_EQ(flow.enqueue(failed >> empty).code(), au::err::kErrorNoMemory);
+    EXPECT_EQ(flow.enqueueAfter(failed | untouched, [] {}).wait(), au::err::kErrorNoMemory);
+    expectCreated({untouched});
+
+    void*          storage = nullptr;
+    au::flow::Task raw(au_flow_create_task_ex(nullptr, 1, 1, [](void*) { return 0; }, nullptr, &storage));
+    ASSERT_TRUE(raw.valid());
+    auto rejected = flow.enqueue(raw);
+    EXPECT_FALSE(rejected.valid());
+    EXPECT_EQ(rejected.nativeHandle(), nullptr);
+    EXPECT_TRUE(rejected.done());
+    EXPECT_EQ(rejected.code(), au::err::kErrorNotReady);
+    EXPECT_FALSE(raw.done());
+    ::new (storage) unsigned char(0);
+    ASSERT_EQ(au_flow_commit_task_payload(raw.nativeHandle()), 0);
+    EXPECT_EQ(flow.enqueue(raw).wait(), 0);
+    EXPECT_EQ(raw.code(), 0);  // The submission error belonged to the returned handle, not this original.
+    EXPECT_EQ(rejected.wait(), au::err::kErrorNotReady);
+    EXPECT_EQ(flow.enqueue(rejected | untouched).wait(), au::err::kErrorNotReady);
+    expectCreated({untouched});
+
+    auto head = flow.create([] {}), middle = flow.create([] {});
+    auto done = flow.enqueue([] {});
+    ASSERT_EQ(done.wait(), 0);
+    EXPECT_EQ(flow.enqueue(head >> middle >> done).wait(), au::err::kErrorStateInvalid);
+    expectCreated({head, middle});
+    EXPECT_EQ(flow.enqueue(middle).wait(), 0);  // Successful eager edges survived the later rejected edge.
+    EXPECT_TRUE(head.done());
+
+    struct ThrowingInput
+    {
+        bool mNoMemory;
+
+        const au::flow::Task& operator*() const
+        {
+            if (mNoMemory)
+                throw std::bad_alloc();
+            throw std::runtime_error("input failed");
+        }
+
+        ThrowingInput& operator++() { return *this; }
+
+        bool operator!=(const ThrowingInput&) const { return true; }
+    };
+
+    EXPECT_EQ(flow.enqueue(au::flow::Tasks::parallel(ThrowingInput{true}, ThrowingInput{true})).wait(),
+              au::err::kErrorNoMemory);
+    EXPECT_EQ(flow.enqueue(au::flow::Tasks::parallel(ThrowingInput{false}, ThrowingInput{false})).wait(),
+              au::err::kErrorUnknown);
 }
 
 TEST_F(XFlow, ErrorShortCircuiting)
 {
     auto&            flow = au::flow::Flow::get();
     std::atomic<int> ran{0};
-    auto             a = flow.create([]() -> int { return -123; });
-    auto             b = flow.create([&] { ran.fetch_add(1, std::memory_order_relaxed); });
-    auto             c = flow.create([&] { ran.fetch_add(1, std::memory_order_relaxed); });
-    EXPECT_EQ((a >> b >> c).code(), 0);
-    au::flow::Tasks group{a, b, c};
-    ASSERT_EQ(flow.enqueue(group), 0);
+    auto             a     = flow.create([]() -> int { return -123; });
+    auto             b     = flow.create([&] { ran.fetch_add(1, std::memory_order_relaxed); });
+    auto             c     = flow.create([&] { ran.fetch_add(1, std::memory_order_relaxed); });
+    auto             graph = a >> b >> c;
+    EXPECT_EQ(flow.enqueue(graph).wait(), -123);
     EXPECT_EQ(c.wait(), -123);
-    EXPECT_EQ(group.wait(), -123);
     EXPECT_EQ(flow.waitAll(), 0);
     EXPECT_EQ(ran.load(std::memory_order_relaxed), 0);
     EXPECT_EQ(flow.enqueueAfter(a, [&] { ++ran; }).wait(), -123);
     EXPECT_EQ(ran.load(std::memory_order_relaxed), 0);
+}
+
+TEST_F(XFlow, RandomizedCycleChecksWithCompletedTasksAndForkJoins)
+{
+    auto&        flow = au::flow::Flow::get();
+    std::mt19937 random(1729);
+    for (unsigned graph = 0; graph < 50; ++graph) {
+        std::vector<au::flow::Task>            tasks;
+        std::vector<au::flow::detail::NodePtr> nodes;
+        std::array<std::array<bool, 32>, 32>   edges{};
+        for (unsigned i = 0; i < 28; ++i)
+            tasks.push_back(flow.create([] {}));
+        for (int code : {0, -123, 0, 17}) {
+            auto done = flow.enqueue([code] { return code; });
+            ASSERT_EQ(done.wait(), code);
+            tasks.push_back(done);
+        }
+        for (const auto& task : tasks)
+            nodes.push_back(task.nativeHandle()->mNode);
+        const std::pair<unsigned, unsigned> seeds[] = {{0, 1}, {0, 2}, {1, 3}, {2, 3}, {3, 4},
+                                                       {4, 5}, {4, 6}, {5, 7}, {6, 7}};
+        for (const auto& edge : seeds) {
+            ASSERT_EQ(tasks[edge.first].precede(tasks[edge.second]), 0);
+            edges[edge.first][edge.second] = true;
+        }
+        {
+            auto abandoned = flow.create([] {});
+            ASSERT_EQ(tasks[14].precede(abandoned), 0);
+        }  // Leave an expired weak outgoing entry: the fast-path test must remain conservative.
+        auto&                       core = au::flow::detail::core();
+        std::lock_guard<std::mutex> lock(core.mMutex);
+        for (unsigned edit = 0; edit < 300; ++edit) {
+            const unsigned           pred = random() % nodes.size(), succ = random() % nodes.size();
+            std::array<bool, 32>     visited{};
+            std::array<unsigned, 32> stack{};
+            unsigned                 count = 1;
+            stack[0]                       = succ;
+            visited[succ]                  = true;
+            bool cycle                     = pred == succ;
+            while (count) {
+                const auto current = stack[--count];
+                cycle |= current == pred;
+                for (unsigned next = 0; next < nodes.size(); ++next)
+                    if (edges[current][next] && !visited[next]) {
+                        visited[next]  = true;
+                        stack[count++] = next;
+                    }
+            }
+            const int expected = pred == succ ? au::err::kErrorFlowCycleDetected
+                                 : nodes[succ]->mState != au::flow::detail::State::Created ? au::err::kErrorStateInvalid
+                                 : cycle ? au::err::kErrorFlowCycleDetected
+                                         : 0;
+            ASSERT_EQ(core.edge(nodes[pred], nodes[succ]), expected);
+            if (!expected)
+                edges[pred][succ] = true;
+        }
+    }
 }
 
 TEST_F(XFlow, CycleDetectionAndDiscardedDraftLifetime)
@@ -771,27 +1104,27 @@ TEST_F(XFlow, CycleDetectionAndDiscardedDraftLifetime)
     auto&              flow = au::flow::Flow::get();
     std::weak_ptr<int> observed;
     {
-        auto owner = std::make_shared<int>(1);
-        observed   = owner;
-        auto a = flow.create([owner] {}), b = flow.create([] {});
-        EXPECT_EQ((a >> b >> a).code(), au::err::kErrorFlowCycleDetected);
+        auto owner        = std::make_shared<int>(1);
+        observed          = owner;
+        auto            a = flow.create([owner] {}), b = flow.create([] {});
+        auto            cycle = a >> b >> a;
         au::flow::Tasks group{a, b};
-        EXPECT_EQ(flow.enqueue(group), au::err::kErrorFlowCycleDetected);
-        EXPECT_EQ(group.wait(), au::err::kErrorFlowCycleDetected);
+        EXPECT_EQ(flow.enqueue(group).wait(), au::err::kErrorFlowCycleDetected);
+        EXPECT_EQ(flow.enqueue(cycle).wait(), au::err::kErrorFlowCycleDetected);
         EXPECT_EQ(a.code(), au::err::kErrorFlowCycleDetected);
     }
 
     EXPECT_TRUE(observed.expired());
     auto self = flow.create([] {});
     EXPECT_EQ(self.precede(self), au::err::kErrorFlowCycleDetected);
-    EXPECT_EQ(flow.enqueue(self), au::err::kErrorFlowCycleDetected);
+    EXPECT_EQ(flow.enqueue(self).wait(), au::err::kErrorFlowCycleDetected);
     auto target = flow.enqueue([] {});
     EXPECT_EQ(target.wait(), 0);
     EXPECT_EQ(self.precede(target), au::err::kErrorStateInvalid);
     EXPECT_EQ(target.code(), 0);
     auto pred = flow.create([] {}), successor = flow.create([] {});
     EXPECT_EQ(pred.precede(successor), 0);
-    EXPECT_EQ(flow.enqueue(successor), 0);  // Submit the unsubmitted predecessor through the successor.
+    EXPECT_EQ(flow.enqueue(successor).wait(), 0);  // Submit the unsubmitted predecessor through the successor.
     EXPECT_EQ(successor.wait(), 0);
     EXPECT_TRUE(pred.done());
 }
@@ -809,8 +1142,8 @@ TEST_F(XFlow, CooperativeWaitAndWaitCycles)
     au::flow::Task    a, b;
     a = flow.create([&] { return until([&] { return go.load(std::memory_order_acquire); }) ? b.wait() : 1; });
     b = flow.create([&] { return until([&] { return go.load(std::memory_order_acquire); }) ? a.wait() : 1; });
-    EXPECT_EQ(flow.enqueue(a), 0);
-    EXPECT_EQ(flow.enqueue(b), 0);
+    auto completionA = flow.enqueue(a);
+    auto completionB = flow.enqueue(b);
     go.store(true, std::memory_order_release);
     EXPECT_EQ(a.wait(), au::err::kErrorFlowWouldDeadlock);
     EXPECT_EQ(b.wait(), au::err::kErrorFlowWouldDeadlock);
@@ -921,6 +1254,18 @@ TEST_F(XFlow, CpuAffinity)
             EXPECT_EQ(flow.setAffinity(outside), au::err::kErrorInvalidParam);
         }
     }
-    EXPECT_EQ(flow.setAffinity(), 0);
+    ASSERT_EQ(flow.setAffinity(), 0);
+    EXPECT_EQ(flow.getAffinityMask(), allowed);
+    std::vector<uint32_t> expected(count), restored(count);
+    ASSERT_EQ(au::sys::getThreadAffinity(expected.data(), expected.size(), count), 0);
+    auto worker = flow.enqueue([&] {
+        std::size_t size = 0;
+        EXPECT_EQ(au::sys::getThreadAffinity(restored.data(), restored.size(), size), 0);
+        restored.resize(size);
+    });
+    // A zero request restores the complete default CPU list, including CPUs numbered above 63.
+    EXPECT_TRUE(until([&] { return worker.done(); }));
+    EXPECT_EQ(worker.wait(), 0);
+    EXPECT_EQ(restored, expected);
 }
 #endif
