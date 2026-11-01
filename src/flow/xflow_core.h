@@ -46,24 +46,30 @@ struct PayloadDeleter
 // Shared by owning handles, accepted work and DAG predecessors; no custom pool.
 struct Node
 {
-    std::mutex                            mMutex;
-    State                                 mState           = State::Created;
-    int                                   mBuild           = 0;
-    int                                   mDependencyError = 0;
-    int                                   mCode            = 0;
-    std::size_t                           mPending         = 0;
-    std::vector<NodePtr>                  mPreds;
-    std::vector<std::weak_ptr<Node>>      mSuccessors;
-    Node*                                 mNext      = nullptr;
-    Node*                                 mWaiting   = nullptr;
-    Node*                                 mExecuting = nullptr;
-    std::list<NodePtr>::iterator          mAccepted;
+    std::string  mName;
+    std::int64_t mCost = 0;
+    std::mutex   mMutex;
+
+    State mState = State::Created;
+
+    int mBuild           = 0;
+    int mDependencyError = 0;
+    int mCode            = 0;
+
+    std::size_t mPending = 0;
+
+    std::vector<NodePtr>             mPreds;
+    std::vector<std::weak_ptr<Node>> mSuccessors;
+
+    Node*                        mNext      = nullptr;
+    Node*                        mWaiting   = nullptr;
+    Node*                        mExecuting = nullptr;
+    std::list<NodePtr>::iterator mAccepted;
+
     XFlowTaskFn                           mFunction;  // Task factories reject null functions.
     std::unique_ptr<void, PayloadDeleter> mPayload;
     XFlowDeleterFn                        mPendingDestroy = nullptr;
     std::atomic<bool>                     mPayloadReady{true};
-    std::string                           mName;
-    std::int64_t                          mCost = 0;
 
     explicit Node(XFlowTaskFn fn) : mFunction(fn) {}
 };
@@ -97,14 +103,16 @@ struct Core
     std::size_t                          mCount       = 0;
     std::size_t                          mIdle        = 0;
     std::size_t                          mTileCallers = 0;
-    std::vector<std::uint32_t>           mDefaultCpus;
-    bool                                 mClosing        = false;
-    bool                                 mStop           = false;
-    bool                                 mReleasing      = false;
-    std::uint64_t                        mRequestedMask  = 0;  // Zero restores all default CPUs.
-    std::uint64_t                        mDefaultMask    = 0;
-    int                                  mAffinityStatus = 0;
-    std::atomic<std::uint64_t>           mAffinityGen{1};
+
+    bool mClosing   = false;
+    bool mStop      = false;
+    bool mReleasing = false;
+
+    std::vector<std::uint32_t> mDefaultCpus;
+    std::uint64_t              mRequestedMask  = 0;  // Zero restores all default CPUs.
+    std::uint64_t              mDefaultMask    = 0;
+    int                        mAffinityStatus = 0;
+    std::atomic<std::uint64_t> mAffinityGen{1};
 
     Core();
     ~Core();
