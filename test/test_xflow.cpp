@@ -35,7 +35,7 @@ void expectCreated(std::initializer_list<au::flow::Task> tasks)
     auto&                       core = au::flow::detail::core();
     std::lock_guard<std::mutex> lock(core.mMutex);
     for (const auto& task : tasks)
-        EXPECT_EQ(task.nativeHandle()->mNode->mState, au::flow::detail::State::Created);
+        EXPECT_EQ(task.nativeHandle()->mNode->mState, au::flow::detail::TaskState::Created);
 }
 
 struct Member
@@ -263,7 +263,7 @@ TEST_F(XFlow, CompletedDependenciesDoNotRetainHistory)
     auto              successor = flow.create([] {});
     {
         std::lock_guard<std::mutex> lock(core.mMutex);
-        ASSERT_EQ(core.edge(upstream, successor.nativeHandle()->mNode), 0);
+        ASSERT_EQ(core.addDependency(upstream, successor.nativeHandle()->mNode), 0);
         ASSERT_EQ(core.submit(successor.nativeHandle()->mNode), 0);
     }
     upstream.reset();
@@ -618,13 +618,13 @@ TEST_F(XFlow, LargeFanInGrowth)
         {
             auto&                       core = au::flow::detail::core();
             std::lock_guard<std::mutex> lock(core.mMutex);
-            capacity = sink.nativeHandle()->mNode->mPreds.capacity();
+            capacity = sink.nativeHandle()->mNode->mPredecessors.capacity();
         }
         ASSERT_EQ(task.precede(sink), 0);
         {
             auto&                       core = au::flow::detail::core();
             std::lock_guard<std::mutex> lock(core.mMutex);
-            growths += capacity != sink.nativeHandle()->mNode->mPreds.capacity();
+            growths += capacity != sink.nativeHandle()->mNode->mPredecessors.capacity();
         }
     }
     EXPECT_LT(growths, 16u);                  // Large fan-in must not reallocate once per edge.
@@ -1089,10 +1089,11 @@ TEST_F(XFlow, RandomizedCycleChecksWithCompletedTasksAndForkJoins)
                     }
             }
             const int expected = pred == succ ? au::err::kErrorFlowCycleDetected
-                                 : nodes[succ]->mState != au::flow::detail::State::Created ? au::err::kErrorStateInvalid
+                                 : nodes[succ]->mState != au::flow::detail::TaskState::Created
+                                     ? au::err::kErrorStateInvalid
                                  : cycle ? au::err::kErrorFlowCycleDetected
                                          : 0;
-            ASSERT_EQ(core.edge(nodes[pred], nodes[succ]), expected);
+            ASSERT_EQ(core.addDependency(nodes[pred], nodes[succ]), expected);
             if (!expected)
                 edges[pred][succ] = true;
         }

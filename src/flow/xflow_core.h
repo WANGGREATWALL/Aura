@@ -23,7 +23,7 @@ constexpr std::size_t kMaxWorkers     = 8;
 constexpr std::size_t kMaxTileHelpers = 3;
 constexpr unsigned    kMaxWaitDepth   = 128;
 
-enum class State
+enum class TaskState
 {
     Created,
     Pending,
@@ -43,47 +43,51 @@ struct PayloadDeleter
     void operator()(void* data) const noexcept;
 };
 
-// Shared by owning handles, accepted work and DAG predecessors; no custom pool.
+// Shared by owning handles, accepted work and DAG predecessors.
 struct Node
 {
     std::string  mName;
-    std::int64_t mCost = 0;
+    std::int64_t mCostUs = 0;
     std::mutex   mMutex;
 
-    State mState = State::Created;
+    TaskState mState = TaskState::Created;
 
-    int mBuild           = 0;
-    int mDependencyError = 0;
-    int mCode            = 0;
+    int mBuildCode      = 0;
+    int mDependencyCode = 0;
+    int mResultCode     = 0;
 
-    std::size_t mPending = 0;
+    std::size_t mPendingDependencyCount = 0;
 
-    std::vector<NodePtr>             mPreds;
+    std::vector<NodePtr>             mPredecessors;
     std::vector<std::weak_ptr<Node>> mSuccessors;
 
-    Node*                        mNext      = nullptr;
-    Node*                        mWaiting   = nullptr;
-    Node*                        mExecuting = nullptr;
+    Node* mNext      = nullptr;
+    Node* mWaiting   = nullptr;  // Cooperative wait target.
+    Node* mExecuting = nullptr;  // Task currently helped on this task's call stack.
+
+    // Position in Core::mAccepted; stable across list splices.
     std::list<NodePtr>::iterator mAccepted;
 
     XFlowTaskFn                           mFunction;  // Task factories reject null functions.
     std::unique_ptr<void, PayloadDeleter> mPayload;
-    XFlowDeleterFn                        mPendingDestroy = nullptr;
-    std::atomic<bool>                     mPayloadReady{true};
+
+    // Enabled only after payload construction commits; never destroy an unconstructed object.
+    XFlowDeleterFn    mPendingDestroy = nullptr;
+    std::atomic<bool> mPayloadReady{true};
 
     explicit Node(XFlowTaskFn fn) : mFunction(fn) {}
 };
 
 struct TileJob
 {
-    std::atomic<std::size_t> mNext{0};
-    std::atomic<std::size_t> mHelpers{0};
+    std::atomic<std::size_t> mNextTileIndex{0};
+    std::atomic<std::size_t> mActiveHelpers{0};
     std::size_t              mRange;
     std::size_t              mTile;
-    std::size_t              mTotal;
+    std::size_t              mTileCount;
     XFlowTileExFn            mFunction;
     void*                    mData;
-    TileJob*                 mLink = nullptr;
+    TileJob*                 mNextJob = nullptr;
 
     void run(std::size_t worker) noexcept;
 };
@@ -96,39 +100,43 @@ struct Core
     std::mutex                           mMutex;
     std::condition_variable              mChanged;
     std::list<NodePtr>                   mAccepted;
-    Node*                                mHead  = nullptr;
-    Node*                                mTail  = nullptr;
-    TileJob*                             mTiles = nullptr;
+    Node*                                mReadyHead      = nullptr;
+    Node*                                mReadyTail      = nullptr;
+    TileJob*                             mActiveTileJobs = nullptr;
     std::array<std::thread, kMaxWorkers> mThreads;
-    std::size_t                          mCount       = 0;
-    std::size_t                          mIdle        = 0;
-    std::size_t                          mTileCallers = 0;
+    std::size_t                          mWorkerCount     = 0;
+    std::size_t                          mIdleWorkerCount = 0;
+    std::size_t                          mTileCallers     = 0;
 
     bool mClosing   = false;
     bool mStop      = false;
     bool mReleasing = false;
 
-    std::vector<std::uint32_t> mDefaultCpus;
-    std::uint64_t              mRequestedMask  = 0;  // Zero restores all default CPUs.
-    std::uint64_t              mDefaultMask    = 0;
-    int                        mAffinityStatus = 0;
-    std::atomic<std::uint64_t> mAffinityGen{1};
+    // Snapshot of the initializing thread's affinity. A zero request restores the full snapshot.
+    // Accepted configurations are applied asynchronously; acceptance does not confirm OS binding.
+    std::vector<std::uint32_t> mInitialCpus;
+    std::uint64_t              mRequestedCpuMask = 0;
+    std::uint64_t              mInitialCpuMask   = 0;
+    int                        mAffinityInitCode = 0;
+    std::atomic<std::uint64_t> mAffinityVersion{1};
 
     Core();
     ~Core();
 
     // Graph/queue helpers below require mMutex; they do not acquire it themselves.
     bool     reaches(Node*, Node*, bool waits = false);
-    int      edge(const NodePtr&, const NodePtr&);
+    int      addDependency(const NodePtr&, const NodePtr&);
     int      submit(const NodePtr&);
-    void     ready(Node*);
-    void     grow();
-    TileJob* tile();
+    void     enqueueReady(Node*);
+    void     growWorkers();
+    TileJob* findTileJob();
 
     // Temporarily unlock for OS/user work; the supplied lock is owned on entry and return.
     void applyAffinity(std::unique_lock<std::mutex>&);
-    bool step(std::unique_lock<std::mutex>&);
-    void worker(std::size_t index);
+    bool helpOne(std::unique_lock<std::mutex>&);
+
+    // Acquire mMutex internally; callers must not already hold it.
+    void workerLoop(std::size_t index);
     int  wait(const NodePtr&);
 };
 
