@@ -89,7 +89,7 @@ struct TileJob
     void*                    mData;
     TileJob*                 mNextJob = nullptr;
 
-    void run(std::size_t worker) noexcept;
+    void run(std::size_t workerIndex) noexcept;
 };
 
 // mMutex serializes graph edits, state transitions and worker/tile bookkeeping.
