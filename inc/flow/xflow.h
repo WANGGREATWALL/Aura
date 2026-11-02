@@ -85,20 +85,15 @@
  * runtime-sized batch. All three branches finish before render and save; done waits for both.
  * J1..J4 are the ordinary join tasks created by |, Tasks{...}, and parallel().
  * @verbatim
- *             ┌──> decode ──> filter ──────────────────────────┐
- *             │                                                │
- *             │             ┌──> refine ──┐                    │
- * prepare ────┼──> detect ──┤             ├──> J1 ─────────────┼──> J3
- *             │             └──> score ───┘                    │
- *             │                                                │
- *             │    ┌──> batch[0] ──┐                           │
- *             └────┼──> batch[1] ──┼──> J2 ────────────────────┘
- *                  ├──> batch[2] ──┤
- *                  └──> batch[3] ──┘
- *
- *         ┌──> render ──┐
- * J3 ─────┤             ├──> J4 ──> done
- *         └──> save ────┘
+ *           ┌─> decode ──> filter ────────────┐
+ *           │            ┌─> refine ─┐        │        ┌─> render ──┐
+ * prepare ──┼─> detect ──┤           ├─> J1 ──┼─> J3 ──┤            ├─> J4 ─> done
+ *           │            └─> score ──┘        │        └─> save ────┘
+ *           │                                 │
+ *           │   ┌─> batch[0] ───┐             │
+ *           └───┼─> batch[1] ───┼─> J2 ───────┘
+ *               ├─> batch[2] ───┤
+ *               └─> batch[3] ───┘
  * @endverbatim
  *
  * The empty task bodies below stand in for application work. Build first, then enqueue once.
