@@ -21,7 +21,7 @@ namespace flow AU_LOCAL {
 namespace detail {
 constexpr std::size_t kMaxWorkers     = 8;
 constexpr std::size_t kMaxTileHelpers = 3;
-constexpr unsigned    kMaxWaitDepth   = 128;
+constexpr unsigned    kMaxTaskDepth   = 128;
 
 enum class TaskState
 {
@@ -61,12 +61,12 @@ struct Node
     std::vector<NodePtr>             mPredecessors;
     std::vector<std::weak_ptr<Node>> mSuccessors;
 
-    Node* mNext      = nullptr;
+    Node* mNextReady = nullptr;
     Node* mWaiting   = nullptr;  // Cooperative wait target.
     Node* mExecuting = nullptr;  // Task currently helped on this task's call stack.
 
     // Position in Core::mAccepted; stable across list splices.
-    std::list<NodePtr>::iterator mAccepted;
+    std::list<NodePtr>::iterator mAcceptedPos;
 
     XFlowTaskFn                           mFunction;  // Task factories reject null functions.
     std::unique_ptr<void, PayloadDeleter> mPayload;
@@ -131,7 +131,7 @@ struct Core
     void     growWorkers();
     TileJob* findTileJob();
 
-    // Temporarily unlock for OS/user work; the supplied lock is owned on entry and return.
+    // Both require the supplied lock on entry and return; may unlock for OS/user work.
     void applyAffinity(std::unique_lock<std::mutex>&);
     bool helpOne(std::unique_lock<std::mutex>&);
 

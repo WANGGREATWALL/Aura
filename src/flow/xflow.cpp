@@ -15,7 +15,7 @@ namespace detail {
 thread_local Node*         gCurrent     = nullptr;
 thread_local std::size_t   gWorkerIndex = 0;
 thread_local unsigned      gTileDepth   = 0;
-thread_local unsigned      gDepth       = 0;
+thread_local unsigned      gTaskDepth   = 0;
 thread_local std::uint64_t gAffinity    = 0;
 
 template <class F>
@@ -164,7 +164,7 @@ void Core::enqueueReady(Node* node)
 {
     node->mState = TaskState::Ready;
     if (mReadyTail)
-        mReadyTail->mNext = node;
+        mReadyTail->mNextReady = node;
     else
         mReadyHead = node;
     mReadyTail = node;
@@ -212,8 +212,8 @@ int Core::submit(const NodePtr& root)
     for (auto it = batch.begin(); it != batch.end(); ++it) {
         auto&                       n = *it;
         std::lock_guard<std::mutex> lock(n->mMutex);
-        n->mAccepted = it;
-        n->mState    = TaskState::Pending;
+        n->mAcceptedPos = it;
+        n->mState       = TaskState::Pending;
         if (!n->mPendingDependencyCount)
             enqueueReady(n.get());
     }
@@ -275,13 +275,13 @@ bool Core::helpOne(std::unique_lock<std::mutex>& lock)
         return true;
     }
 
-    if (!mReadyHead || gDepth >= kMaxWaitDepth)
+    if (!mReadyHead || gTaskDepth >= kMaxTaskDepth)
         return false;
-    NodePtr n  = *mReadyHead->mAccepted;
-    mReadyHead = n->mNext;
+    NodePtr n  = *mReadyHead->mAcceptedPos;
+    mReadyHead = n->mNextReady;
     if (!mReadyHead)
         mReadyTail = nullptr;
-    n->mNext = nullptr;
+    n->mNextReady = nullptr;
     {
         std::lock_guard<std::mutex> state(n->mMutex);
         n->mState = TaskState::Running;
@@ -299,7 +299,7 @@ bool Core::helpOne(std::unique_lock<std::mutex>& lock)
 
     lock.unlock();
     gCurrent = n.get();
-    ++gDepth;
+    ++gTaskDepth;
     int                 code  = n->mDependencyCode;
     const auto          start = std::chrono::steady_clock::now();
     au::perf::PerfScope trace{};
@@ -314,7 +314,7 @@ bool Core::helpOne(std::unique_lock<std::mutex>& lock)
     const auto cost =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
     n->mPayload.reset();
-    --gDepth;
+    --gTaskDepth;
     gCurrent = parent;
     lock.lock();
     if (parent)
@@ -344,7 +344,7 @@ bool Core::helpOne(std::unique_lock<std::mutex>& lock)
             succ.reset();
             lock.lock();
         }
-    mAccepted.erase(n->mAccepted);
+    mAccepted.erase(n->mAcceptedPos);
     mChanged.notify_all();
     lock.unlock();
     predecessors.clear();
@@ -379,7 +379,7 @@ int Core::wait(const NodePtr& n)
         return n->mResultCode;
     if (n->mState == TaskState::Created)
         return n->mBuildCode ? n->mBuildCode : au::err::kErrorStateInvalid;
-    if (gTileDepth || gDepth >= kMaxWaitDepth || (gCurrent && reaches(n.get(), gCurrent, true)))
+    if (gTileDepth || gTaskDepth >= kMaxTaskDepth || (gCurrent && reaches(n.get(), gCurrent, true)))
         return au::err::kErrorFlowWouldDeadlock;
     Node*  unused  = nullptr;
     Node*& waiting = gCurrent ? gCurrent->mWaiting : unused;
