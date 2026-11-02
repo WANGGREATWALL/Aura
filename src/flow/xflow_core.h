@@ -124,20 +124,20 @@ struct Core
     ~Core();
 
     // Graph/queue helpers below require mMutex; they do not acquire it themselves.
-    bool     reaches(Node*, Node*, bool waits = false);
-    int      addDependency(const NodePtr&, const NodePtr&);
-    int      submit(const NodePtr&);
-    void     enqueueReady(Node*);
+    bool     reaches(Node* from, Node* target, bool includeWaits = false);
+    int      addDependency(const NodePtr& predecessor, const NodePtr& successor);
+    int      submit(const NodePtr& root);
+    void     enqueueReady(Node* node);
     void     growWorkers();
     TileJob* findTileJob();
 
     // Both require the supplied lock on entry and return; may unlock for OS/user work.
-    void applyAffinity(std::unique_lock<std::mutex>&);
-    bool helpOne(std::unique_lock<std::mutex>&);
+    void applyAffinity(std::unique_lock<std::mutex>& lock);
+    bool helpOne(std::unique_lock<std::mutex>& lock);
 
     // Acquire mMutex internally; callers must not already hold it.
-    void workerLoop(std::size_t index);
-    int  wait(const NodePtr&);
+    void workerLoop(std::size_t workerIndex);
+    int  wait(const NodePtr& task);
 };
 
 Core& core();

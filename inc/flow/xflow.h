@@ -80,17 +80,53 @@
  * either at the last GPU task's end or the consumer's start. Consecutive kernels may enqueue without
  * host waits; use queue order or explicit event dependencies. Prefer the needed event over clFinish().
  *
- * @par Example: parallel branches and a join
- *        ┌── b ──┐
- * a ─────┤       ├──> done
- *        └── c ──┘
+ * @par Example: nested branches and a dynamic batch
+ * prepare precedes three branches: decode -> filter, detect -> (refine | score), and a
+ * runtime-sized batch. All three branches finish before render and save; done waits for both.
+ * J1..J4 are the ordinary join tasks created by |, Tasks{...}, and parallel().
+ * @verbatim
+ *             +--> decode --> filter --------------------------+
+ *             |                                                |
+ *             |             +--> refine --+                    |
+ * prepare ----+--> detect --+             +--> J1 -------------+--> J3
+ *             |             +--> score ---+                    |
+ *             |                                                |
+ *             |    +--> batch[0] --+                           |
+ *             +----+--> batch[1] --+--> J2 --------------------+
+ *                  +--> batch[2] --+
+ *                  +--> batch[3] --+
+ *
+ *         +--> render --+
+ * J3 -----+             +--> J4 --> done
+ *         +--> save ----+
+ * @endverbatim
+ *
+ * The empty task bodies below stand in for application work. Build first, then enqueue once.
  * @code
  * auto& flow = au::flow::Flow::get();
- * auto a = flow.create([] {});  // Prepare input.
- * auto b = flow.create([] {});  // First branch.
- * auto c = flow.create([] {});  // Second branch.
- * auto done = flow.create([] {});  // Consume results.
- * int code = flow.enqueue(a >> (b | c) >> done).wait();
+ * auto makeTask = [&flow](const char* name) {
+ *     return flow.createNamed(name, [] {});
+ * };
+ * auto prepare = makeTask("prepare");
+ * auto decode  = makeTask("decode");
+ * auto filter  = makeTask("filter");
+ * auto detect  = makeTask("detect");
+ * auto refine  = makeTask("refine");
+ * auto score   = makeTask("score");
+ * auto render  = makeTask("render");
+ * auto save    = makeTask("save");
+ * auto done    = makeTask("done");
+ *
+ * std::vector<au::flow::Task> batch;
+ * for (std::size_t i = 0; i < 4; ++i)
+ *     batch.push_back(makeTask("batch item"));
+ *
+ * auto graph = prepare >> au::flow::Tasks{
+ *     decode >> filter,                                      // One serial branch.
+ *     detect >> (refine | score),                             // Nested two-way fork/join.
+ *     au::flow::Tasks::parallel(batch.begin(), batch.end())    // Dynamic flat branches.
+ * } >> (render | save) >> done;
+ * int code = flow.enqueue(graph).wait();
  * @endcode
  */
 

@@ -96,7 +96,7 @@ Core::~Core()
             thread.join();
 }
 
-bool Core::reaches(Node* from, Node* target, bool waits)
+bool Core::reaches(Node* from, Node* target, bool includeWaits)
 {
     std::vector<Node*> stack{from};
     std::set<Node*>    seen;
@@ -109,7 +109,7 @@ bool Core::reaches(Node* from, Node* target, bool waits)
             return true;
         for (auto& pred : n->mPredecessors)
             stack.push_back(pred.get());
-        if (waits) {
+        if (includeWaits) {
             stack.push_back(n->mWaiting);
             stack.push_back(n->mExecuting);
         }
@@ -118,41 +118,43 @@ bool Core::reaches(Node* from, Node* target, bool waits)
     return false;
 }
 
-int Core::addDependency(const NodePtr& pred, const NodePtr& succ)
+int Core::addDependency(const NodePtr& predecessor, const NodePtr& successor)
 {
-    if (!succ)
+    if (!successor)
         return au::err::kErrorInvalidParam;
     // Core::mMutex protects links and state; public build-error queries also need the node lock.
     auto error = [&](int code) {
-        std::lock_guard<std::mutex> lock(succ->mMutex);
-        if (succ->mState == TaskState::Created && !succ->mBuildCode)
-            succ->mBuildCode = code;
+        std::lock_guard<std::mutex> lock(successor->mMutex);
+        if (successor->mState == TaskState::Created && !successor->mBuildCode)
+            successor->mBuildCode = code;
         return code;
     };
 
-    if (pred == succ)
+    if (predecessor == successor)
         return error(au::err::kErrorFlowCycleDetected);
-    if (!pred)
+    if (!predecessor)
         return error(au::err::kErrorInvalidParam);
 
-    if (succ->mState != TaskState::Created)
+    if (successor->mState != TaskState::Created)
         return au::err::kErrorStateInvalid;
     try {
-        if (std::find(succ->mPredecessors.begin(), succ->mPredecessors.end(), pred) != succ->mPredecessors.end())
+        if (std::find(successor->mPredecessors.begin(), successor->mPredecessors.end(), predecessor) !=
+            successor->mPredecessors.end())
             return 0;
         // Closure submission accepts every upstream node, and accepted targets reject new edges.
-        // Thus an accepted pred cannot depend on a Created succ. If that rule changes, revisit this guard.
-        // A Created succ has never finished, so all of its outgoing edges are in mSuccessors;
+        // Thus an accepted predecessor cannot depend on a Created successor. If that rule changes, revisit this guard.
+        // A Created successor has never finished, so all of its outgoing edges are in mSuccessors;
         // an empty list rules out a return path. Expired weak entries merely keep DFS conservative.
-        if (pred->mState == TaskState::Created && !succ->mSuccessors.empty() && reaches(pred.get(), succ.get()))
+        if (predecessor->mState == TaskState::Created && !successor->mSuccessors.empty() &&
+            reaches(predecessor.get(), successor.get()))
             return error(au::err::kErrorFlowCycleDetected);
-        reserveOne(succ->mPredecessors);
-        if (pred->mState != TaskState::Done) {
-            pred->mSuccessors.emplace_back(succ);
-            ++succ->mPendingDependencyCount;
-        } else if (!succ->mDependencyCode)
-            succ->mDependencyCode = pred->mResultCode;
-        succ->mPredecessors.push_back(pred);
+        reserveOne(successor->mPredecessors);
+        if (predecessor->mState != TaskState::Done) {
+            predecessor->mSuccessors.emplace_back(successor);
+            ++successor->mPendingDependencyCount;
+        } else if (!successor->mDependencyCode)
+            successor->mDependencyCode = predecessor->mResultCode;
+        successor->mPredecessors.push_back(predecessor);
     } catch (...) {
         return error(au::err::kErrorNoMemory);
     }
@@ -353,9 +355,9 @@ bool Core::helpOne(std::unique_lock<std::mutex>& lock)
     return true;
 }
 
-void Core::workerLoop(std::size_t index)
+void Core::workerLoop(std::size_t workerIndex)
 {
-    gWorkerIndex = index;
+    gWorkerIndex = workerIndex;
     std::unique_lock<std::mutex> lock(mMutex);
     while (!mStop) {
         const auto generation = mAffinityVersion.load(std::memory_order_acquire);
@@ -370,16 +372,16 @@ void Core::workerLoop(std::size_t index)
     }
 }
 
-int Core::wait(const NodePtr& n)
+int Core::wait(const NodePtr& task)
 {
-    if (!n)
+    if (!task)
         return au::err::kErrorInvalidParam;
     std::unique_lock<std::mutex> lock(mMutex);
-    if (n->mState == TaskState::Done)
-        return n->mResultCode;
-    if (n->mState == TaskState::Created)
-        return n->mBuildCode ? n->mBuildCode : au::err::kErrorStateInvalid;
-    if (gTileDepth || gTaskDepth >= kMaxTaskDepth || (gCurrent && reaches(n.get(), gCurrent, true)))
+    if (task->mState == TaskState::Done)
+        return task->mResultCode;
+    if (task->mState == TaskState::Created)
+        return task->mBuildCode ? task->mBuildCode : au::err::kErrorStateInvalid;
+    if (gTileDepth || gTaskDepth >= kMaxTaskDepth || (gCurrent && reaches(task.get(), gCurrent, true)))
         return au::err::kErrorFlowWouldDeadlock;
     Node*  unused  = nullptr;
     Node*& waiting = gCurrent ? gCurrent->mWaiting : unused;
@@ -392,11 +394,11 @@ int Core::wait(const NodePtr& n)
         ~Restore() { mSlot = mOld; }
     } restore{waiting, waiting};
 
-    waiting = n.get();
-    while (n->mState != TaskState::Done)
+    waiting = task.get();
+    while (task->mState != TaskState::Done)
         if (!helpOne(lock))
             mChanged.wait(lock);
-    return n->mResultCode;
+    return task->mResultCode;
 }
 
 void TileJob::run(std::size_t worker) noexcept
