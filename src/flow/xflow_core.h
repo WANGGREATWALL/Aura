@@ -58,12 +58,15 @@ struct Node
 
     std::size_t mPendingDependencyCount = 0;
 
+    // Declared dependencies: these tasks must finish before this task can run.
     std::vector<NodePtr>             mPredecessors;
     std::vector<std::weak_ptr<Node>> mSuccessors;
 
     Node* mNextReady = nullptr;
-    Node* mWaiting   = nullptr;  // Cooperative wait target.
-    Node* mExecuting = nullptr;  // Task currently helped on this task's call stack.
+
+    // Runtime edges, not necessarily declared predecessors; both are needed for wait deadlock detection.
+    Node* mWaiting   = nullptr;  // Explicit wait target: this task cannot continue until it finishes.
+    Node* mExecuting = nullptr;  // Nested helper task: this task's call stack cannot resume until it returns.
 
     // Position in Core::mAccepted; stable across list splices.
     std::list<NodePtr>::iterator mAcceptedPos;
@@ -124,7 +127,8 @@ struct Core
     ~Core();
 
     // Graph/queue helpers below require mMutex; they do not acquire it themselves.
-    bool     reaches(Node* from, Node* target, bool includeWaits = false);
+    // Follow predecessor links; optionally include runtime wait and nested execution edges.
+    bool     reaches(Node* from, Node* target, bool includeRuntimeEdges = false);
     int      addDependency(const NodePtr& predecessor, const NodePtr& successor);
     int      submit(const NodePtr& root);
     void     enqueueReady(Node* node);

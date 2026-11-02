@@ -96,7 +96,7 @@ Core::~Core()
             thread.join();
 }
 
-bool Core::reaches(Node* from, Node* target, bool includeWaits)
+bool Core::reaches(Node* from, Node* target, bool includeRuntimeEdges)
 {
     std::vector<Node*> stack{from};
     std::set<Node*>    seen;
@@ -109,7 +109,7 @@ bool Core::reaches(Node* from, Node* target, bool includeWaits)
             return true;
         for (auto& pred : n->mPredecessors)
             stack.push_back(pred.get());
-        if (includeWaits) {
+        if (includeRuntimeEdges) {
             stack.push_back(n->mWaiting);
             stack.push_back(n->mExecuting);
         }
@@ -140,7 +140,7 @@ int Core::addDependency(const NodePtr& predecessor, const NodePtr& successor)
     try {
         if (std::find(successor->mPredecessors.begin(), successor->mPredecessors.end(), predecessor) !=
             successor->mPredecessors.end())
-            return 0;
+            return au::err::kSuccess;
         // Closure submission accepts every upstream node, and accepted targets reject new edges.
         // Thus an accepted predecessor cannot depend on a Created successor. If that rule changes, revisit this guard.
         // A Created successor has never finished, so all of its outgoing edges are in mSuccessors;
@@ -159,7 +159,7 @@ int Core::addDependency(const NodePtr& predecessor, const NodePtr& successor)
         return error(au::err::kErrorNoMemory);
     }
 
-    return 0;
+    return au::err::kSuccess;
 }
 
 void Core::enqueueReady(Node* node)
@@ -184,7 +184,7 @@ void Core::growWorkers()
 int Core::submit(const NodePtr& root)
 {
     if (root->mState != TaskState::Created)
-        return 0;
+        return au::err::kSuccess;
     if (root->mBuildCode)
         return root->mBuildCode;
     // Acquire payload construction published by commit before accepting execution.
@@ -222,7 +222,7 @@ int Core::submit(const NodePtr& root)
 
     mAccepted.splice(mAccepted.end(), batch);
     mChanged.notify_all();
-    return 0;
+    return au::err::kSuccess;
 }
 
 TileJob* Core::findTileJob()
