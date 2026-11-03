@@ -128,12 +128,14 @@ struct Core
 
     // Graph/queue helpers below require mMutex; they do not acquire it themselves.
     // Follow predecessor links; optionally include runtime wait and nested execution edges.
-    bool     reaches(Node* from, Node* target, bool includeRuntimeEdges = false);
-    int      addDependency(const NodePtr& predecessor, const NodePtr& successor);
-    int      submit(const NodePtr& root);
-    void     enqueueReady(Node* node);
-    void     growWorkers();
-    TileJob* findTileJob();
+    bool reaches(Node* from, Node* target, bool includeRuntimeEdges = false);
+    int  addDependency(const NodePtr& predecessor, const NodePtr& successor);
+    int  submit(const NodePtr& root);
+    void enqueueReady(Node* node);
+    void growWorkers();
+
+    // Find a job with a free helper slot and potentially unclaimed tiles.
+    TileJob* findTileJobToHelp();
 
     // Both require the supplied lock on entry and return; may unlock for OS/user work.
     void applyAffinity(std::unique_lock<std::mutex>& lock);

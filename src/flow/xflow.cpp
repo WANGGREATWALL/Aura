@@ -244,7 +244,7 @@ int Core::submit(const NodePtr& root)
     return au::err::kSuccess;
 }
 
-TileJob* Core::findTileJob()
+TileJob* Core::findTileJobToHelp()
 {
     for (auto* j = mActiveTileJobs; j; j = j->mNextJob)
         if (j->mActiveHelpers.load(std::memory_order_relaxed) < kMaxTileHelpers &&
@@ -286,7 +286,7 @@ bool Core::helpOne(std::unique_lock<std::mutex>& lock)
         return false;
     applyAffinity(lock);
 
-    if (auto* job = gWorkerIndex ? findTileJob() : nullptr) {
+    if (auto* job = gWorkerIndex ? findTileJobToHelp() : nullptr) {
         // Register under mMutex so the caller cannot destroy the job before this helper exits.
         job->mActiveHelpers.fetch_add(1, std::memory_order_relaxed);
         lock.unlock();
@@ -387,7 +387,7 @@ void Core::workerLoop(std::size_t workerIndex)
             continue;
         ++mIdleWorkerCount;
         mChanged.wait(lock, [&] {
-            return mStop || mReadyHead || findTileJob() ||
+            return mStop || mReadyHead || findTileJobToHelp() ||
                    mAffinityVersion.load(std::memory_order_acquire) != observedAffinityVersion;
         });
         --mIdleWorkerCount;
