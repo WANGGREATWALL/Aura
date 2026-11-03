@@ -141,10 +141,18 @@ int Core::addDependency(const NodePtr& predecessor, const NodePtr& successor)
         if (std::find(successor->mPredecessors.begin(), successor->mPredecessors.end(), predecessor) !=
             successor->mPredecessors.end())
             return au::err::kSuccess;
-        // Closure submission accepts every upstream node, and accepted targets reject new edges.
-        // Thus an accepted predecessor cannot depend on a Created successor. If that rule changes, revisit this guard.
-        // A Created successor has never finished, so all of its outgoing edges are in mSuccessors;
-        // an empty list rules out a return path. Expired weak entries merely keep DFS conservative.
+
+        // For a new edge, handle the predecessor by state:
+        //
+        // Predecessor state      Cycle check       Completion handling
+        // Created                Search if needed  Register notification; increment pending count
+        // Pending/Ready/Running  Skip              Register notification; increment pending count
+        // Done                   Skip              Inherit result; no notification or pending count
+        //
+        // Accepted tasks have their whole upstream accepted and cannot gain new predecessors,
+        // so they cannot depend on this Created successor.
+        // A Created successor with no outgoing edges cannot lead back either.
+        // Expired weak entries may cause an extra search, but cannot hide a cycle.
         if (predecessor->mState == TaskState::Created && !successor->mSuccessors.empty() &&
             reaches(predecessor.get(), successor.get()))
             return error(au::err::kErrorFlowCycleDetected);
@@ -154,6 +162,8 @@ int Core::addDependency(const NodePtr& predecessor, const NodePtr& successor)
             ++successor->mPendingDependencyCount;
         } else if (!successor->mDependencyCode)
             successor->mDependencyCode = predecessor->mResultCode;
+
+        // Every new dependency retains its predecessor, including completed ones.
         successor->mPredecessors.push_back(predecessor);
     } catch (...) {
         return error(au::err::kErrorNoMemory);
