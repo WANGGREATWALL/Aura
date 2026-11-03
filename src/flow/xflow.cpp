@@ -223,6 +223,8 @@ int Core::submit(const NodePtr& root)
             stack.insert(stack.end(), n->mPredecessors.begin(), n->mPredecessors.end());
         }
     }
+    // During final shutdown, reject new external submissions but let running tasks
+    // and tile callbacks enqueue the work they need to finish.
     if (mClosing && !gCurrentTask && !gTileDepth)
         return au::err::kErrorStateInvalid;
     growWorkers();  // No accepted state if the required thread could not start.
@@ -235,6 +237,8 @@ int Core::submit(const NodePtr& root)
             enqueueReady(n.get());
     }
 
+    // splice transfers the existing list nodes without invalidating their iterators,
+    // so each task's mAcceptedPos remains valid in mAccepted and needs no update.
     mAccepted.splice(mAccepted.end(), batch);
     mChanged.notify_all();
     return au::err::kSuccess;
