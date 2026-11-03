@@ -257,6 +257,8 @@ void Core::applyAffinity(std::unique_lock<std::mutex>& lock)
 {
     for (;;) {
         const auto version = mAffinityVersion.load(std::memory_order_acquire);
+        // Skip non-worker threads, configurations already attempted by this worker,
+        // or an unavailable initial CPU set. Retry failed bindings only after reconfiguration.
         if (!gWorkerIndex || gAttemptedAffinityVersion == version || mInitialCpus.empty())
             break;
         const auto mask           = mRequestedCpuMask;
