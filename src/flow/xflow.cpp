@@ -153,10 +153,15 @@ int Core::addDependency(const NodePtr& predecessor, const NodePtr& successor)
         // so they cannot depend on this Created successor.
         // A Created successor with no outgoing edges cannot lead back either.
         // Expired weak entries may cause an extra search, but cannot hide a cycle.
+        // Check declared dependencies only; runtime mWaiting/mExecuting edges are checked
+        // separately for wait deadlocks.
         if (predecessor->mState == TaskState::Created && !successor->mSuccessors.empty() &&
             reaches(predecessor.get(), successor.get()))
             return error(au::err::kErrorFlowCycleDetected);
         reserveOne(successor->mPredecessors);
+
+        // A Done predecessor will not complete again, so no successor notification or pending count is needed.
+        // Inherit its existing result unless another dependency has already failed.
         if (predecessor->mState != TaskState::Done) {
             predecessor->mSuccessors.emplace_back(successor);
             ++successor->mPendingDependencyCount;
