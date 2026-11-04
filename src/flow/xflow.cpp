@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <exception>
+#include <new>
 #include <set>
 #include <utility>
 
@@ -88,7 +89,7 @@ Core::Core()
         else {
             mInitialCpus.resize(count);
             for (auto cpu : mInitialCpus)
-                if (cpu < 64)
+                if (cpu < kAffinityMaskBits)
                     mInitialCpuMask |= UINT64_C(1) << cpu;
         }
     }
@@ -275,10 +276,10 @@ void Core::applyAffinity(std::unique_lock<std::mutex>& lock)
         const auto mask           = mRequestedCpuMask;
         const bool useInitialCpus = !mask;
         lock.unlock();
-        std::array<std::uint32_t, 64> selectedCpus;
-        std::size_t                   cpuCount = 0;
+        std::array<std::uint32_t, kAffinityMaskBits> selectedCpus;
+        std::size_t                                  cpuCount = 0;
         if (!useInitialCpus)
-            for (unsigned i = 0; i < 64; ++i)
+            for (unsigned i = 0; i < kAffinityMaskBits; ++i)
                 if (mask & (UINT64_C(1) << i))
                     selectedCpus[cpuCount++] = i;
         const auto* cpus  = useInitialCpus ? mInitialCpus.data() : selectedCpus.data();
@@ -519,10 +520,9 @@ int Core::releaseWorkers()
         if (thread.joinable())
             thread.join();
     lock.lock();
-    mWorkerCount     = 0;
-    mIdleWorkerCount = 0;
-    mStop            = false;
-    mReleasing       = false;
+    mWorkerCount = 0;
+    mStop        = false;
+    mReleasing   = false;
     mChanged.notify_all();
     return 0;
 }
@@ -729,7 +729,8 @@ int au_flow_wait_all() noexcept
 
 int au_flow_release_workers() noexcept
 {
-    // A synchronous task/tile cannot drain itself or join its own pool thread.
+    // Tasks/tiles cannot drain themselves. A worker may also run a payload deleter outside
+    // task context; it must not join its own thread then either.
     if (au::flow::detail::insideTaskOrTile() || au::flow::detail::gWorkerIndex)
         return au::err::kErrorFlowWouldDeadlock;
     return au::flow::detail::boundary([]() -> int { return au::flow::detail::core().releaseWorkers(); });

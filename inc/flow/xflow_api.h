@@ -114,8 +114,7 @@ AU_API int au_flow_add_dependency(XFlowTaskHandle pred, XFlowTaskHandle succ) XF
  * @note The upstream walk collects unsubmitted predecessors and stops at any predecessor that is
  *       already accepted (pending, running, or done). Accepted tasks are not enqueued again or
  *       executed twice; their own predecessors were accepted at the same time.
- * @note Completion means the callable returned or the task was skipped, and its payload was
- *       destroyed. Device work the callable starts asynchronously is not tracked.
+ * @note Does not synchronize asynchronous device work; see the file-level completion note.
  */
 AU_API int au_flow_enqueue_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 
@@ -125,9 +124,7 @@ AU_API int au_flow_enqueue_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
  * @return Task result; for an unsubmitted task, its saved build error or kErrorStateInvalid;
  *         otherwise a wait error.
  * @note Waiting is cooperative: the caller may execute other tasks that are already accepted.
- *       Waiting never enqueues its target. A task completes when its callable has returned or
- *       been skipped, and its payload has been destroyed. Device work started asynchronously
- *       by the callable is not tracked.
+ *       Waiting never enqueues its target or synchronizes device work; see the file-level completion note.
  * @note Completed tasks return their result immediately, including inside tile callbacks.
  *       For accepted but unfinished tasks, tile callbacks, the depth limit, and dependency or
  *       runtime wait cycles cause kErrorFlowWouldDeadlock instead of blocking.

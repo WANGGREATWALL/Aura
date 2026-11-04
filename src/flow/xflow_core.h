@@ -9,7 +9,6 @@
 #include <list>
 #include <memory>
 #include <mutex>
-#include <new>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,9 +18,10 @@
 namespace au {
 namespace flow AU_LOCAL {
 namespace detail {
-constexpr std::size_t kMaxWorkers     = 8;
-constexpr std::size_t kMaxTileHelpers = 3;
-constexpr unsigned    kMaxTaskDepth   = 128;
+constexpr std::size_t kMaxWorkers       = 8;
+constexpr std::size_t kMaxTileHelpers   = 3;
+constexpr unsigned    kMaxTaskDepth     = 128;
+constexpr unsigned    kAffinityMaskBits = 64;
 
 enum class TaskState
 {
@@ -117,6 +117,8 @@ struct Core
     bool mReleasing = false;
 
     // Snapshot of the initializing thread's affinity. A zero request restores the full snapshot.
+    // mInitialCpus, mInitialCpuMask and mAffinityInitCode never change after construction,
+    // so workers and configuration entry points may read them without mMutex.
     // Accepted configurations are applied asynchronously; acceptance does not confirm OS binding.
     std::vector<std::uint32_t> mInitialCpus;
     std::uint64_t              mRequestedCpuMask = 0;
@@ -136,7 +138,7 @@ struct Core
     int  submit(const NodePtr& root);
     void growWorkers();
 
-    // Requires both mMutex and node->mMutex because Ready is visible to public queries.
+    // Requires mMutex and node->mMutex; public queries read mState under the node lock.
     void enqueueReady(Node* node);
 
     // Find a job with a free helper slot and potentially unclaimed tiles.

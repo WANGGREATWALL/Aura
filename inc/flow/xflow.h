@@ -31,8 +31,8 @@
  * Copies share work, not independent graph templates: later composition accumulates dependencies.
  * Built edges are not rolled back when an expression is discarded. A bare b | c adds only a
  * join after its branches, not a shared predecessor before them. Chaining k branches with |
- * creates k-1 joins linked in series; Tasks{...} or Tasks::parallel(first, last) creates one
- * join for all branches and sorts the heads once.
+ * creates k-1 joins linked in series and copies/re-sorts accumulated heads at each level.
+ * Tasks{...} or Tasks::parallel(first, last) creates one join and sorts the heads once.
  *
  * @par Example: flat parallel versus binary |
  *        Tasks::parallel(first, last) / Tasks{a, b, c, d}: one join, n edges
@@ -331,16 +331,16 @@ public:
     /// Convert one task without creating a node. An invalid task is an error, not an empty expression.
     Tasks(const Task& task) : mLast(task), mError(task.mError)
     {
-        if (!mError) {
-            if (!task.valid())
-                mError = au::err::kErrorInvalidParam;
-            else {
-                try {
-                    mHeads.push_back(task);
-                } catch (const std::bad_alloc&) {
-                    mError = au::err::kErrorNoMemory;
-                }
-            }
+        if (mError)
+            return;
+        if (!task.valid()) {
+            mError = au::err::kErrorInvalidParam;
+            return;
+        }
+        try {
+            mHeads.push_back(task);
+        } catch (const std::bad_alloc&) {
+            mError = au::err::kErrorNoMemory;
         }
     }
 
@@ -378,8 +378,7 @@ public:
      * @param last One past the final branch.
      * @return An expression; build errors are reported by enqueue().wait()/code().
      * @note Empty branches are identities; one branch creates no node, multiple branches create
-     *       one ordinary join task. Prefer this or Tasks{...} over a long chain of binary |, which
-     *       creates one join per level and re-sorts the accumulated heads at every level.
+     *       one ordinary join task. Prefer this or Tasks{...} for many branches; see the file-level example.
      */
     template <class Iterator>
     static Tasks parallel(Iterator first, Iterator last);
@@ -427,12 +426,8 @@ inline Tasks operator>>(const Tasks& a, const Tasks& b)
  * @param b Second fragment; accepted tasks are allowed.
  * @return An expression; branch failures skip its join and propagate an upstream error.
  * @note No entry task is created. Use parentheses around parallel sections when mixing | and >>.
- * @note Chaining k branches with | builds k-1 join tasks linked in series: every level adds a
- *       real node, one more dispatch hop on the way to the exit, and a copy plus re-sort of the
- *       accumulated head list, so construction is superlinear. Tasks{...} and Tasks::parallel()
- *       build one join for all branches and sort once. Heads, exit condition and skip-on-failure
- *       behavior are the same either way; only graph topology and cost differ. The file-level
- *       Example draws both topologies.
+ * @note For many branches, prefer Tasks{...} or Tasks::parallel(); the file-level example
+ *       explains their flatter topology and lower construction overhead.
  */
 inline Tasks operator|(const Tasks& a, const Tasks& b);
 
