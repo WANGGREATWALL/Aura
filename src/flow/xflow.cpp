@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <exception>
+#include <new>
 #include <set>
 #include <utility>
 
@@ -12,11 +13,15 @@
 namespace au {
 namespace flow AU_LOCAL {
 namespace detail {
-thread_local Node*         gCurrent     = nullptr;
-thread_local std::size_t   gWorkerIndex = 0;
-thread_local unsigned      gTileDepth = 0, gDepth = 0;
-thread_local std::uint64_t gAffinity = 0;
+thread_local Node*         gCurrentTask              = nullptr;
+thread_local std::size_t   gWorkerIndex              = 0;
+thread_local unsigned      gTileDepth                = 0;
+thread_local unsigned      gTaskDepth                = 0;
+thread_local std::uint64_t gAttemptedAffinityVersion = 0;
 
+bool insideTaskOrTile() noexcept { return gCurrentTask || gTileDepth; }
+
+// Log exceptions and convert them to error codes for task execution and C entry points.
 template <class F>
 int boundary(F fn, const char* name = nullptr) noexcept
 {
@@ -37,12 +42,21 @@ int boundary(F fn, const char* name = nullptr) noexcept
 // Reserve before changing links/counts; the eventual append must not allocate.
 void reserveOne(std::vector<NodePtr>& values)
 {
-    if (values.size() == values.capacity()) {
-        const auto limit = values.max_size();
-        if (values.size() == limit)
-            throw std::bad_alloc();
-        values.reserve(values.empty() ? 1 : values.size() + std::min(values.size(), limit - values.size()));
-    }
+    const auto size = values.size();
+    if (size < values.capacity())
+        return;
+    const auto limit = values.max_size();
+    if (size == limit)
+        throw std::bad_alloc();
+    const auto growth = std::min(size, limit - size);
+    values.reserve(size == 0 ? 1 : size + growth);
+}
+
+std::unique_lock<std::mutex> submissionLock(Core& runtime)
+{
+    std::unique_lock<std::mutex> lock(runtime.mMutex);
+    runtime.mChanged.wait(lock, [&] { return !runtime.mReleasing || insideTaskOrTile(); });
+    return lock;
 }
 
 void PayloadDeleter::operator()(void* data) const noexcept
@@ -66,17 +80,17 @@ Core::Core()
     (void)au::perf::Config::get();  // Perf and log state outlive worker teardown.
     (void)au::log::Config::get();
     std::size_t count = 0;
-    mAffinityStatus   = au::sys::getThreadAffinity(nullptr, 0, count);
-    if (!mAffinityStatus) {
-        mDefaultCpus.resize(count);
-        mAffinityStatus = au::sys::getThreadAffinity(mDefaultCpus.data(), mDefaultCpus.size(), count);
-        if (mAffinityStatus)
-            mDefaultCpus.clear();
+    mAffinityInitCode = au::sys::getThreadAffinity(nullptr, 0, count);
+    if (!mAffinityInitCode) {
+        mInitialCpus.resize(count);
+        mAffinityInitCode = au::sys::getThreadAffinity(mInitialCpus.data(), mInitialCpus.size(), count);
+        if (mAffinityInitCode)
+            mInitialCpus.clear();
         else {
-            mDefaultCpus.resize(count);
-            for (auto cpu : mDefaultCpus)
-                if (cpu < 64)
-                    mDefaultMask |= UINT64_C(1) << cpu;
+            mInitialCpus.resize(count);
+            for (auto cpu : mInitialCpus)
+                if (cpu < kAffinityMaskBits)
+                    mInitialCpuMask |= UINT64_C(1) << cpu;
         }
     }
 }
@@ -95,7 +109,7 @@ Core::~Core()
             thread.join();
 }
 
-bool Core::reaches(Node* from, Node* target, bool waits)
+bool Core::reaches(Node* from, Node* target, bool includeRuntimeEdges)
 {
     std::vector<Node*> stack{from};
     std::set<Node*>    seen;
@@ -106,9 +120,9 @@ bool Core::reaches(Node* from, Node* target, bool waits)
             continue;
         if (n == target)
             return true;
-        for (auto& pred : n->mPreds)
+        for (auto& pred : n->mPredecessors)
             stack.push_back(pred.get());
-        if (waits) {
+        if (includeRuntimeEdges) {
             stack.push_back(n->mWaiting);
             stack.push_back(n->mExecuting);
         }
@@ -117,116 +131,136 @@ bool Core::reaches(Node* from, Node* target, bool waits)
     return false;
 }
 
-int Core::edge(const NodePtr& pred, const NodePtr& succ)
+int Core::addDependency(const NodePtr& predecessor, const NodePtr& successor)
 {
-    if (!succ)
+    if (!successor)
         return au::err::kErrorInvalidParam;
     // Core::mMutex protects links and state; public build-error queries also need the node lock.
-    auto error = [&](int code) {
-        std::lock_guard<std::mutex> lock(succ->mMutex);
-        if (succ->mState == State::Created && !succ->mBuild)
-            succ->mBuild = code;
+    auto recordBuildError = [&](int code) {
+        std::lock_guard<std::mutex> lock(successor->mMutex);
+        if (successor->mState == TaskState::Created && !successor->mBuildCode)
+            successor->mBuildCode = code;
         return code;
     };
 
-    if (pred == succ)
-        return error(au::err::kErrorFlowCycleDetected);
-    if (!pred)
-        return error(au::err::kErrorInvalidParam);
+    if (predecessor == successor)
+        return recordBuildError(au::err::kErrorFlowCycleDetected);
+    if (!predecessor)
+        return recordBuildError(au::err::kErrorInvalidParam);
 
-    if (succ->mState != State::Created)
+    if (successor->mState != TaskState::Created)
         return au::err::kErrorStateInvalid;
     try {
-        if (std::find(succ->mPreds.begin(), succ->mPreds.end(), pred) != succ->mPreds.end())
-            return 0;
-        // Closure submission accepts every upstream node, and accepted targets reject new edges.
-        // Thus an accepted pred cannot depend on a Created succ. If that rule changes, revisit this guard.
-        // A Created succ has never finished, so all of its outgoing edges are in mSuccessors;
-        // an empty list rules out a return path. Expired weak entries merely keep DFS conservative.
-        if (pred->mState == State::Created && !succ->mSuccessors.empty() && reaches(pred.get(), succ.get()))
-            return error(au::err::kErrorFlowCycleDetected);
-        reserveOne(succ->mPreds);
-        if (pred->mState != State::Done) {
-            pred->mSuccessors.emplace_back(succ);
-            ++succ->mPending;
-        } else if (!succ->mDependencyError)
-            succ->mDependencyError = pred->mCode;
-        succ->mPreds.push_back(pred);
+        if (std::find(successor->mPredecessors.begin(), successor->mPredecessors.end(), predecessor) !=
+            successor->mPredecessors.end())
+            return au::err::kSuccess;
+
+        // For a new edge, handle the predecessor by state:
+        //
+        // Predecessor state      Cycle check       Completion handling
+        // Created                Search if needed  Register notification; increment pending count
+        // Pending/Ready/Running  Skip              Register notification; increment pending count
+        // Done                   Skip              Inherit result; no notification or pending count
+        //
+        // Accepted tasks have their whole upstream accepted and cannot gain new predecessors,
+        // so they cannot depend on this Created successor.
+        // A Created successor with no outgoing edges cannot lead back either.
+        // Expired weak entries may cause an extra search, but cannot hide a cycle.
+        // Check declared dependencies only; runtime mWaiting/mExecuting edges are checked
+        // separately for wait deadlocks.
+        if (predecessor->mState == TaskState::Created && !successor->mSuccessors.empty() &&
+            reaches(predecessor.get(), successor.get()))
+            return recordBuildError(au::err::kErrorFlowCycleDetected);
+        reserveOne(successor->mPredecessors);
+
+        // A Done predecessor will not complete again, so no successor notification or pending count is needed.
+        // Inherit its existing result unless another dependency has already failed.
+        if (predecessor->mState != TaskState::Done) {
+            predecessor->mSuccessors.emplace_back(successor);
+            ++successor->mPendingDependencyCount;
+        } else if (!successor->mDependencyCode)
+            successor->mDependencyCode = predecessor->mResultCode;
+
+        // Every new dependency retains its predecessor, including completed ones.
+        successor->mPredecessors.push_back(predecessor);
     } catch (...) {
-        return error(au::err::kErrorNoMemory);
+        return recordBuildError(au::err::kErrorNoMemory);
     }
 
-    return 0;
+    return au::err::kSuccess;
 }
 
-void Core::ready(Node* node)
+void Core::enqueueReady(Node* node)
 {
-    node->mState = State::Ready;
-    if (mTail)
-        mTail->mNext = node;
+    node->mState = TaskState::Ready;
+    if (mReadyTail)
+        mReadyTail->mNextReady = node;
     else
-        mHead = node;
-    mTail = node;
+        mReadyHead = node;
+    mReadyTail = node;
 }
 
-void Core::grow()
+void Core::growWorkers()
 {
-    if (!mIdle && mCount < mThreads.size()) {
-        const auto index = mCount + 1;
-        mThreads[mCount] = std::thread([this, index] { worker(index); });
-        ++mCount;
+    if (!mIdleWorkerCount && mWorkerCount < mThreads.size()) {
+        const auto workerIndex = mWorkerCount + 1;
+        mThreads[mWorkerCount] = std::thread([this, workerIndex] { workerLoop(workerIndex); });
+        ++mWorkerCount;
     }
 }
 
 int Core::submit(const NodePtr& root)
 {
-    if (root->mState != State::Created)
-        return 0;
-    if (root->mBuild)
-        return root->mBuild;
-    // Acquire placement construction before publishing callable execution.
+    if (root->mState != TaskState::Created)
+        return au::err::kSuccess;
+    if (root->mBuildCode)
+        return root->mBuildCode;
+    // Acquire payload construction published by commit before accepting execution.
     if (!root->mPayloadReady.load(std::memory_order_acquire))
         return au::err::kErrorNotReady;
     std::list<NodePtr> batch{root};
     // Ordinary independent tasks need only an accepted-list entry, not graph containers.
-    if (!root->mPreds.empty()) {
-        std::vector<NodePtr> stack(root->mPreds);
+    if (!root->mPredecessors.empty()) {
+        std::vector<NodePtr> stack(root->mPredecessors);
         std::set<Node*>      collected{root.get()};
         while (!stack.empty()) {
-            auto n = std::move(stack.back());
+            auto task = std::move(stack.back());
             stack.pop_back();
-            if (n->mState != State::Created || !collected.insert(n.get()).second)
+            if (task->mState != TaskState::Created || !collected.insert(task.get()).second)
                 continue;
-            if (n->mBuild)
-                return n->mBuild;
-            if (!n->mPayloadReady.load(std::memory_order_acquire))
+            if (task->mBuildCode)
+                return task->mBuildCode;
+            if (!task->mPayloadReady.load(std::memory_order_acquire))
                 return au::err::kErrorNotReady;
-            batch.push_back(n);
-            stack.insert(stack.end(), n->mPreds.begin(), n->mPreds.end());
+            batch.push_back(task);
+            stack.insert(stack.end(), task->mPredecessors.begin(), task->mPredecessors.end());
         }
     }
-    if (mClosing && !gCurrent && !gTileDepth)
+    // During final shutdown, reject new external submissions but let running tasks
+    // and tile callbacks enqueue the work they need to finish.
+    if (mClosing && !insideTaskOrTile())
         return au::err::kErrorStateInvalid;
-    grow();  // No accepted state if the required thread could not start.
+    growWorkers();  // No accepted state if the required thread could not start.
     for (auto it = batch.begin(); it != batch.end(); ++it) {
-        auto&                       n = *it;
-        std::lock_guard<std::mutex> lock(n->mMutex);
-        n->mAccepted = it;
-        n->mState    = State::Pending;
-        if (!n->mPending)
-            ready(n.get());
+        auto&                       task = *it;
+        std::lock_guard<std::mutex> lock(task->mMutex);
+        task->mAcceptedPos = it;
+        task->mState       = TaskState::Pending;
+        if (!task->mPendingDependencyCount)
+            enqueueReady(task.get());
     }
 
+    // splice transfers the existing list nodes without invalidating their iterators,
+    // so each task's mAcceptedPos remains valid in mAccepted and needs no update.
     mAccepted.splice(mAccepted.end(), batch);
     mChanged.notify_all();
-    return 0;
+    return au::err::kSuccess;
 }
 
-TileJob* Core::tile()
+TileJob* Core::findTileJobToHelp()
 {
-    for (auto* j = mTiles; j; j = j->mLink)
-        if (j->mHelpers.load(std::memory_order_relaxed) < kMaxTileHelpers &&
-            j->mNext.load(std::memory_order_relaxed) < j->mTotal)
+    for (auto* j = mActiveTileJobs; j; j = j->mNextJob)
+        if (j->mActiveHelpers < kMaxTileHelpers && j->mNextTileIndex.load(std::memory_order_relaxed) < j->mTileCount)
             return j;
     return nullptr;
 }
@@ -234,182 +268,279 @@ TileJob* Core::tile()
 void Core::applyAffinity(std::unique_lock<std::mutex>& lock)
 {
     for (;;) {
-        const auto generation = mAffinityGen.load(std::memory_order_acquire);
-        if (!gWorkerIndex || gAffinity == generation || mDefaultCpus.empty())
+        const auto version = mAffinityVersion;
+        // Skip non-worker threads, configurations already attempted by this worker,
+        // or an unavailable initial CPU set. Retry failed bindings only after reconfiguration.
+        if (!gWorkerIndex || gAttemptedAffinityVersion == version || mInitialCpus.empty())
             break;
-        const auto mask     = mRequestedMask;
-        const bool defaults = !mask;
+        const auto mask           = mRequestedCpuMask;
+        const bool useInitialCpus = !mask;
         lock.unlock();
-        std::array<std::uint32_t, 64> selected;
-        std::size_t                   count = 0;
-        if (!defaults)
-            for (unsigned i = 0; i < 64; ++i)
+        std::array<std::uint32_t, kAffinityMaskBits> selectedCpus;
+        std::size_t                                  cpuCount = 0;
+        if (!useInitialCpus)
+            for (unsigned i = 0; i < kAffinityMaskBits; ++i)
                 if (mask & (UINT64_C(1) << i))
-                    selected[count++] = i;
-        const int error = au::sys::setThreadAffinity(defaults ? mDefaultCpus.data() : selected.data(),
-                                                     defaults ? mDefaultCpus.size() : count);
+                    selectedCpus[cpuCount++] = i;
+        const auto* cpus  = useInitialCpus ? mInitialCpus.data() : selectedCpus.data();
+        const auto  count = useInitialCpus ? mInitialCpus.size() : cpuCount;
+        const int   error = au::sys::setThreadAffinity(cpus, count);
         if (error)
             XLOG_W("flow worker %zu: affinity application failed (%d)", gWorkerIndex, error);
         // One attempt per configuration, outside scheduler locks. Reconfigure to retry.
-        gAffinity = generation;
+        gAttemptedAffinityVersion = version;
         lock.lock();
-        if (mAffinityGen.load(std::memory_order_acquire) == generation)
+        if (mAffinityVersion == version)
             break;
     }
 }
 
-bool Core::step(std::unique_lock<std::mutex>& lock)
+// Run outside scheduler locks, keeping the current-task context through payload cleanup.
+int runTask(Node& task)
+{
+    int                 code = task.mDependencyCode;
+    au::perf::PerfScope trace{};
+    const bool          traced = !code && !task.mName.empty();
+    if (traced)
+        au::perf::traceBegin(&trace, task.mName);
+    if (!code)
+        code = boundary([&]() -> int { return task.mFunction(task.mPayload.get()); },
+                        task.mName.empty() ? "unnamed task" : task.mName.c_str());
+    if (traced)
+        au::perf::traceEnd(&trace);
+    task.mPayload.reset();
+    return code;
+}
+
+bool Core::helpOne(std::unique_lock<std::mutex>& lock)
 {
     if (mStop)
         return false;
     applyAffinity(lock);
 
-    if (auto* job = gWorkerIndex ? tile() : nullptr) {
-        job->mHelpers.fetch_add(1, std::memory_order_relaxed);  // Job lifetime is also pinned by mMutex.
+    if (auto* job = gWorkerIndex ? findTileJobToHelp() : nullptr) {
+        // Register under mMutex so the caller cannot destroy the job before this helper exits.
+        ++job->mActiveHelpers;
         lock.unlock();
         job->run(gWorkerIndex);
         lock.lock();
-        job->mHelpers.fetch_sub(1, std::memory_order_relaxed);
+        --job->mActiveHelpers;
         mChanged.notify_all();
         return true;
     }
 
-    if (!mHead || gDepth >= kMaxWaitDepth)
+    if (!mReadyHead || gTaskDepth >= kMaxTaskDepth)
         return false;
-    NodePtr n = *mHead->mAccepted;
-    mHead     = n->mNext;
-    if (!mHead)
-        mTail = nullptr;
-    n->mNext = nullptr;
+    // Take one ready task and record nested execution while holding the scheduler lock.
+    NodePtr task = *mReadyHead->mAcceptedPos;
+    mReadyHead   = task->mNextReady;
+    if (!mReadyHead)
+        mReadyTail = nullptr;
+    task->mNextReady = nullptr;
     {
-        std::lock_guard<std::mutex> state(n->mMutex);
-        n->mState = State::Running;
+        std::lock_guard<std::mutex> nodeLock(task->mMutex);
+        task->mState = TaskState::Running;
     }
 
-    Node* parent = gCurrent;
-    if (parent)
-        parent->mExecuting = n.get();
-    if (mHead) {
+    Node* previousTask = gCurrentTask;
+    if (previousTask)
+        previousTask->mExecuting = task.get();
+    if (mReadyHead) {
         try {
-            grow();
+            growWorkers();
         } catch (...) {
+            // Expansion is optional; the current executor can continue draining work.
         }
     }
 
+    // Execute and clean up the payload outside the lock, before restoring task context.
     lock.unlock();
-    gCurrent = n.get();
-    ++gDepth;
-    int                 code  = n->mDependencyError;
-    const auto          start = std::chrono::steady_clock::now();
-    au::perf::PerfScope trace{};
-    const bool          traced = !code && !n->mName.empty();
-    if (traced)
-        au::perf::traceBegin(&trace, n->mName);
-    if (!code)
-        code = boundary([&]() -> int { return n->mFunction(n->mPayload.get()); },
-                        n->mName.empty() ? "unnamed task" : n->mName.c_str());
-    if (traced)
-        au::perf::traceEnd(&trace);
-    const auto cost =
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
-    n->mPayload.reset();
-    --gDepth;
-    gCurrent = parent;
+    gCurrentTask = task.get();
+    ++gTaskDepth;
+    const int code = runTask(*task);
+    --gTaskDepth;
+    gCurrentTask = previousTask;
     lock.lock();
-    if (parent)
-        parent->mExecuting = nullptr;
+    if (previousTask)
+        previousTask->mExecuting = nullptr;
+    // Publish completion and detach links without allocating; release owners outside the lock.
     std::vector<std::weak_ptr<Node>> successors;
     std::vector<NodePtr>             predecessors;
     {
-        std::lock_guard<std::mutex> state(n->mMutex);
-        n->mCode  = code;
-        n->mCost  = cost;
-        n->mState = State::Done;
-        successors.swap(n->mSuccessors);
-        predecessors.swap(n->mPreds);  // Completed dependencies no longer participate in scheduling or wait cycles.
+        std::lock_guard<std::mutex> nodeLock(task->mMutex);
+        task->mResultCode = code;
+        task->mState      = TaskState::Done;
+        successors.swap(task->mSuccessors);
+        // Completed predecessors no longer participate in scheduling or wait cycles.
+        predecessors.swap(task->mPredecessors);
     }
 
-    for (auto& weak : successors)
-        if (auto succ = weak.lock()) {
-            {
-                std::lock_guard<std::mutex> state(succ->mMutex);
-                if (code && !succ->mDependencyError)
-                    succ->mDependencyError = code;
-                if (!--succ->mPending && succ->mState == State::Pending)
-                    ready(succ.get());
-            }
-            lock.unlock();
-            succ.reset();
-            lock.lock();
+    for (auto& weakSuccessor : successors) {
+        auto successor = weakSuccessor.lock();
+        if (!successor)
+            continue;
+        {
+            std::lock_guard<std::mutex> successorLock(successor->mMutex);
+            if (code && !successor->mDependencyCode)
+                successor->mDependencyCode = code;
+            --successor->mPendingDependencyCount;
+            if (successor->mPendingDependencyCount == 0 && successor->mState == TaskState::Pending)
+                enqueueReady(successor.get());
         }
-    mAccepted.erase(n->mAccepted);
+        lock.unlock();
+        // This temporary owner may be the last one; payload cleanup must run outside mMutex.
+        successor.reset();
+        lock.lock();
+    }
+    mAccepted.erase(task->mAcceptedPos);
     mChanged.notify_all();
     lock.unlock();
     predecessors.clear();
-    n.reset();
+    task.reset();
     lock.lock();  // Last owners/deleters never run under scheduler locks.
     return true;
 }
 
-void Core::worker(std::size_t index)
+void Core::workerLoop(std::size_t workerIndex)
 {
-    gWorkerIndex = index;
+    gWorkerIndex = workerIndex;
     std::unique_lock<std::mutex> lock(mMutex);
     while (!mStop) {
-        const auto generation = mAffinityGen.load(std::memory_order_acquire);
-        if (step(lock))
+        const auto observedAffinityVersion = mAffinityVersion;
+        if (helpOne(lock))
             continue;
-        ++mIdle;
+        ++mIdleWorkerCount;
         mChanged.wait(lock, [&] {
-            return mStop || mHead || tile() || mAffinityGen.load(std::memory_order_acquire) != generation;
+            return mStop || mReadyHead || findTileJobToHelp() || mAffinityVersion != observedAffinityVersion;
         });
-        --mIdle;
+        --mIdleWorkerCount;
     }
 }
 
-int Core::wait(const NodePtr& n)
+int Core::wait(const NodePtr& task)
 {
-    if (!n)
+    if (!task)
         return au::err::kErrorInvalidParam;
     std::unique_lock<std::mutex> lock(mMutex);
-    if (n->mState == State::Done)
-        return n->mCode;
-    if (n->mState == State::Created)
-        return n->mBuild ? n->mBuild : au::err::kErrorStateInvalid;
-    if (gTileDepth || gDepth >= kMaxWaitDepth || (gCurrent && reaches(n.get(), gCurrent, true)))
+    if (task->mState == TaskState::Done)
+        return task->mResultCode;
+    if (task->mState == TaskState::Created)
+        return task->mBuildCode ? task->mBuildCode : au::err::kErrorStateInvalid;
+    if (gTileDepth || gTaskDepth >= kMaxTaskDepth || (gCurrentTask && reaches(task.get(), gCurrentTask, true)))
         return au::err::kErrorFlowWouldDeadlock;
-    Node*  unused  = nullptr;
-    Node*& waiting = gCurrent ? gCurrent->mWaiting : unused;
+    Node*  externalWaitTarget = nullptr;
+    Node*& waitTarget         = gCurrentTask ? gCurrentTask->mWaiting : externalWaitTarget;
 
-    struct Restore
+    struct RestoreWaitTarget
     {
         Node*& mSlot;
         Node*  mOld;
 
-        ~Restore() { mSlot = mOld; }
-    } restore{waiting, waiting};
+        ~RestoreWaitTarget() { mSlot = mOld; }
+    } restore{waitTarget, waitTarget};
 
-    waiting = n.get();
-    while (n->mState != State::Done)
-        if (!step(lock))
+    waitTarget = task.get();
+    while (task->mState != TaskState::Done)
+        if (!helpOne(lock))
             mChanged.wait(lock);
-    return n->mCode;
+    return task->mResultCode;
 }
 
-void TileJob::run(std::size_t worker) noexcept
+void Core::runTiles(TileJob& job)
+{
+    auto lock = submissionLock(*this);
+    if (mClosing) {
+        lock.unlock();
+        job.run(0);
+        return;
+    }
+
+    // Includes single-tile calls: a release barrier must not miss their body.
+    ++mTileCallers;
+    if (job.mTileCount > 1) {
+        job.mNextJob    = mActiveTileJobs;
+        mActiveTileJobs = &job;
+        for (std::size_t i = 0; i < kMaxTileHelpers; ++i) {
+            try {
+                growWorkers();
+            } catch (...) {
+                // Helpers are optional; the caller still processes the remaining tiles.
+                break;
+            }
+            mChanged.notify_one();
+        }
+    }
+
+    lock.unlock();
+    job.run(0);
+    lock.lock();
+    if (job.mTileCount > 1) {
+        auto** link = &mActiveTileJobs;
+        while (*link != &job)
+            link = &(*link)->mNextJob;
+        // Stop new helpers from joining, then wait before destroying this stack-allocated job.
+        *link = job.mNextJob;
+        mChanged.wait(lock, [&] { return job.mActiveHelpers == 0; });
+    }
+
+    --mTileCallers;
+    mChanged.notify_all();
+}
+
+int Core::waitAll()
+{
+    std::unique_lock<std::mutex> lock(mMutex);
+    while (!mAccepted.empty() || mTileCallers)
+        if (!helpOne(lock))
+            mChanged.wait(lock);
+    return 0;
+}
+
+int Core::releaseWorkers()
+{
+    std::array<std::thread, kMaxWorkers> retired;
+    std::unique_lock<std::mutex>         lock(mMutex);
+    mChanged.wait(lock, [&] { return !mReleasing; });
+    if (mClosing)
+        return au::err::kErrorStateInvalid;
+    mReleasing = true;
+    lock.unlock();
+    const int error = boundary([&]() -> int { return waitAll(); });
+    lock.lock();
+    if (error) {
+        mReleasing = false;
+        mChanged.notify_all();
+        return error;
+    }
+    mStop = true;
+    mChanged.notify_all();
+    retired.swap(mThreads);
+    lock.unlock();
+    for (auto& thread : retired)
+        if (thread.joinable())
+            thread.join();
+    lock.lock();
+    mWorkerCount = 0;
+    mStop        = false;
+    mReleasing   = false;
+    mChanged.notify_all();
+    return 0;
+}
+
+void TileJob::run(std::size_t workerIndex) noexcept
 {
     ++gTileDepth;
-    std::size_t index = mNext.load(std::memory_order_relaxed);
-    while (index < mTotal) {
-        if (!mNext.compare_exchange_weak(index, index + 1, std::memory_order_relaxed))
+    std::size_t tileIndex = mNextTileIndex.load(std::memory_order_relaxed);
+    while (tileIndex < mTileCount) {
+        if (!mNextTileIndex.compare_exchange_weak(tileIndex, tileIndex + 1, std::memory_order_relaxed))
             continue;
-        const auto begin = index * mTile;
+        const auto begin = tileIndex * mTile;
         try {
-            mFunction(begin, begin + std::min(mTile, mRange - begin), worker, mData);
+            mFunction(begin, begin + std::min(mTile, mRange - begin), workerIndex, mData);
         } catch (...) {
             std::terminate();
         }
-        index = mNext.load(std::memory_order_relaxed);
+        tileIndex = mNextTileIndex.load(std::memory_order_relaxed);
     }
 
     --gTileDepth;
@@ -421,14 +552,7 @@ void TileJob::run(std::size_t worker) noexcept
 namespace {
 typedef au::flow::detail::NodePtr NodePtr;
 
-NodePtr node(XFlowTaskHandle h) { return h ? h->mNode : NodePtr(); }
-
-std::unique_lock<std::mutex> submissionLock(au::flow::detail::Core& c)
-{
-    std::unique_lock<std::mutex> lock(c.mMutex);
-    c.mChanged.wait(lock, [&] { return !c.mReleasing || au::flow::detail::gCurrent || au::flow::detail::gTileDepth; });
-    return lock;
-}
+NodePtr node(XFlowTaskHandle handle) { return handle ? handle->mNode : NodePtr(); }
 
 }  // namespace
 
@@ -442,130 +566,126 @@ XFlowTaskHandle au_flow_create_task(const char* name, XFlowTaskFn fn, void* data
         auto owner               = std::make_shared<XFlowTaskNode>(fn);
         owner->mStorage.mPayload = std::move(payload);
         owner->mStorage.mName    = name ? name : "";
-        owner->mNode             = NodePtr(owner, &owner->mStorage);
+        // Establish the self-owning C pin only after all throwing initialization has succeeded.
+        owner->mNode = NodePtr(owner, &owner->mStorage);
         return owner.get();
     } catch (...) {
         return nullptr;
     }
 }
 
-XFlowTaskHandle au_flow_create_task_ex(const char* name, size_t size, size_t alignment, XFlowTaskFn fn,
-                                       XFlowDeleterFn destroy, void** out) noexcept
+XFlowTaskHandle au_flow_create_task_ex(const char* name, size_t payloadSize, size_t payloadAlignment, XFlowTaskFn fn,
+                                       XFlowDeleterFn destroyPayload, void** outPayload) noexcept
 {
-    if (out)
-        *out = nullptr;
-    if (!out || !fn || !size || !alignment || (alignment & (alignment - 1)))
+    if (outPayload)
+        *outPayload = nullptr;
+    const bool validAlignment = payloadAlignment != 0 && (payloadAlignment & (payloadAlignment - 1)) == 0;
+    if (!outPayload || !fn || !payloadSize || !validAlignment)
         return nullptr;
     try {
-        auto  owner   = std::make_shared<XFlowTaskNode>(fn);
-        auto& n       = owner->mStorage;
-        n.mName       = name ? name : "";
-        void* storage = owner->mInlinePayload;
-        if (size > XFlowTaskNode::kInlinePayloadCapacity || alignment > alignof(std::max_align_t)) {
-            if (alignment > alignof(std::max_align_t))
-                storage = ::operator new(size, std::align_val_t(alignment));
+        auto  owner        = std::make_shared<XFlowTaskNode>(fn);
+        auto& task         = owner->mStorage;
+        task.mName         = name ? name : "";
+        void*      storage = owner->mInlinePayload;
+        const bool needsFallback =
+            payloadSize > XFlowTaskNode::kInlinePayloadCapacity || payloadAlignment > alignof(std::max_align_t);
+        if (needsFallback) {
+            if (payloadAlignment > alignof(std::max_align_t))
+                storage = ::operator new(payloadSize, std::align_val_t(payloadAlignment));
             else
-                storage = ::operator new(size);
-            n.mPayload.get_deleter().mAlignment = alignment;
+                storage = ::operator new(payloadSize);
+            task.mPayload.get_deleter().mAlignment = payloadAlignment;
         }
-        n.mPayload.reset(storage);
-        n.mPendingDestroy = destroy;
-        n.mPayloadReady.store(false, std::memory_order_relaxed);  // Not yet published to another owner.
-        owner->mNode = NodePtr(owner, &n);
-        *out         = storage;
+        task.mPayload.reset(storage);
+        task.mPendingDestroy = destroyPayload;                       // Destructor only; the runtime owns the storage.
+        task.mPayloadReady.store(false, std::memory_order_relaxed);  // Not yet published to another owner.
+        // Establish the self-owning C pin only after all throwing initialization has succeeded.
+        owner->mNode = NodePtr(owner, &task);
+        *outPayload  = storage;
         return owner.get();
     } catch (...) {
         return nullptr;
     }
 }
 
-int au_flow_commit_task_payload(XFlowTaskHandle h) noexcept
+int au_flow_commit_task_payload(XFlowTaskHandle handle) noexcept
 {
     return au::flow::detail::boundary([&]() -> int {
-        auto n = node(h);
-        if (!n)
+        auto task = node(handle);
+        if (!task)
             return au::err::kErrorInvalidParam;
-        std::lock_guard<std::mutex> lock(n->mMutex);
-        if (n->mState != au::flow::detail::State::Created || n->mPayloadReady.load(std::memory_order_relaxed))
+        std::lock_guard<std::mutex> lock(task->mMutex);
+        if (task->mState != au::flow::detail::TaskState::Created || task->mPayloadReady.load(std::memory_order_relaxed))
             return au::err::kErrorInvalidParam;
-        n->mPayload.get_deleter().mDestroy = n->mPendingDestroy;
-        n->mPayloadReady.store(true, std::memory_order_release);
+        task->mPayload.get_deleter().mDestroy = task->mPendingDestroy;
+        task->mPayloadReady.store(true, std::memory_order_release);
         return 0;
     });
 }
 
-void au_flow_retain_task(XFlowTaskHandle h) noexcept
+void au_flow_retain_task(XFlowTaskHandle handle) noexcept
 {
-    if (h)
-        h->mRefs.fetch_add(1, std::memory_order_relaxed);
+    if (handle)
+        handle->mRefs.fetch_add(1, std::memory_order_relaxed);
 }
 
-void au_flow_release_task(XFlowTaskHandle h) noexcept
+void au_flow_release_task(XFlowTaskHandle handle) noexcept
 {
     // The alias owns the handle, Node and inline bytes together. Accepted work
     // may outlive the last C handle; only drop its C owning pin here.
-    if (h && h->mRefs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        auto owner = std::move(h->mNode);
+    if (handle && handle->mRefs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        auto owner = std::move(handle->mNode);
     }
 }
 
-int au_flow_add_dependency(XFlowTaskHandle a, XFlowTaskHandle b) noexcept
+int au_flow_add_dependency(XFlowTaskHandle predecessorHandle, XFlowTaskHandle successorHandle) noexcept
 {
-    const auto pred = node(a), succ = node(b);
+    const auto pred = node(predecessorHandle);
+    const auto succ = node(successorHandle);
     return au::flow::detail::boundary([&]() -> int {
-        auto&                       c = au::flow::detail::core();
-        std::lock_guard<std::mutex> lock(c.mMutex);
-        return c.edge(pred, succ);
+        auto&                       runtime = au::flow::detail::core();
+        std::lock_guard<std::mutex> lock(runtime.mMutex);
+        return runtime.addDependency(pred, succ);
     });
 }
 
-int au_flow_enqueue_task(XFlowTaskHandle h) noexcept
+int au_flow_enqueue_task(XFlowTaskHandle handle) noexcept
 {
-    if (!h)
+    if (!handle)
         return au::err::kErrorInvalidParam;
     return au::flow::detail::boundary([&]() -> int {
-        auto& c = au::flow::detail::core();
-        auto  l = submissionLock(c);
-        return c.submit(node(h));
+        auto& runtime = au::flow::detail::core();
+        auto  lock    = au::flow::detail::submissionLock(runtime);
+        return runtime.submit(node(handle));
     });
 }
 
-int au_flow_wait_task(XFlowTaskHandle h) noexcept
+int au_flow_wait_task(XFlowTaskHandle handle) noexcept
 {
-    return au::flow::detail::boundary([&]() -> int { return au::flow::detail::core().wait(node(h)); });
+    return au::flow::detail::boundary([&]() -> int { return au::flow::detail::core().wait(node(handle)); });
 }
 
-int au_flow_get_task_result(XFlowTaskHandle h) noexcept
+int au_flow_get_task_result(XFlowTaskHandle handle) noexcept
 {
-    if (!h)
+    if (!handle)
         return au::err::kErrorInvalidParam;
     return au::flow::detail::boundary([&]() -> int {
-        std::lock_guard<std::mutex> lock(h->mNode->mMutex);
-        if (h->mNode->mState == au::flow::detail::State::Done)
-            return h->mNode->mCode;
-        return h->mNode->mBuild ? h->mNode->mBuild : au::err::kErrorNotReady;
+        auto&                       task = handle->mStorage;
+        std::lock_guard<std::mutex> lock(task.mMutex);
+        if (task.mState == au::flow::detail::TaskState::Done)
+            return task.mResultCode;
+        return task.mBuildCode ? task.mBuildCode : au::err::kErrorNotReady;
     });
 }
 
-int au_flow_task_done(XFlowTaskHandle h) noexcept
+int au_flow_task_done(XFlowTaskHandle handle) noexcept
 {
-    if (!h)
+    if (!handle)
         return 0;
     try {
-        std::lock_guard<std::mutex> lock(h->mNode->mMutex);
-        return h->mNode->mState == au::flow::detail::State::Done;
-    } catch (...) {
-        return 0;
-    }
-}
-
-int64_t au_flow_get_task_cost_us(XFlowTaskHandle h) noexcept
-{
-    if (!h)
-        return 0;
-    try {
-        std::lock_guard<std::mutex> lock(h->mNode->mMutex);
-        return h->mNode->mCost;
+        auto&                       task = handle->mStorage;
+        std::lock_guard<std::mutex> lock(task.mMutex);
+        return task.mState == au::flow::detail::TaskState::Done;
     } catch (...) {
         return 0;
     }
@@ -577,11 +697,11 @@ void au_flow_parallelize_tile_ex(size_t range, size_t tile, XFlowTileExFn fn, vo
         return;
     tile = tile ? tile : 1;
     au::flow::detail::TileJob job;
-    job.mRange    = range;
-    job.mTile     = tile;
-    job.mTotal    = range / tile + (range % tile != 0);
-    job.mFunction = fn;
-    job.mData     = data;
+    job.mRange     = range;
+    job.mTile      = tile;
+    job.mTileCount = range / tile + (range % tile != 0);
+    job.mFunction  = fn;
+    job.mData      = data;
     if (au::flow::detail::gTileDepth) {
         job.run(0);
         return;
@@ -595,109 +715,39 @@ void au_flow_parallelize_tile_ex(size_t range, size_t tile, XFlowTileExFn fn, vo
         return;
     }
 
-    auto& c    = *runtime;
-    auto  lock = submissionLock(c);
-    if (c.mClosing) {
-        lock.unlock();
-        job.run(0);
-        return;
-    }
-
-    // Includes single-tile calls: a release barrier must not miss their body.
-    ++c.mTileCallers;
-    if (job.mTotal > 1) {
-        job.mLink = c.mTiles;
-        c.mTiles  = &job;
-        for (std::size_t i = 0; i < au::flow::detail::kMaxTileHelpers; ++i) {
-            try {
-                c.grow();
-            } catch (...) {
-                break;
-            }
-            c.mChanged.notify_one();
-        }
-    }
-
-    lock.unlock();
-    job.run(0);
-    lock.lock();
-    if (job.mTotal > 1) {
-        auto** link = &c.mTiles;
-        while (*link != &job)
-            link = &(*link)->mLink;
-        *link = job.mLink;
-        c.mChanged.wait(lock, [&] { return job.mHelpers.load(std::memory_order_relaxed) == 0; });
-    }
-
-    --c.mTileCallers;
-    c.mChanged.notify_all();
+    runtime->runTiles(job);
 }
 
 int au_flow_wait_all() noexcept
 {
     return au::flow::detail::boundary([]() -> int {
-        if (au::flow::detail::gCurrent || au::flow::detail::gTileDepth)
+        if (au::flow::detail::insideTaskOrTile())
             return au::err::kErrorFlowWouldDeadlock;
-        auto&                        c = au::flow::detail::core();
-        std::unique_lock<std::mutex> lock(c.mMutex);
-        while (!c.mAccepted.empty() || c.mTileCallers)
-            if (!c.step(lock))
-                c.mChanged.wait(lock);
-        return 0;
+        return au::flow::detail::core().waitAll();
     });
 }
 
 int au_flow_release_workers() noexcept
 {
-    // A synchronous task/tile cannot drain itself or join its own pool thread.
-    if (au::flow::detail::gCurrent || au::flow::detail::gTileDepth || au::flow::detail::gWorkerIndex)
+    // Tasks/tiles cannot drain themselves. A worker may also run a payload deleter outside
+    // task context; it must not join its own thread then either.
+    if (au::flow::detail::insideTaskOrTile() || au::flow::detail::gWorkerIndex)
         return au::err::kErrorFlowWouldDeadlock;
-    return au::flow::detail::boundary([]() -> int {
-        auto&                                                  c = au::flow::detail::core();
-        std::array<std::thread, au::flow::detail::kMaxWorkers> retired;
-        std::unique_lock<std::mutex>                           lock(c.mMutex);
-        c.mChanged.wait(lock, [&] { return !c.mReleasing; });
-        if (c.mClosing)
-            return au::err::kErrorStateInvalid;
-        c.mReleasing = true;
-        lock.unlock();
-        const int error = au_flow_wait_all();
-        lock.lock();
-        if (error) {
-            c.mReleasing = false;
-            c.mChanged.notify_all();
-            return error;
-        }
-        c.mStop = true;
-        c.mChanged.notify_all();
-        for (size_t i = 0; i < c.mThreads.size(); ++i)
-            retired[i] = std::move(c.mThreads[i]);
-        lock.unlock();
-        for (auto& thread : retired)
-            if (thread.joinable())
-                thread.join();
-        lock.lock();
-        c.mCount     = 0;
-        c.mIdle      = 0;
-        c.mStop      = false;
-        c.mReleasing = false;
-        c.mChanged.notify_all();
-        return 0;
-    });
+    return au::flow::detail::boundary([]() -> int { return au::flow::detail::core().releaseWorkers(); });
 }
 
 int au_flow_set_affinity_mask(uint64_t mask) noexcept
 {
     return au::flow::detail::boundary([&]() -> int {
-        auto& c = au::flow::detail::core();
-        if (c.mAffinityStatus)
-            return c.mAffinityStatus;
-        if (mask & ~c.mDefaultMask)
+        auto& runtime = au::flow::detail::core();
+        if (runtime.mAffinityInitCode)
+            return runtime.mAffinityInitCode;
+        if (mask & ~runtime.mInitialCpuMask)
             return au::err::kErrorInvalidParam;
-        std::lock_guard<std::mutex> lock(c.mMutex);
-        c.mRequestedMask = mask;
-        c.mAffinityGen.fetch_add(1, std::memory_order_release);  // Workers acquire the accepted configuration.
-        c.mChanged.notify_all();
+        std::lock_guard<std::mutex> lock(runtime.mMutex);
+        runtime.mRequestedCpuMask = mask;
+        ++runtime.mAffinityVersion;
+        runtime.mChanged.notify_all();
         return 0;
     });
 }
@@ -705,9 +755,9 @@ int au_flow_set_affinity_mask(uint64_t mask) noexcept
 uint64_t au_flow_get_affinity_mask() noexcept
 {
     try {
-        auto&                       c = au::flow::detail::core();
-        std::lock_guard<std::mutex> lock(c.mMutex);
-        return c.mRequestedMask ? c.mRequestedMask : c.mDefaultMask;
+        auto&                       runtime = au::flow::detail::core();
+        std::lock_guard<std::mutex> lock(runtime.mMutex);
+        return runtime.mRequestedCpuMask ? runtime.mRequestedCpuMask : runtime.mInitialCpuMask;
     } catch (...) {
         return 0;
     }
@@ -716,9 +766,9 @@ uint64_t au_flow_get_affinity_mask() noexcept
 size_t au_flow_get_worker_count() noexcept
 {
     try {
-        auto&                       c = au::flow::detail::core();
-        std::lock_guard<std::mutex> lock(c.mMutex);
-        return c.mCount;
+        auto&                       runtime = au::flow::detail::core();
+        std::lock_guard<std::mutex> lock(runtime.mMutex);
+        return runtime.mWorkerCount;
     } catch (...) {
         return 0;
     }

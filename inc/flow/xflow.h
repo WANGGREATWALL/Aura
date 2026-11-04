@@ -31,8 +31,8 @@
  * Copies share work, not independent graph templates: later composition accumulates dependencies.
  * Built edges are not rolled back when an expression is discarded. A bare b | c adds only a
  * join after its branches, not a shared predecessor before them. Chaining k branches with |
- * creates k-1 joins linked in series; Tasks{...} or Tasks::parallel(first, last) creates one
- * join for all branches and sorts the heads once.
+ * creates k-1 joins linked in series and copies/re-sorts accumulated heads at each level.
+ * Tasks{...} or Tasks::parallel(first, last) creates one join and sorts the heads once.
  *
  * @par Example: flat parallel versus binary |
  *        Tasks::parallel(first, last) / Tasks{a, b, c, d}: one join, n edges
@@ -80,17 +80,48 @@
  * either at the last GPU task's end or the consumer's start. Consecutive kernels may enqueue without
  * host waits; use queue order or explicit event dependencies. Prefer the needed event over clFinish().
  *
- * @par Example: parallel branches and a join
- *        ┌── b ──┐
- * a ─────┤       ├──> done
- *        └── c ──┘
+ * @par Example: nested branches and a dynamic batch
+ * prepare precedes three branches: decode -> filter, detect -> (refine | score), and a
+ * runtime-sized batch. All three branches finish before render and save; done waits for both.
+ * J1..J4 are the ordinary join tasks created by |, Tasks{...}, and parallel().
+ * @verbatim
+ *           ┌─> decode ──> filter ────────────┐
+ *           │            ┌─> refine ─┐        │        ┌─> render ──┐
+ * prepare ──┼─> detect ──┤           ├─> J1 ──┼─> J3 ──┤            ├─> J4 ─> done
+ *           │            └─> score ──┘        │        └─> save ────┘
+ *           │                                 │
+ *           │   ┌─> batch[0] ───┐             │
+ *           └───┼─> batch[1] ───┼─> J2 ───────┘
+ *               ├─> batch[2] ───┤
+ *               └─> batch[3] ───┘
+ * @endverbatim
+ *
+ * The empty task bodies below stand in for application work. Build first, then enqueue once.
  * @code
  * auto& flow = au::flow::Flow::get();
- * auto a = flow.create([] {});  // Prepare input.
- * auto b = flow.create([] {});  // First branch.
- * auto c = flow.create([] {});  // Second branch.
- * auto done = flow.create([] {});  // Consume results.
- * int code = flow.enqueue(a >> (b | c) >> done).wait();
+ * auto makeTask = [&flow](const char* name) {
+ *     return flow.createNamed(name, [] {});
+ * };
+ * auto prepare = makeTask("prepare");
+ * auto decode  = makeTask("decode");
+ * auto filter  = makeTask("filter");
+ * auto detect  = makeTask("detect");
+ * auto refine  = makeTask("refine");
+ * auto score   = makeTask("score");
+ * auto render  = makeTask("render");
+ * auto save    = makeTask("save");
+ * auto done    = makeTask("done");
+ *
+ * std::vector<au::flow::Task> batch;
+ * for (std::size_t i = 0; i < 4; ++i)
+ *     batch.push_back(makeTask("batch item"));
+ *
+ * auto graph = prepare >> au::flow::Tasks{
+ *     decode >> filter,                                      // One serial branch.
+ *     detect >> (refine | score),                             // Nested two-way fork/join.
+ *     au::flow::Tasks::parallel(batch.begin(), batch.end())    // Dynamic flat branches.
+ * } >> (render | save) >> done;
+ * int code = flow.enqueue(graph).wait();
  * @endcode
  */
 
@@ -277,13 +308,6 @@ public:
      */
     bool done() const { return mError || au_flow_task_done(mHandle); }
 
-    /**
-     * @brief Read final execution time in microseconds without waiting.
-     * @return Final elapsed time; 0 while unfinished or when unavailable.
-     * @note Wall time excludes queue/dependency delay; a completed task can take less than one microsecond.
-     */
-    int64_t costUs() const { return au_flow_get_task_cost_us(mHandle); }
-
     /// Borrow the raw handle; retain it separately if it must outlive this owner.
     XFlowTaskHandle nativeHandle() const noexcept { return mHandle; }
 
@@ -307,16 +331,16 @@ public:
     /// Convert one task without creating a node. An invalid task is an error, not an empty expression.
     Tasks(const Task& task) : mLast(task), mError(task.mError)
     {
-        if (!mError) {
-            if (!task.valid())
-                mError = au::err::kErrorInvalidParam;
-            else {
-                try {
-                    mHeads.push_back(task);
-                } catch (const std::bad_alloc&) {
-                    mError = au::err::kErrorNoMemory;
-                }
-            }
+        if (mError)
+            return;
+        if (!task.valid()) {
+            mError = au::err::kErrorInvalidParam;
+            return;
+        }
+        try {
+            mHeads.push_back(task);
+        } catch (const std::bad_alloc&) {
+            mError = au::err::kErrorNoMemory;
         }
     }
 
@@ -354,8 +378,7 @@ public:
      * @param last One past the final branch.
      * @return An expression; build errors are reported by enqueue().wait()/code().
      * @note Empty branches are identities; one branch creates no node, multiple branches create
-     *       one ordinary join task. Prefer this or Tasks{...} over a long chain of binary |, which
-     *       creates one join per level and re-sorts the accumulated heads at every level.
+     *       one ordinary join task. Prefer this or Tasks{...} for many branches; see the file-level example.
      */
     template <class Iterator>
     static Tasks parallel(Iterator first, Iterator last);
@@ -403,12 +426,8 @@ inline Tasks operator>>(const Tasks& a, const Tasks& b)
  * @param b Second fragment; accepted tasks are allowed.
  * @return An expression; branch failures skip its join and propagate an upstream error.
  * @note No entry task is created. Use parentheses around parallel sections when mixing | and >>.
- * @note Chaining k branches with | builds k-1 join tasks linked in series: every level adds a
- *       real node, one more dispatch hop on the way to the exit, and a copy plus re-sort of the
- *       accumulated head list, so construction is superlinear. Tasks{...} and Tasks::parallel()
- *       build one join for all branches and sort once. Heads, exit condition and skip-on-failure
- *       behavior are the same either way; only graph topology and cost differ. The file-level
- *       Example draws both topologies.
+ * @note For many branches, prefer Tasks{...} or Tasks::parallel(); the file-level example
+ *       explains their flatter topology and lower construction overhead.
  */
 inline Tasks operator|(const Tasks& a, const Tasks& b);
 
@@ -514,8 +533,8 @@ public:
      * @brief Enqueue an expression and its unsubmitted upstream dependencies atomically.
      * @param tasks Serial/parallel expression.
      * @return Its completion Task, or a task carrying the build/submission error; failure accepts no new work.
-     * @note Accepted nodes are not rerun. Empty expressions submit one empty task. costUs() measures
-     *       only the exit task, not the whole graph. Failed results own no node and leave originals unchanged.
+     * @note Accepted nodes are not rerun. Empty expressions submit one empty task.
+     *       Failed results own no node and leave originals unchanged.
      */
     Task enqueue(const Tasks& tasks)
     {

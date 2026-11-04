@@ -12,8 +12,7 @@
  *
  * @note Completion means the callable returned or the task was skipped, and its payload was
  *       destroyed. Device work the callable starts asynchronously is not tracked.
- * @note All entry points are noexcept and report failures as negative error codes; no C++
- *       exception crosses this ABI.
+ * @note No C++ exception crosses this ABI. See each function for its failure return value.
  */
 
 #include <stddef.h>
@@ -57,8 +56,9 @@ typedef void (*XFlowTileExFn)(size_t begin, size_t end, size_t worker_idx, void*
  * @param user_data Data passed to the task body.
  * @param deleter Cleanup for user_data, or null for borrowed data.
  * @return An owned handle, or null on failure.
- * @note Cleanup runs after execution or skipping, or when an unsubmitted task is destroyed.
- *       A supplied deleter also runs on creation failure; do not free the data again.
+ * @note For non-null user_data, cleanup runs after execution or skipping, or when an unsubmitted
+ *       task is destroyed. A supplied deleter also runs on creation failure; do not free the data again.
+ *       Null user_data never invokes the deleter.
  */
 AU_API XFlowTaskHandle au_flow_create_task(const char* name, XFlowTaskFn fn, void* user_data,
                                            XFlowDeleterFn deleter) XFLOW_NOEXCEPT;
@@ -114,8 +114,7 @@ AU_API int au_flow_add_dependency(XFlowTaskHandle pred, XFlowTaskHandle succ) XF
  * @note The upstream walk collects unsubmitted predecessors and stops at any predecessor that is
  *       already accepted (pending, running, or done). Accepted tasks are not enqueued again or
  *       executed twice; their own predecessors were accepted at the same time.
- * @note Completion means the callable returned or the task was skipped, and its payload was
- *       destroyed. Device work the callable starts asynchronously is not tracked.
+ * @note Does not synchronize asynchronous device work; see the file-level completion note.
  */
 AU_API int au_flow_enqueue_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 
@@ -125,12 +124,10 @@ AU_API int au_flow_enqueue_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
  * @return Task result; for an unsubmitted task, its saved build error or kErrorStateInvalid;
  *         otherwise a wait error.
  * @note Waiting is cooperative: the caller may execute other tasks that are already accepted.
- *       Waiting never enqueues its target. A task completes when its callable has returned or
- *       been skipped, and its payload has been destroyed. Device work started asynchronously
- *       by the callable is not tracked.
- * @note A wait that could deadlock returns kErrorFlowWouldDeadlock without blocking. This includes
- *       waiting from a tile callback, exceeding the cooperative-wait depth limit, waiting on a
- *       task that depends on the waiting task, or a wait cycle between tasks.
+ *       Waiting never enqueues its target or synchronizes device work; see the file-level completion note.
+ * @note Completed tasks return their result immediately, including inside tile callbacks.
+ *       For accepted but unfinished tasks, tile callbacks, the depth limit, and dependency or
+ *       runtime wait cycles cause kErrorFlowWouldDeadlock instead of blocking.
  */
 AU_API int au_flow_wait_task(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 
@@ -152,14 +149,6 @@ AU_API int au_flow_get_task_result(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 AU_API int au_flow_task_done(XFlowTaskHandle task) XFLOW_NOEXCEPT;
 
 /**
- * @brief Read the final execution time in microseconds.
- * @param task Task to query.
- * @return Elapsed execution time; 0 before completion, for an invalid handle, or on query failure.
- * @note Does not wait. Wall time excludes queue/dependency delay; a completed task can also report 0.
- */
-AU_API int64_t au_flow_get_task_cost_us(XFlowTaskHandle task) XFLOW_NOEXCEPT;
-
-/**
  * @brief Run [0, range) as a synchronous parallel loop; returns after all tiles finish.
  * @param range Number of elements; zero returns immediately.
  * @param tile Elements per tile; zero means 1. The last tile may be smaller.
@@ -170,10 +159,8 @@ AU_API int64_t au_flow_get_task_cost_us(XFlowTaskHandle task) XFLOW_NOEXCEPT;
  * @note The calling thread uses lane 0 and runs tiles itself, so the loop does not depend on a
  *       free worker. Up to 3 pool workers join as helpers. Nested calls run serially on the
  *       calling thread with worker_idx 0; external waiters do not help.
- * @note Workers that become free first help this loop (up to 3 helpers); only then do they take
- *       more queued async tasks. The caller also runs tiles, so the loop completes even if no
- *       worker is free. Once the loop finishes, all workers resume queued async tasks. Because
- *       callbacks must not block, neither side can wait on the other forever.
+ * @note Workers prefer a tile loop with unclaimed tiles and a free helper slot over queued tasks.
+ *       Multiple loops may be active; scheduling does not guarantee fairness between loops and tasks.
  * @note fn must not throw (a throw terminates) or wait on unfinished tasks. Concurrent loops
  *       must use separate scratch arrays. Record callback errors in user_data and check them
  *       after this call returns.
@@ -202,9 +189,10 @@ AU_API int au_flow_wait_all(void) XFLOW_NOEXCEPT;
 AU_API int au_flow_set_affinity_mask(uint64_t mask) XFLOW_NOEXCEPT;
 
 /**
- * @brief Read the requested worker affinity mask for CPUs 0..N.
- * @return Requested mask, or 0 when unavailable.
- * @note Not proof of each worker's actual binding; a zero request also restores allowed CPUs numbered above 63.
+ * @brief Read the configured worker affinity mask for CPUs 0..63.
+ * @return Nonzero requested mask, otherwise the initial CPU set's low 64 bits; 0 on query failure.
+ * @note Not proof of each worker's actual binding. A zero request restores the full initial set,
+ *       including CPUs above 63 that this query cannot represent; the returned mask can therefore be 0.
  */
 AU_API uint64_t au_flow_get_affinity_mask(void) XFLOW_NOEXCEPT;
 
