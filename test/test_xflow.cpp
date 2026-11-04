@@ -218,6 +218,38 @@ TEST_F(XFlow, InlineAndLargePayloadLifetime)
     ASSERT_NE(raw, nullptr);
     EXPECT_EQ(au_flow_enqueue_task(raw), au::err::kErrorNotReady);
     au_flow_release_task(raw);
+
+    // Payload cleanup remains task context, including when it submits work during closing.
+    struct CleanupContext
+    {
+        au::flow::Task mChild;
+        int            mReleaseCode = 0;
+    } context;
+
+    au::flow::Task cleanup(au_flow_create_task(
+        "cleanup-context",
+        [](void*) -> int {
+            auto&                       runtime = au::flow::detail::core();
+            std::lock_guard<std::mutex> lock(runtime.mMutex);
+            runtime.mClosing = true;
+            return 0;
+        },
+        &context,
+        [](void* data) {
+            auto& state        = *static_cast<CleanupContext*>(data);
+            auto& flow         = au::flow::Flow::get();
+            state.mReleaseCode = flow.releaseWorkers();
+            state.mChild       = flow.enqueue([] {});
+
+            auto&                       runtime = au::flow::detail::core();
+            std::lock_guard<std::mutex> lock(runtime.mMutex);
+            runtime.mClosing = false;
+        }));
+    ASSERT_TRUE(cleanup.valid());
+    EXPECT_EQ(flow.enqueue(cleanup).wait(), 0);
+    EXPECT_EQ(context.mReleaseCode, au::err::kErrorFlowWouldDeadlock);
+    EXPECT_TRUE(context.mChild.valid());
+    EXPECT_EQ(context.mChild.wait(), 0);
 }
 
 TEST_F(XFlow, CompletedDependenciesDoNotRetainHistory)
@@ -284,7 +316,6 @@ TEST_F(XFlow, FailedResultsDoNotOwnNodes)
     EXPECT_TRUE(failure.done());
     EXPECT_EQ(failure.nativeHandle(), nullptr);
     EXPECT_EQ(failure.wait(), au::err::kErrorInvalidParam);
-    EXPECT_EQ(failure.costUs(), 0);
     auto copy  = failure;
     auto moved = std::move(copy);
     EXPECT_EQ(moved.code(), au::err::kErrorInvalidParam);
@@ -519,7 +550,6 @@ TEST_F(XFlow, CompletionQueriesAndIndependentBarriers)
     EXPECT_TRUE(until([&] { return entered.load(std::memory_order_acquire); }));
     EXPECT_FALSE(running.done());
     EXPECT_EQ(running.code(), au::err::kErrorNotReady);
-    EXPECT_EQ(running.costUs(), 0);
     release.store(true, std::memory_order_release);
     EXPECT_EQ(running.wait(), au::err::kErrorNotReady);
     EXPECT_TRUE(running.done());
@@ -768,7 +798,6 @@ TEST_F(XFlow, ExpressionsNamedTasksAndEmptyIdentity)
     EXPECT_EQ(flow.enqueue(copy).wait(), 0);
     EXPECT_EQ(flow.enqueueAfter(copy, [] {}).wait(), 0);
     EXPECT_EQ(count.load(std::memory_order_relaxed), 3);
-    EXPECT_GE(a.costUs(), 0);
     auto emptyCompletion = flow.enqueue(empty);
     EXPECT_TRUE(emptyCompletion.valid());
     EXPECT_EQ(emptyCompletion.wait(), 0);

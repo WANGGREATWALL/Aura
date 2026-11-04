@@ -308,13 +308,6 @@ public:
      */
     bool done() const { return mError || au_flow_task_done(mHandle); }
 
-    /**
-     * @brief Read final execution time in microseconds without waiting.
-     * @return Final elapsed time; 0 while unfinished or when unavailable.
-     * @note Wall time excludes queue/dependency delay; a completed task can take less than one microsecond.
-     */
-    int64_t costUs() const { return au_flow_get_task_cost_us(mHandle); }
-
     /// Borrow the raw handle; retain it separately if it must outlive this owner.
     XFlowTaskHandle nativeHandle() const noexcept { return mHandle; }
 
@@ -545,8 +538,8 @@ public:
      * @brief Enqueue an expression and its unsubmitted upstream dependencies atomically.
      * @param tasks Serial/parallel expression.
      * @return Its completion Task, or a task carrying the build/submission error; failure accepts no new work.
-     * @note Accepted nodes are not rerun. Empty expressions submit one empty task. costUs() measures
-     *       only the exit task, not the whole graph. Failed results own no node and leave originals unchanged.
+     * @note Accepted nodes are not rerun. Empty expressions submit one empty task.
+     *       Failed results own no node and leave originals unchanged.
      */
     Task enqueue(const Tasks& tasks)
     {

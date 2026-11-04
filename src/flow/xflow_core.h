@@ -3,9 +3,9 @@
 
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -46,9 +46,8 @@ struct PayloadDeleter
 // Shared by owning handles, accepted work and DAG predecessors.
 struct Node
 {
-    std::string  mName;
-    std::int64_t mCostUs = 0;
-    std::mutex   mMutex;
+    std::string mName;
+    std::mutex  mMutex;
 
     TaskState mState = TaskState::Created;
 
@@ -84,13 +83,15 @@ struct Node
 struct TileJob
 {
     std::atomic<std::size_t> mNextTileIndex{0};
-    std::atomic<std::size_t> mActiveHelpers{0};
-    std::size_t              mRange;
-    std::size_t              mTile;
-    std::size_t              mTileCount;
-    XFlowTileExFn            mFunction;
-    void*                    mData;
-    TileJob*                 mNextJob = nullptr;
+
+    // Core::mMutex protects helper registration, departure and the caller's completion check.
+    std::size_t   mActiveHelpers = 0;
+    std::size_t   mRange;
+    std::size_t   mTile;
+    std::size_t   mTileCount;
+    XFlowTileExFn mFunction;
+    void*         mData;
+    TileJob*      mNextJob = nullptr;
 
     void run(std::size_t workerIndex) noexcept;
 };
@@ -121,7 +122,9 @@ struct Core
     std::uint64_t              mRequestedCpuMask = 0;
     std::uint64_t              mInitialCpuMask   = 0;
     int                        mAffinityInitCode = 0;
-    std::atomic<std::uint64_t> mAffinityVersion{1};
+
+    // Read and updated with mRequestedCpuMask under mMutex; workers compare a local snapshot.
+    std::uint64_t mAffinityVersion = 1;
 
     Core();
     ~Core();
@@ -131,8 +134,10 @@ struct Core
     bool reaches(Node* from, Node* target, bool includeRuntimeEdges = false);
     int  addDependency(const NodePtr& predecessor, const NodePtr& successor);
     int  submit(const NodePtr& root);
-    void enqueueReady(Node* node);
     void growWorkers();
+
+    // Requires both mMutex and node->mMutex because Ready is visible to public queries.
+    void enqueueReady(Node* node);
 
     // Find a job with a free helper slot and potentially unclaimed tiles.
     TileJob* findTileJobToHelp();
@@ -144,6 +149,11 @@ struct Core
     // Acquire mMutex internally; callers must not already hold it.
     void workerLoop(std::size_t workerIndex);
     int  wait(const NodePtr& task);
+    void runTiles(TileJob& job);
+
+    // C adapters reject task/tile calls before entering these barriers; both acquire mMutex.
+    int waitAll();
+    int releaseWorkers();
 };
 
 Core& core();
