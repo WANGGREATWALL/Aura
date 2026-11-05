@@ -41,13 +41,13 @@ typedef void (*XFlowDeleterFn)(void* user_data);
  * @param end One past the last element (exclusive).
  * @param worker_idx Execution lane for per-loop scratch storage: 0 is the calling thread, and
  *                   1..8 are pool worker slots. Lane values need not be contiguous.
- * @param user_data Borrowed pointer passed to au_flow_parallelize_tile_ex.
+ * @param user_data Borrowed pointer passed to au_flow_parallel_for.
  * @note Called concurrently from multiple threads; each element is processed exactly once.
  *       At most one callback per lane runs at a time within one loop, so lane-indexed scratch
  *       needs no lock. Separate loops still need separate scratch arrays.
  *       Must not throw (a throw terminates) or wait on unfinished tasks.
  */
-typedef void (*XFlowTileExFn)(size_t begin, size_t end, size_t worker_idx, void* user_data);
+typedef void (*XFlowTileFn)(size_t begin, size_t end, size_t worker_idx, void* user_data);
 
 /**
  * @brief Create a task without enqueueing it.
@@ -165,7 +165,7 @@ AU_API int au_flow_task_done(XFlowTaskHandle task) XFLOW_NOEXCEPT;
  *       must use separate scratch arrays. Record callback errors in user_data and check them
  *       after this call returns.
  */
-AU_API void au_flow_parallelize_tile_ex(size_t range, size_t tile, XFlowTileExFn fn, void* user_data) XFLOW_NOEXCEPT;
+AU_API void au_flow_parallel_for(size_t range, size_t tile, XFlowTileFn fn, void* user_data) XFLOW_NOEXCEPT;
 
 /**
  * @brief Wait until accepted tasks and synchronous tile calls have all finished.

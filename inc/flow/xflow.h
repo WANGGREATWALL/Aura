@@ -123,6 +123,30 @@
  * } >> (render | save) >> done;
  * int code = flow.enqueue(graph).wait();
  * @endcode
+ *
+ * @par Synchronous parallel loops
+ * parallelFor(range, tile, callback) processes [0, range) in blocks of up to tile elements.
+ * The callback receives [begin, end), and the caller also helps; all blocks finish before return.
+ * A third callback argument may receive the worker index for per-lane scratch storage.
+ * @code
+ * auto& flow = au::flow::Flow::get();
+ * std::vector<int> values(100);
+ * flow.parallelFor(values.size(), 16, [&](std::size_t begin, std::size_t end) {
+ *     for (std::size_t i = begin; i < end; ++i)
+ *         values[i] = static_cast<int>(i);
+ * });
+ * // All values are ready here; no enqueue() or wait() is needed.
+ * @endcode
+ *
+ * For an element-wise body, the macros supply the loop variable i. REF uses [&], VALUE uses [=];
+ * neither capture mode extends the lifetime of borrowed storage. Both end with XFLOW_PARALLEL_FOR_END.
+ * @code
+ * XFLOW_PARALLEL_FOR_REF(values.size(), 16)
+ *     values[i] += 1;
+ * XFLOW_PARALLEL_FOR_END
+ * @endcode
+ * Callbacks may run concurrently. They must not throw or wait on unfinished tasks; return values
+ * are ignored. Nested loops run serially. See parallelFor() for worker indices and scratch ownership.
  */
 
 #include <algorithm>
@@ -610,11 +634,11 @@ public:
      *       Callback return values are ignored; record errors in caller-owned state and check after return.
      */
     template <class F>
-    void parallelizeTiledTasks(size_t range, size_t tile, F&& f)
+    void parallelFor(size_t range, size_t tile, F&& f)
     {
         typedef std::reference_wrapper<typename std::remove_reference<F>::type> Function;
         Function                                                                callback(f);
-        au_flow_parallelize_tile_ex(
+        au_flow_parallel_for(
             range, tile,
             [](size_t begin, size_t end, size_t worker, void* data) {
                 au::flow::detail::invokeTile((*static_cast<Function*>(data)).get(), begin, end, worker, 0);
@@ -716,13 +740,15 @@ inline Tasks operator|(const Tasks& a, const Tasks& b)
 }  // namespace flow AU_LOCAL
 }  // namespace au
 
-#define XTHREAD_PARALLELIZE_TILED_TASK_QUOTE(range, tile) \
-    ::au::flow::Flow::get().parallelizeTiledTasks((range), (tile), [&](size_t start, size_t end) { \
+// Loop shorthands: REF uses default reference capture [&], VALUE uses default value capture [=].
+// Both visit each element as i; copying a pointer or borrowing view does not copy its backing storage.
+#define XFLOW_PARALLEL_FOR_REF(range, tile) \
+    ::au::flow::Flow::get().parallelFor((range), (tile), [&](size_t start, size_t end) { \
         for (size_t i = start; i < end; ++i) {
-#define XTHREAD_PARALLELIZE_TILED_TASK_ASSIGN(range, tile) \
-    ::au::flow::Flow::get().parallelizeTiledTasks((range), (tile), [=](size_t start, size_t end) { \
+#define XFLOW_PARALLEL_FOR_VALUE(range, tile) \
+    ::au::flow::Flow::get().parallelFor((range), (tile), [=](size_t start, size_t end) { \
         for (size_t i = start; i < end; ++i) {
-#define XTHREAD_PARALLELIZE_END \
-    }                           \
+#define XFLOW_PARALLEL_FOR_END \
+    }                          \
     });
 #endif

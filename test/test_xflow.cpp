@@ -3,6 +3,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
 #include <functional>
 #include <initializer_list>
 #include <memory>
@@ -57,6 +60,35 @@ void expectCreated(std::initializer_list<au::flow::Task> tasks)
 struct DrainTasksOnExit
 {
     ~DrainTasksOnExit() { EXPECT_EQ(au::flow::Flow::get().waitAll(), 0); }
+};
+
+struct CaptureFlowLogs
+{
+    au::log::Config& mConfig    = au::log::Config::get();
+    au::log::Level   mLevel     = mConfig.getLevel();
+    bool             mShell     = mConfig.isShellPrintEnabled();
+    bool             mCapturing = true;
+
+    CaptureFlowLogs()
+    {
+        mConfig.setLevel(au::log::Level::Error);
+        mConfig.setShellPrintEnabled(true);
+        ::testing::internal::CaptureStdout();
+    }
+
+    std::string finish()
+    {
+        mCapturing = false;
+        return ::testing::internal::GetCapturedStdout();
+    }
+
+    ~CaptureFlowLogs()
+    {
+        if (mCapturing)
+            (void)finish();
+        mConfig.setLevel(mLevel);
+        mConfig.setShellPrintEnabled(mShell);
+    }
 };
 
 bool exchangeClosingState(bool closing)
@@ -418,25 +450,8 @@ TEST_F(XFlow, FailedResultsDoNotOwnNodes)
 
 TEST_F(XFlow, TaskExceptionDiagnostics)
 {
-    auto& log = au::log::Config::get();
-
-    struct RestoreLogConfig
-    {
-        au::log::Config& mConfig;
-        au::log::Level   mLevel;
-        bool             mShell;
-
-        ~RestoreLogConfig()
-        {
-            mConfig.setLevel(mLevel);
-            mConfig.setShellPrintEnabled(mShell);
-        }
-    } restore{log, log.getLevel(), log.isShellPrintEnabled()};
-
-    log.setLevel(au::log::Level::Error);
-    log.setShellPrintEnabled(true);
-    ::testing::internal::CaptureStdout();
-    const int standard =
+    CaptureFlowLogs capture;
+    const int       standard =
         mFlow.enqueueNamed("std-task", []() -> int { throw std::runtime_error("task-detail"); }).wait();
     const int      memory  = mFlow.enqueueNamed("oom-task", []() -> int { throw std::bad_alloc(); }).wait();
     const int      unknown = mFlow.enqueueNamed("other-task", []() -> int { throw 7; }).wait();
@@ -444,7 +459,7 @@ TEST_F(XFlow, TaskExceptionDiagnostics)
         au_flow_create_task("c-task", [](void*) -> int { throw std::runtime_error("c-detail"); }, nullptr, nullptr));
     const auto        submitted = mFlow.enqueue(cTask);
     const int         cCode     = cTask.wait();
-    const std::string output    = ::testing::internal::GetCapturedStdout();
+    const std::string output    = capture.finish();
     EXPECT_EQ(standard, au::err::kErrorUnknown);
     EXPECT_EQ(memory, au::err::kErrorNoMemory);
     EXPECT_EQ(unknown, au::err::kErrorUnknown);
@@ -453,6 +468,94 @@ TEST_F(XFlow, TaskExceptionDiagnostics)
     for (const char* text : {"std-task", "task-detail", "oom-task", "other-task", "c-task", "c-detail"})
         EXPECT_NE(output.find(text), std::string::npos);
 }
+
+TEST_F(XFlow, OperationDiagnostics)
+{
+    CaptureFlowLogs capture;
+    auto            predecessor = mFlow.createNamed("edge-predecessor", [] {});
+    auto            successor   = mFlow.createNamed("edge-successor", [] {});
+    EXPECT_EQ(predecessor.precede(successor), 0);
+    EXPECT_EQ(successor.precede(predecessor), au::err::kErrorFlowCycleDetected);
+    // The original build failure is not repeated by a later enqueue or wait.
+    EXPECT_EQ(mFlow.enqueue(predecessor).code(), au::err::kErrorFlowCycleDetected);
+    EXPECT_EQ(predecessor.wait(), au::err::kErrorFlowCycleDetected);
+
+    void*          storage = nullptr;
+    au::flow::Task raw(
+        au_flow_create_task_ex("uncommitted-upstream", 1, 1, [](void*) { return 0; }, nullptr, &storage));
+    ASSERT_TRUE(raw.valid());
+    auto downstream = mFlow.createNamed("downstream", [] {});
+    EXPECT_EQ(raw.precede(downstream), 0);
+    EXPECT_EQ(mFlow.enqueue(downstream).code(), au::err::kErrorNotReady);
+    ::new (storage) unsigned char(0);
+    EXPECT_EQ(au_flow_commit_task_payload(raw.nativeHandle()), 0);
+    EXPECT_EQ(au_flow_commit_task_payload(raw.nativeHandle()), au::err::kErrorInvalidParam);
+    EXPECT_EQ(mFlow.enqueue(downstream).wait(), 0);
+
+    auto draft = mFlow.createNamed("draft-wait", [] {});
+    EXPECT_EQ(draft.wait(), au::err::kErrorStateInvalid);
+    au::flow::Task self;
+    self = mFlow.createNamed("self-wait", [&] { return self.wait(); });
+    EXPECT_EQ(mFlow.enqueue(self).wait(), au::err::kErrorFlowWouldDeadlock);
+    mFlow.parallelFor(1, 1, [&](size_t, size_t) {
+        EXPECT_EQ(mFlow.waitAll(), au::err::kErrorFlowWouldDeadlock);
+        EXPECT_EQ(mFlow.releaseWorkers(), au::err::kErrorFlowWouldDeadlock);
+    });
+
+    {
+        ScopedClosingState closing(true);
+        EXPECT_EQ(mFlow.enqueueNamed("closing-submit", [] {}).code(), au::err::kErrorStateInvalid);
+    }
+
+    EXPECT_EQ(au_flow_create_task(nullptr, nullptr, nullptr, nullptr), nullptr);
+    EXPECT_EQ(au_flow_create_task_ex(nullptr, 1, 3, [](void*) { return 0; }, nullptr, &storage), nullptr);
+    EXPECT_EQ(storage, nullptr);
+    au_flow_parallel_for(1, 1, nullptr, nullptr);
+
+    const auto output = capture.finish();
+    for (const char* text :
+         {"add_dependency", "ErrorFlowCycleDetected", "edge-predecessor", "edge-successor", "payload not committed",
+          "uncommitted-upstream", "already committed", "draft-wait", "dependency/runtime wait cycle", "self-wait",
+          "wait_all", "release_workers", "runtime closing", "closing-submit", "create_task: null function",
+          "create_task_ex: invalid arguments", "parallel_for: null callback"})
+        EXPECT_NE(output.find(text), std::string::npos) << text;
+    const auto first = output.find("flow add_dependency:");
+    ASSERT_NE(first, std::string::npos);
+    EXPECT_EQ(output.find("flow add_dependency:", first + 1), std::string::npos);
+}
+
+TEST_F(XFlow, NormalResultsStayQuiet)
+{
+    CaptureFlowLogs capture;
+    auto            draft = mFlow.create([] {});
+    EXPECT_EQ(draft.code(), au::err::kErrorNotReady);
+    EXPECT_FALSE(draft.done());
+    auto failed = mFlow.enqueueNamed("business-failure", [] { return -123; });
+    EXPECT_EQ(failed.wait(), -123);
+    EXPECT_EQ(failed.code(), -123);
+    EXPECT_EQ(mFlow.enqueueAfter(failed, [] { ADD_FAILURE(); }).wait(), -123);
+    au_flow_parallel_for(0, 0, nullptr, nullptr);
+    mFlow.parallelFor(1, 0, [&](size_t, size_t) { mFlow.parallelFor(1, 1, [](size_t, size_t) {}); });
+    EXPECT_TRUE(capture.finish().empty());
+}
+
+#if GTEST_HAS_DEATH_TEST
+TEST_F(XFlow, TileExceptionDiagnostics)
+{
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_EXIT(
+        {
+            CaptureFlowLogs capture;
+            std::set_terminate([] {
+                const auto output = ::testing::internal::GetCapturedStdout();
+                std::fputs(output.c_str(), stderr);
+                std::_Exit(71);
+            });
+            mFlow.parallelFor(1, 1, [](size_t, size_t) { throw std::runtime_error("tile-detail"); });
+        },
+        ::testing::ExitedWithCode(71), "parallel_for callback: range=1, tile=1, index=0, worker=0.*tile-detail");
+}
+#endif
 
 // Expressions and atomic submission
 
@@ -1126,15 +1229,15 @@ TEST_F(XFlow, ReleaseWorkersAndRespawn)
         EXPECT_GT(mFlow.workerCount(), 0u);
         EXPECT_EQ(mFlow.releaseWorkers(), 0);
         EXPECT_EQ(mFlow.workerCount(), 0u);
-        mFlow.parallelizeTiledTasks(200, 1, [](size_t, size_t) {});
+        mFlow.parallelFor(200, 1, [](size_t, size_t) {});
         EXPECT_GT(mFlow.workerCount(), 0u);
         EXPECT_EQ(mFlow.releaseWorkers(), 0);
         EXPECT_EQ(mFlow.workerCount(), 0u);
     }
 
     EXPECT_EQ(mFlow.enqueue([&] { return mFlow.releaseWorkers(); }).wait(), au::err::kErrorFlowWouldDeadlock);
-    mFlow.parallelizeTiledTasks(
-        20, 1, [&](size_t, size_t) { EXPECT_EQ(mFlow.releaseWorkers(), au::err::kErrorFlowWouldDeadlock); });
+    mFlow.parallelFor(20, 1,
+                      [&](size_t, size_t) { EXPECT_EQ(mFlow.releaseWorkers(), au::err::kErrorFlowWouldDeadlock); });
 
     std::atomic<int>  calls{0};
     std::atomic<bool> entered{false};
@@ -1143,7 +1246,7 @@ TEST_F(XFlow, ReleaseWorkersAndRespawn)
     std::atomic<bool> submitted{false};
     std::atomic<bool> attempting{false};
     std::thread       tile([&] {
-        mFlow.parallelizeTiledTasks(1, 1, [&](size_t, size_t) {
+        mFlow.parallelFor(1, 1, [&](size_t, size_t) {
             entered.store(true, std::memory_order_release);
             if (waitUntil([&] { return release.load(std::memory_order_acquire); }))
                 (void)mFlow.enqueue([&] { calls.fetch_add(1, std::memory_order_relaxed); });
@@ -1192,7 +1295,7 @@ TEST_F(XFlow, TileWorkerIndex)
     std::atomic<bool>                 caller{false};
     std::atomic<int>                  errors{0};
     const auto                        callingThread = std::this_thread::get_id();
-    mFlow.parallelizeTiledTasks(seen.size(), 1, [&](size_t begin, size_t end, size_t worker) {
+    mFlow.parallelFor(seen.size(), 1, [&](size_t begin, size_t end, size_t worker) {
         if (worker >= busy.size()) {
             errors.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -1208,7 +1311,7 @@ TEST_F(XFlow, TileWorkerIndex)
             errors.fetch_add(1, std::memory_order_relaxed);
         for (size_t i = begin; i < end; ++i)
             seen[i].fetch_add(1, std::memory_order_relaxed);
-        mFlow.parallelizeTiledTasks(3, 1, [&](size_t, size_t, size_t nested) {
+        mFlow.parallelFor(3, 1, [&](size_t, size_t, size_t nested) {
             if (nested != 0)
                 errors.fetch_add(1, std::memory_order_relaxed);
         });
@@ -1221,7 +1324,7 @@ TEST_F(XFlow, TileWorkerIndex)
         EXPECT_EQ(value.load(std::memory_order_relaxed), 1);
     EXPECT_EQ(mFlow
                   .enqueue([&] {
-                      mFlow.parallelizeTiledTasks(20, 1, [&](size_t, size_t, size_t worker) {
+                      mFlow.parallelFor(20, 1, [&](size_t, size_t, size_t worker) {
                           if (worker > 8)
                               errors.fetch_add(1, std::memory_order_relaxed);
                       });
@@ -1238,7 +1341,7 @@ TEST_F(XFlow, TiledParallelismAndNestedSafety)
     for (size_t range : {size_t(0), size_t(3), size_t(257)}) {
         SCOPED_TRACE(::testing::Message() << "range=" << range);
         std::array<std::atomic<int>, 257> seen{};
-        mFlow.parallelizeTiledTasks(range, 7, [&](size_t begin, size_t end) {
+        mFlow.parallelFor(range, 7, [&](size_t begin, size_t end) {
             const int now = active.fetch_add(1, std::memory_order_acq_rel) + 1;
             int       old = maximum.load(std::memory_order_relaxed);
             while (old < now && !maximum.compare_exchange_weak(old, now, std::memory_order_relaxed)) {
@@ -1254,11 +1357,11 @@ TEST_F(XFlow, TiledParallelismAndNestedSafety)
 
     EXPECT_LE(maximum.load(std::memory_order_relaxed), 4);
     std::array<int, 51> values{};
-    XTHREAD_PARALLELIZE_TILED_TASK_QUOTE(values.size(), 6) values[i] = static_cast<int>(i);
-    XTHREAD_PARALLELIZE_END
+    XFLOW_PARALLEL_FOR_REF(values.size(), 6) values[i] = static_cast<int>(i);
+    XFLOW_PARALLEL_FOR_END
     int* data = values.data();
-    XTHREAD_PARALLELIZE_TILED_TASK_ASSIGN(values.size(), 8) data[i] += 1;
-    XTHREAD_PARALLELIZE_END
+    XFLOW_PARALLEL_FOR_VALUE(values.size(), 8) data[i] += 1;
+    XFLOW_PARALLEL_FOR_END
     for (size_t i = 0; i < values.size(); ++i)
         EXPECT_EQ(values[i], static_cast<int>(i) + 1);
     std::atomic<int>              arrived{0};
@@ -1269,8 +1372,8 @@ TEST_F(XFlow, TiledParallelismAndNestedSafety)
             arrived.fetch_add(1, std::memory_order_release);
             if (!waitUntil([&] { return arrived.load(std::memory_order_acquire) == 8; }))
                 return 1;
-            mFlow.parallelizeTiledTasks(127, 11, [&](size_t b, size_t e) {
-                mFlow.parallelizeTiledTasks(16, 3, [&](size_t ib, size_t ie) {
+            mFlow.parallelFor(127, 11, [&](size_t b, size_t e) {
+                mFlow.parallelFor(16, 3, [&](size_t ib, size_t ie) {
                     total.fetch_add((e - b) * (ie - ib), std::memory_order_relaxed);
                 });
             });
@@ -1281,7 +1384,7 @@ TEST_F(XFlow, TiledParallelismAndNestedSafety)
     EXPECT_EQ(total.load(std::memory_order_relaxed), 8u * 127 * 16);
     EXPECT_LE(mFlow.workerCount(), 8u);
     size_t end = 0;
-    mFlow.parallelizeTiledTasks(SIZE_MAX, SIZE_MAX, [&](size_t b, size_t e) {
+    mFlow.parallelFor(SIZE_MAX, SIZE_MAX, [&](size_t b, size_t e) {
         EXPECT_EQ(b, 0u);
         end = e;
     });
@@ -1322,7 +1425,7 @@ TEST_F(XFlow, CpuAffinity)
         std::vector<uint32_t> before(count);
         std::vector<uint32_t> after(count);
         ASSERT_EQ(au::sys::getThreadAffinity(before.data(), before.size(), count), 0);
-        mFlow.parallelizeTiledTasks(1, 1, [](size_t, size_t) {});
+        mFlow.parallelFor(1, 1, [](size_t, size_t) {});
         ASSERT_EQ(au::sys::getThreadAffinity(after.data(), after.size(), count), 0);
         EXPECT_EQ(before, after);
         for (auto type : {au::sys::CpuClass::kPerformance, au::sys::CpuClass::kPowerSaving}) {

@@ -85,13 +85,13 @@ struct TileJob
     std::atomic<std::size_t> mNextTileIndex{0};
 
     // Core::mMutex protects helper registration, departure and the caller's completion check.
-    std::size_t   mActiveHelpers = 0;
-    std::size_t   mRange;
-    std::size_t   mTile;
-    std::size_t   mTileCount;
-    XFlowTileExFn mFunction;
-    void*         mData;
-    TileJob*      mNextJob = nullptr;
+    std::size_t mActiveHelpers = 0;
+    std::size_t mRange;
+    std::size_t mTile;
+    std::size_t mTileCount;
+    XFlowTileFn mFunction;
+    void*       mData;
+    TileJob*    mNextJob = nullptr;
 
     void run(std::size_t workerIndex) noexcept;
 };
@@ -135,7 +135,10 @@ struct Core
     // Follow predecessor links; optionally include runtime wait and nested execution edges.
     bool reaches(Node* from, Node* target, bool includeRuntimeEdges = false);
     int  addDependency(const NodePtr& predecessor, const NodePtr& successor);
-    int  submit(const NodePtr& root);
+
+    // If supplied, failedTask starts empty and is released outside mMutex.
+    // It retains a new failure for logging after unlocking; stored build errors are not repeated.
+    int  submit(const NodePtr& root, NodePtr* failedTask = nullptr);
     void growWorkers();
 
     // Requires mMutex and node->mMutex; public queries read mState under the node lock.
