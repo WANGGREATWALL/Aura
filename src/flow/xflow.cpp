@@ -493,7 +493,7 @@ int Core::waitAll()
     while (!mAccepted.empty() || mTileCallers)
         if (!helpOne(lock))
             mChanged.wait(lock);
-    return 0;
+    return au::err::kSuccess;
 }
 
 int Core::releaseWorkers()
@@ -524,7 +524,7 @@ int Core::releaseWorkers()
     mStop        = false;
     mReleasing   = false;
     mChanged.notify_all();
-    return 0;
+    return au::err::kSuccess;
 }
 
 void TileJob::run(std::size_t workerIndex) noexcept
@@ -619,7 +619,7 @@ int au_flow_commit_task_payload(XFlowTaskHandle handle) noexcept
             return au::err::kErrorInvalidParam;
         task->mPayload.get_deleter().mDestroy = task->mPendingDestroy;
         task->mPayloadReady.store(true, std::memory_order_release);
-        return 0;
+        return au::err::kSuccess;
     });
 }
 
@@ -748,7 +748,7 @@ int au_flow_set_affinity_mask(uint64_t mask) noexcept
         runtime.mRequestedCpuMask = mask;
         ++runtime.mAffinityVersion;
         runtime.mChanged.notify_all();
-        return 0;
+        return au::err::kSuccess;
     });
 }
 

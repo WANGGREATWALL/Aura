@@ -177,7 +177,7 @@ typename std::enable_if<std::is_void<decltype(std::declval<C&>()())>::value, int
 {
     c();
 
-    return 0;
+    return au::err::kSuccess;
 }
 
 template <class C>
