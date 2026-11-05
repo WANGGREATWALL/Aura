@@ -200,8 +200,8 @@ struct Bound
     }
 
     template <std::size_t... I>
-    auto run(Indices<I...>) -> decltype(au::flow::detail::invoke(std::move(mFunction),
-                                                                 std::move(std::get<I>(mArguments))...))
+    auto run(Indices<I...>)
+        -> decltype(au::flow::detail::invoke(std::move(mFunction), std::move(std::get<I>(mArguments))...))
     {
         return au::flow::detail::invoke(std::move(mFunction), std::move(std::get<I>(mArguments))...);
     }
