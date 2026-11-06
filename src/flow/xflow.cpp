@@ -226,7 +226,7 @@ void Core::growWorkers()
     }
 }
 
-int Core::submit(const NodePtr& root, NodePtr* failedTask)
+int Core::submit(const NodePtr& root, SubmitFailure* failure)
 {
     if (root->mState != TaskState::Created)
         return au::err::kSuccess;
@@ -234,8 +234,8 @@ int Core::submit(const NodePtr& root, NodePtr* failedTask)
         return root->mBuildCode;
     // Acquire payload construction published by commit before accepting execution.
     if (!root->mPayloadReady.load(std::memory_order_acquire)) {
-        if (failedTask)
-            *failedTask = root;
+        if (failure)
+            *failure = {"payload not committed", root};
         return au::err::kErrorNotReady;
     }
     std::list<NodePtr> batch{root};
@@ -251,8 +251,8 @@ int Core::submit(const NodePtr& root, NodePtr* failedTask)
             if (task->mBuildCode)
                 return task->mBuildCode;
             if (!task->mPayloadReady.load(std::memory_order_acquire)) {
-                if (failedTask)
-                    *failedTask = task;
+                if (failure)
+                    *failure = {"payload not committed", task};
                 return au::err::kErrorNotReady;
             }
             batch.push_back(task);
@@ -262,8 +262,8 @@ int Core::submit(const NodePtr& root, NodePtr* failedTask)
     // During final shutdown, reject new external submissions but let running tasks
     // and tile callbacks enqueue the work they need to finish.
     if (mClosing && !insideTaskOrTile()) {
-        if (failedTask)
-            *failedTask = root;
+        if (failure)
+            *failure = {"runtime closing", root};
         return au::err::kErrorStateInvalid;
     }
     growWorkers();  // No accepted state if the required thread could not start.
@@ -734,18 +734,17 @@ int au_flow_enqueue_task(XFlowTaskHandle handle) noexcept
         return au::err::kErrorInvalidParam;
     }
     return au::flow::detail::boundary(__func__, [&]() -> int {
-        auto&   runtime = au::flow::detail::core();
-        NodePtr failedTask;
-        int     code;
+        auto&                           runtime = au::flow::detail::core();
+        au::flow::detail::SubmitFailure failure;
+        int                             code;
         {
             auto lock = au::flow::detail::submissionLock(runtime);
-            code      = runtime.submit(node(handle), &failedTask);
+            code      = runtime.submit(node(handle), &failure);
         }
 
-        if (failedTask)
-            XLOG_E("flow enqueue_task: %s, task=\"%s\" (%p), code=%d\n",
-                   code == au::err::kErrorNotReady ? "payload not committed" : "runtime closing",
-                   au::flow::detail::taskName(failedTask.get()), static_cast<void*>(failedTask.get()), code);
+        if (failure.mReason)
+            XLOG_E("flow enqueue_task: %s, task=\"%s\" (%p), code=%d\n", failure.mReason,
+                   au::flow::detail::taskName(failure.mTask.get()), static_cast<void*>(failure.mTask.get()), code);
         return code;
     });
 }

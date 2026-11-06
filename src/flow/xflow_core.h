@@ -96,6 +96,12 @@ struct TileJob
     void run(std::size_t workerIndex) noexcept;
 };
 
+struct SubmitFailure
+{
+    const char* mReason = nullptr;  // String literal; null means no new diagnostic.
+    NodePtr     mTask;
+};
+
 // mMutex serializes graph edits, state transitions and worker/tile bookkeeping.
 // Node mutexes protect public queries and payload commit; state writes hold both.
 // Lock order: Core::mMutex -> node mutex. User callbacks and final owners are released outside both.
@@ -136,9 +142,9 @@ struct Core
     bool reaches(Node* from, Node* target, bool includeRuntimeEdges = false);
     int  addDependency(const NodePtr& predecessor, const NodePtr& successor);
 
-    // If supplied, failedTask starts empty and is released outside mMutex.
-    // It retains a new failure for logging after unlocking; stored build errors are not repeated.
-    int  submit(const NodePtr& root, NodePtr* failedTask = nullptr);
+    // Optional output starts empty; its task must be released outside mMutex.
+    // Describe new failures for logging after unlock; stored build errors stay quiet.
+    int  submit(const NodePtr& root, SubmitFailure* failure = nullptr);
     void growWorkers();
 
     // Requires mMutex and node->mMutex; public queries read mState under the node lock.

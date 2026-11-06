@@ -484,6 +484,7 @@ TEST_F(XFlow, OperationDiagnostics)
     au::flow::Task raw(
         au_flow_create_task_ex("uncommitted-upstream", 1, 1, [](void*) { return 0; }, nullptr, &storage));
     ASSERT_TRUE(raw.valid());
+    EXPECT_EQ(mFlow.enqueue(raw).code(), au::err::kErrorNotReady);
     auto downstream = mFlow.createNamed("downstream", [] {});
     EXPECT_EQ(raw.precede(downstream), 0);
     EXPECT_EQ(mFlow.enqueue(downstream).code(), au::err::kErrorNotReady);
@@ -522,6 +523,12 @@ TEST_F(XFlow, OperationDiagnostics)
     const auto first = output.find("flow add_dependency:");
     ASSERT_NE(first, std::string::npos);
     EXPECT_EQ(output.find("flow add_dependency:", first + 1), std::string::npos);
+    const auto rootFailure = output.find("payload not committed");
+    ASSERT_NE(rootFailure, std::string::npos);
+    const auto upstreamFailure = output.find("payload not committed", rootFailure + 1);
+    ASSERT_NE(upstreamFailure, std::string::npos);
+    EXPECT_EQ(output.find("payload not committed", upstreamFailure + 1), std::string::npos);
+    EXPECT_EQ(output.find("downstream"), std::string::npos);  // Log the failed upstream, not its submitted exit.
 }
 
 TEST_F(XFlow, NormalResultsStayQuiet)
