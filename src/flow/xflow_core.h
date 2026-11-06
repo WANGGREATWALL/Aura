@@ -105,6 +105,9 @@ struct SubmitFailure
 // mMutex serializes graph edits, state transitions and worker/tile bookkeeping.
 // Node mutexes protect public queries and payload commit; state writes hold both.
 // Lock order: Core::mMutex -> node mutex. User callbacks and final owners are released outside both.
+// Decide diagnostics where the reason is known; print outside scheduler/node locks.
+// Do not repeat saved build errors or log business-result propagation and normal polls.
+// Warn: recoverable fallback; Error: misuse/exception; Fatal: followed by termination.
 struct Core
 {
     std::mutex                           mMutex;

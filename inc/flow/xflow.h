@@ -403,6 +403,8 @@ public:
      * @return An expression; build errors are reported by enqueue().wait()/code().
      * @note Empty branches are identities; one branch creates no node, multiple branches create
      *       one ordinary join task. Prefer this or Tasks{...} for many branches; see the file-level example.
+     *       Facade catches currently map bad_alloc to kErrorNoMemory and other exceptions to
+     *       kErrorUnknown without additional logs; C-runtime failures may already be logged.
      */
     template <class Iterator>
     static Tasks parallel(Iterator first, Iterator last);
@@ -487,7 +489,9 @@ public:
      * @param f Callable returning int or void.
      * @param a Arguments copied or moved into task storage.
      * @return An unsubmitted task, carrying any creation error.
-     * @note Payload construction and commit are handled automatically.
+     * @note Payload construction and commit are automatic. Facade catches currently map bad_alloc to
+     *       kErrorNoMemory and other exceptions to kErrorUnknown without additional logs;
+     *       C-runtime failures may already be logged.
      */
     template <class F, class... A>
     Task createNamed(const char* name, F&& f, A&&... a)

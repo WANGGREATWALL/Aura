@@ -312,8 +312,9 @@ void Core::applyAffinity(std::unique_lock<std::mutex>& lock)
         const auto  count = useInitialCpus ? mInitialCpus.size() : cpuCount;
         const int   error = au::sys::setThreadAffinity(cpus, count);
         if (error)
-            XLOG_W("flow worker %zu: affinity failed, requested_mask=0x%llx, version=%llu, code=%d\n", gWorkerIndex,
-                   static_cast<unsigned long long>(mask), static_cast<unsigned long long>(version), error);
+            XLOG_W("flow [affinity]: worker=%zu, binding failed, requested_mask=0x%llx, version=%llu, code=%d\n",
+                   gWorkerIndex, static_cast<unsigned long long>(mask), static_cast<unsigned long long>(version),
+                   error);
         // One attempt per configuration, outside scheduler locks. Reconfigure to retry.
         gAttemptedAffinityVersion = version;
         lock.lock();
@@ -446,7 +447,7 @@ void Core::workerLoop(std::size_t workerIndex)
 int Core::wait(const NodePtr& task)
 {
     if (!task) {
-        XLOG_E("flow wait: null task\n");
+        XLOG_E("flow [au_flow_wait_task]: null task\n");
         return au::err::kErrorInvalidParam;
     }
     std::unique_lock<std::mutex> lock(mMutex);
@@ -456,7 +457,7 @@ int Core::wait(const NodePtr& task)
         if (task->mBuildCode)
             return task->mBuildCode;  // The originating graph operation already reported it.
         lock.unlock();
-        XLOG_E("flow wait: task not submitted, target=\"%s\" (%p)\n", taskName(task.get()),
+        XLOG_E("flow [au_flow_wait_task]: task not submitted, target=\"%s\" (%p)\n", taskName(task.get()),
                static_cast<void*>(task.get()));
         return au::err::kErrorStateInvalid;
     }
@@ -469,8 +470,9 @@ int Core::wait(const NodePtr& task)
         reason = "dependency/runtime wait cycle";
     if (reason) {
         lock.unlock();
-        XLOG_E("flow wait: %s, current=\"%s\" (%p), target=\"%s\" (%p)\n", reason, taskName(gCurrentTask),
-               static_cast<void*>(gCurrentTask), taskName(task.get()), static_cast<void*>(task.get()));
+        XLOG_E("flow [au_flow_wait_task]: %s, current=\"%s\" (%p), target=\"%s\" (%p)\n", reason,
+               taskName(gCurrentTask), static_cast<void*>(gCurrentTask), taskName(task.get()),
+               static_cast<void*>(task.get()));
         return au::err::kErrorFlowWouldDeadlock;
     }
     Node*  externalWaitTarget = nullptr;
@@ -586,7 +588,7 @@ void TileJob::run(std::size_t workerIndex) noexcept
             char context[192];
             std::snprintf(context, sizeof(context), "parallel_for callback: range=%zu, tile=%zu, index=%zu, worker=%zu",
                           mRange, mTile, tileIndex, workerIndex);
-            (void)reportException(context);
+            (void)reportException(context, au::log::Level::Fatal);
             std::terminate();
         }
         tileIndex = mNextTileIndex.load(std::memory_order_relaxed);
@@ -611,7 +613,7 @@ XFlowTaskHandle au_flow_create_task(const char* name, XFlowTaskFn fn, void* data
     try {
         auto payload = std::unique_ptr<void, au::flow::detail::PayloadDeleter>(data, {destroy, 0});
         if (!fn) {
-            XLOG_E("flow create_task: null function\n");
+            XLOG_E("flow [au_flow_create_task]: null function\n");
             return nullptr;
         }
         auto owner               = std::make_shared<XFlowTaskNode>(fn);
@@ -633,7 +635,7 @@ XFlowTaskHandle au_flow_create_task_ex(const char* name, size_t payloadSize, siz
         *outPayload = nullptr;
     const bool validAlignment = payloadAlignment != 0 && (payloadAlignment & (payloadAlignment - 1)) == 0;
     if (!outPayload || !fn || !payloadSize || !validAlignment) {
-        XLOG_E("flow create_task_ex: invalid arguments, out=%p, function=%s, size=%zu, alignment=%zu\n",
+        XLOG_E("flow [au_flow_create_task_ex]: invalid arguments, out=%p, function=%s, size=%zu, alignment=%zu\n",
                static_cast<void*>(outPayload), fn ? "set" : "null", payloadSize, payloadAlignment);
         return nullptr;
     }
@@ -669,7 +671,7 @@ int au_flow_commit_task_payload(XFlowTaskHandle handle) noexcept
     return au::flow::detail::boundary(__func__, [&]() -> int {
         auto task = node(handle);
         if (!task) {
-            XLOG_E("flow commit_task_payload: null task\n");
+            XLOG_E("flow [au_flow_commit_task_payload]: null task\n");
             return au::err::kErrorInvalidParam;
         }
         {
@@ -682,7 +684,7 @@ int au_flow_commit_task_payload(XFlowTaskHandle handle) noexcept
             }
         }
 
-        XLOG_E("flow commit_task_payload: task not Created or already committed, task=\"%s\" (%p)\n",
+        XLOG_E("flow [au_flow_commit_task_payload]: task not Created or already committed, task=\"%s\" (%p)\n",
                au::flow::detail::taskName(task.get()), static_cast<void*>(task.get()));
         return au::err::kErrorInvalidParam;
     });
@@ -719,7 +721,8 @@ int au_flow_add_dependency(XFlowTaskHandle predecessorHandle, XFlowTaskHandle su
         }
 
         if (report)
-            XLOG_E("flow add_dependency: %s (%d), predecessor=\"%s\" (%p), successor=\"%s\" (%p)\n",
+            XLOG_E("flow [au_flow_add_dependency]: %s, code=%s (%d), predecessor=\"%s\" (%p), successor=\"%s\" (%p)\n",
+                   pred ? "dependency rejected" : "null predecessor; check upstream Task creation/submission results",
                    au::err::getErrorStr(code), code, au::flow::detail::taskName(pred.get()),
                    static_cast<void*>(pred.get()), au::flow::detail::taskName(succ.get()),
                    static_cast<void*>(succ.get()));
@@ -730,7 +733,7 @@ int au_flow_add_dependency(XFlowTaskHandle predecessorHandle, XFlowTaskHandle su
 int au_flow_enqueue_task(XFlowTaskHandle handle) noexcept
 {
     if (!handle) {
-        XLOG_E("flow enqueue_task: null task\n");
+        XLOG_E("flow [au_flow_enqueue_task]: null task\n");
         return au::err::kErrorInvalidParam;
     }
     return au::flow::detail::boundary(__func__, [&]() -> int {
@@ -743,7 +746,7 @@ int au_flow_enqueue_task(XFlowTaskHandle handle) noexcept
         }
 
         if (failure.mReason)
-            XLOG_E("flow enqueue_task: %s, task=\"%s\" (%p), code=%d\n", failure.mReason,
+            XLOG_E("flow [au_flow_enqueue_task]: %s, task=\"%s\" (%p), code=%d\n", failure.mReason,
                    au::flow::detail::taskName(failure.mTask.get()), static_cast<void*>(failure.mTask.get()), code);
         return code;
     });
@@ -786,7 +789,7 @@ void au_flow_parallel_for(size_t range, size_t tile, XFlowTileFn fn, void* data)
     if (!range)
         return;
     if (!fn) {
-        XLOG_E("flow parallel_for: null callback, range=%zu, tile=%zu\n", range, tile);
+        XLOG_E("flow [au_flow_parallel_for]: null callback, range=%zu, tile=%zu\n", range, tile);
         return;
     }
     tile = tile ? tile : 1;
@@ -817,7 +820,7 @@ int au_flow_wait_all() noexcept
 {
     return au::flow::detail::boundary(__func__, []() -> int {
         if (au::flow::detail::insideTaskOrTile()) {
-            XLOG_E("flow wait_all: cannot drain from a task or tile callback\n");
+            XLOG_E("flow [au_flow_wait_all]: cannot drain from a task or tile callback\n");
             return au::err::kErrorFlowWouldDeadlock;
         }
         return au::flow::detail::core().waitAll();
@@ -829,7 +832,7 @@ int au_flow_release_workers() noexcept
     // Tasks/tiles cannot drain themselves. A worker may also run a payload deleter outside
     // task context; it must not join its own thread then either.
     if (au::flow::detail::insideTaskOrTile() || au::flow::detail::gWorkerIndex) {
-        XLOG_E("flow release_workers: cannot drain from a task/tile or join the calling worker, worker=%zu\n",
+        XLOG_E("flow [au_flow_release_workers]: cannot drain from a task/tile or join the calling worker, worker=%zu\n",
                au::flow::detail::gWorkerIndex);
         return au::err::kErrorFlowWouldDeadlock;
     }

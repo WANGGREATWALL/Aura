@@ -294,6 +294,7 @@ TEST_F(XFlow, PayloadConstructionFailures)
 {
     int failedDestructors = 0;
     {
+        CaptureFlowLogs      capture;
         ThrowingPayload<1>   small(failedDestructors);
         ThrowingPayload<256> large(failedDestructors);
         auto                 failed = mFlow.create(small);
@@ -307,6 +308,7 @@ TEST_F(XFlow, PayloadConstructionFailures)
         auto afterError = mFlow.enqueueAfter(exhausted, [] {});
         EXPECT_TRUE(isFailedTask(afterError, au::err::kErrorNoMemory));
         EXPECT_EQ(failedDestructors, 0);  // Never destroy unconstructed storage.
+        EXPECT_TRUE(capture.finish().empty());
     }
 
     EXPECT_EQ(failedDestructors, 3);
@@ -426,11 +428,12 @@ TEST_F(XFlow, FailedResultsDoNotOwnNodes)
     EXPECT_TRUE(businessFailure.valid());
     EXPECT_TRUE(businessFailure.done());
 
+    CaptureFlowLogs          capture;
     int                      destructors = 0;
     ThrowingPayload<1, true> payload(destructors);
     auto                     exhausted = mFlow.create(payload);
     std::atomic<int>         calls{0};
-    auto                     next = mFlow.create([&] { calls.fetch_add(1, std::memory_order_relaxed); });
+    auto next = mFlow.createNamed("after-failed-construction", [&] { calls.fetch_add(1, std::memory_order_relaxed); });
     EXPECT_EQ(exhausted.precede(next), au::err::kErrorNoMemory);
     EXPECT_EQ(next.wait(), au::err::kErrorInvalidParam);
     EXPECT_EQ(mFlow.enqueue(next).wait(), au::err::kErrorInvalidParam);
@@ -446,6 +449,10 @@ TEST_F(XFlow, FailedResultsDoNotOwnNodes)
     EXPECT_EQ(mFlow.enqueue(clean).wait(), 0);
     EXPECT_EQ(exhausted.precede(businessFailure), au::err::kErrorNoMemory);
     EXPECT_EQ(businessFailure.code(), -123);  // Accepted results are never poisoned.
+    const auto output = capture.finish();
+    for (const char* text : {"add_dependency", "null predecessor", "check upstream Task creation/submission results",
+                             "after-failed-construction"})
+        EXPECT_NE(output.find(text), std::string::npos) << text;
 }
 
 TEST_F(XFlow, TaskExceptionDiagnostics)
@@ -517,12 +524,13 @@ TEST_F(XFlow, OperationDiagnostics)
     for (const char* text :
          {"add_dependency", "ErrorFlowCycleDetected", "edge-predecessor", "edge-successor", "payload not committed",
           "uncommitted-upstream", "already committed", "draft-wait", "dependency/runtime wait cycle", "self-wait",
-          "wait_all", "release_workers", "runtime closing", "closing-submit", "create_task: null function",
-          "create_task_ex: invalid arguments", "parallel_for: null callback"})
+          "wait_all", "release_workers", "runtime closing", "closing-submit", "null function", "au_flow_create_task_ex",
+          "invalid arguments", "au_flow_parallel_for", "null callback"})
         EXPECT_NE(output.find(text), std::string::npos) << text;
-    const auto first = output.find("flow add_dependency:");
+    const auto first = output.find("ErrorFlowCycleDetected");
     ASSERT_NE(first, std::string::npos);
-    EXPECT_EQ(output.find("flow add_dependency:", first + 1), std::string::npos);
+    EXPECT_EQ(output.find("ErrorFlowCycleDetected", first + 1), std::string::npos);
+    EXPECT_EQ(output.find("operator()"), std::string::npos);
     const auto rootFailure = output.find("payload not committed");
     ASSERT_NE(rootFailure, std::string::npos);
     const auto upstreamFailure = output.find("payload not committed", rootFailure + 1);
@@ -553,6 +561,7 @@ TEST_F(XFlow, TileExceptionDiagnostics)
     EXPECT_EXIT(
         {
             CaptureFlowLogs capture;
+            capture.mConfig.setLevel(au::log::Level::Fatal);
             std::set_terminate([] {
                 const auto output = ::testing::internal::GetCapturedStdout();
                 std::fputs(output.c_str(), stderr);
@@ -940,10 +949,12 @@ TEST_F(XFlow, ExpressionCreationAndSubmissionErrors)
         bool operator!=(const ThrowingBranches&) const { return true; }
     };
 
+    CaptureFlowLogs capture;
     EXPECT_EQ(mFlow.enqueue(au::flow::Tasks::parallel(ThrowingBranches{true}, ThrowingBranches{true})).wait(),
               au::err::kErrorNoMemory);
     EXPECT_EQ(mFlow.enqueue(au::flow::Tasks::parallel(ThrowingBranches{false}, ThrowingBranches{false})).wait(),
               au::err::kErrorUnknown);
+    EXPECT_TRUE(capture.finish().empty());
 }
 
 TEST_F(XFlow, ClosureValidationIsAtomic)
