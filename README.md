@@ -98,7 +98,7 @@ GPU completion and memory ownership are explicit responsibilities of the callabl
 The C++ facade composes serial/parallel expressions with `>>` and `|`; every
 `enqueue` returns a completion `Task`. For example,
 `flow.enqueue(a >> (b | c) >> done).wait()`. See
-[expression semantics and migration from 1.7.0](docs/flow_expressions.md).
+[expression semantics and usage examples](inc/flow/xflow.h).
 The GPU/MM/CV implementations retain the pre-flow-refactor baseline (`e6ab9b8`);
 flow does not add GPU backends, memory leases or managed access scopes.
 
